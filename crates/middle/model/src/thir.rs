@@ -600,7 +600,9 @@ impl<N: Display, F: Fn(DefId) -> N + Copy> Printer<'_, F> {
             } => {
                 match callee {
                     Callee::Function(function) => {
-                        _ = write!(self.out, "call {}(", (self.name_of)(*function));
+                        let name = (self.name_of)(function.definition).to_string();
+                        let copy = self.types.copy_text(name, function.arguments, self.name_of);
+                        _ = write!(self.out, "call {copy}(");
                     }
                     Callee::Method(slot) => _ = write!(self.out, "call method {slot}("),
                 }

@@ -1,5 +1,7 @@
 use model::DefId;
+use model::FunctionCopy;
 use model::ast;
+use model::semantic_types::ConstArguments;
 use model::thir::Body;
 use source::SourceFile;
 
@@ -24,7 +26,15 @@ fn bodies(text: &str) -> (Vec<String>, Vec<Reported>) {
                 index: index as u32,
             };
             let mut body = Body::default();
-            let checked = checker.check_body(definition, function.name.span, &mut body, false);
+            let checked = checker.check_body(
+                FunctionCopy {
+                    definition,
+                    arguments: ConstArguments::NONE,
+                },
+                function.name.span,
+                &mut body,
+                false,
+            );
             if checked && !body.has_errors {
                 bodies.push(body);
             }
@@ -377,7 +387,15 @@ fn notes(text: &str) -> Vec<(String, Option<String>)> {
             module: main,
             index: 0,
         };
-        checker.check_body(definition, function.name.span, &mut Body::default(), false);
+        checker.check_body(
+            FunctionCopy {
+                definition,
+                arguments: ConstArguments::NONE,
+            },
+            function.name.span,
+            &mut Body::default(),
+            false,
+        );
         let note = |diagnostic: &diagnostics::Diagnostic| {
             let first = diagnostic.notes.first();
             (

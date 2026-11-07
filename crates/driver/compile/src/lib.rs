@@ -23,11 +23,13 @@ use eval::interpreter::program::ProgramFacts;
 use eval::interpreter::program::Stream;
 use eval::interpreter::program::Written;
 use model::DefId;
+use model::FunctionCopy;
 use model::ModuleId;
 use model::ast;
 use model::constant::Constant;
 use model::machine::Machine;
 use model::mir;
+use model::semantic_types::ConstArguments;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
 use model::semantic_types::Types;
@@ -121,10 +123,14 @@ pub enum Output<'c> {
     },
 }
 
-/// A function with a body, as a compile hands it on: built, used once, and
-/// dropped after, except its MIR, which is handed over.
+/// A function with a body, or a copy of one with `const T: type`
+/// parameters, as a compile hands it on: built, used once, and dropped
+/// after, except its MIR, which is handed over.
 pub struct CheckedFunction<'c> {
-    pub definition: DefId,
+    pub function: FunctionCopy,
+    /// The module whose compile built it: its own, or, for a copy, the one
+    /// that first called it.
+    pub module: ModuleId,
     pub signature: TypeId, // its function type
     pub thir: &'c thir::Body,
     /// The facts of its module found since the last function was handed on:
@@ -165,12 +171,12 @@ pub fn interpret(
         false,
         |output| match output {
             Output::Function(CheckedFunction {
-                definition,
+                function,
                 mir: Some(mut mir),
                 ..
             }) => {
                 flow::cleanup::remove_unused_code(&mut mir);
-                bodies.insert(definition, mir);
+                bodies.insert(function, mir);
             }
             // Nothing here is reused, so the last module's facts come last,
             // with every type.
@@ -198,9 +204,13 @@ pub fn interpret(
         struct_name: &struct_name,
         field_names: &field_names,
     };
+    let main_function = FunctionCopy {
+        definition: main,
+        arguments: ConstArguments::NONE,
+    };
     let outcome = eval::interpreter::program::run(
         main,
-        &bodies[&main],
+        &bodies[&main_function],
         &types,
         target,
         &|function| bodies.get(&function),
@@ -366,6 +376,8 @@ fn find_entry_point(checker: &mut Checker, entry: ModuleId) -> Result<(DefId, bo
                         index: index as u32,
                     },
                     function.name.span,
+                    // A `const T: type` parameter is not among its type's.
+                    function.signature.parameters.is_empty(),
                 ))
             }
             _ => None,
@@ -377,14 +389,12 @@ fn find_entry_point(checker: &mut Checker, entry: ModuleId) -> Result<(DefId, bo
         )
         .label(&tree.file, span, "")
     };
-    let Some((main, name)) = main else {
+    let Some((main, name, takes_nothing)) = main else {
         return Err(no_entry_point(Span::at(0)));
     };
     let signature = checker.function_type(main, name);
     let exit_code = match &checker.types[signature] {
-        Type::Function {
-            parameters, result, ..
-        } if parameters.is_empty() => match checker.types.real(*result) {
+        Type::Function { result, .. } if takes_nothing => match checker.types.real(*result) {
             TypeId::VOID => Some(false),
             TypeId::I32 => Some(true),
             _ => None,
@@ -412,21 +422,18 @@ fn compile_module(
             index: index as u32,
         };
         match tree.decls[declaration] {
-            ast::Decl::Function(function) => {
-                let span = function.name.span;
-                // No body, or an error in the signature.
-                let Some(mir) = checker.build_function(definition, span, thir, false) else {
-                    continue;
-                };
-                let facts = std::mem::take(&mut checker.module_checks[module.index()].facts);
-                use_output(Output::Function(CheckedFunction {
+            // Only its signature: a call makes a copy, built below.
+            ast::Decl::Function(function)
+                if check::declaration::const_parameter(tree, function.signature).is_some() =>
+            {
+                checker.function_type(definition, function.name.span);
+            }
+            ast::Decl::Function(_) => {
+                let function = FunctionCopy {
                     definition,
-                    signature: checker.function_type(definition, span),
-                    thir,
-                    facts: &facts,
-                    mir,
-                    types: &checker.types,
-                }));
+                    arguments: ConstArguments::NONE,
+                };
+                build_function(checker, module, function, thir, use_output);
             }
             ast::Decl::Const { name, .. } => {
                 let constant = checker.constant(definition, name.span);
@@ -439,12 +446,44 @@ fn compile_module(
             ast::Decl::Type(_) | ast::Decl::Alias(_) => {} // checked by `run`
         }
     }
+    // The copies the module's bodies made, and those their bodies made.
+    while let Some(copy) = checker.next_copy() {
+        build_function(checker, module, copy, thir, use_output);
+    }
     let facts = std::mem::take(&mut checker.module_checks[module.index()].facts);
     use_output(Output::Facts {
         module,
         facts: &facts,
         types: &checker.types,
     });
+}
+
+/// Builds `function`, in the compile of `module`, and gives it with its MIR
+/// and the facts found so far to `use_output`; nothing when it has no body
+/// or its signature has an error.
+fn build_function(
+    checker: &mut Checker,
+    module: ModuleId,
+    function: FunctionCopy,
+    thir: &mut thir::Body,
+    use_output: &mut impl FnMut(Output),
+) {
+    let span = project::declared_name(checker.modules, function.definition)
+        .0
+        .span;
+    let Some(mir) = checker.build_function(function, span, thir, false) else {
+        return;
+    };
+    let facts = std::mem::take(&mut checker.module_checks[module.index()].facts);
+    use_output(Output::Function(CheckedFunction {
+        function,
+        module,
+        signature: checker.copy_type(function, span),
+        thir,
+        facts: &facts,
+        mir,
+        types: &checker.types,
+    }));
 }
 
 /// Feeds `ty` to `hasher` by what it is, not by its id, which differs between
@@ -540,6 +579,13 @@ fn interface(checker: &Checker, module: ModuleId, done: &[ModuleResults]) -> u64
                 .owner
                 .map(|owner| owner.text(&tree.file))
                 .hash(&mut hasher);
+            // Another module's call builds a copy of its body, so the body
+            // is what that module sees.
+            if check::declaration::const_parameter(tree, function.signature).is_some() {
+                tree.file
+                    .slice(tree.decls.span(declaration))
+                    .hash(&mut hasher);
+            }
         }
         // A declaration's result is in one table; the other slots are
         // `NotStarted`.

@@ -237,6 +237,8 @@ pub struct TypeDecl {
 /// parameter written `_: Type` has no name.
 #[derive(Clone, Copy, Debug)]
 pub struct Param {
+    /// `const name: type`: the call gives a type, known when compiling.
+    pub constant: bool,
     pub mutable: bool,
     pub name: Option<Ident>,
     pub ty: Id<Type>,
@@ -295,6 +297,8 @@ pub enum Type {
     /// The type the function belongs to, `Point` in `fn Point::sum(&self)`;
     /// in an interface, the type that meets it. Only `self` has it.
     Owner,
+    /// `type`, written as a parameter's type: the parameter takes a type
+    Type,
     /// a type that could not be parsed
     Invalid,
 }

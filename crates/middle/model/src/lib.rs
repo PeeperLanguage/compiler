@@ -13,6 +13,8 @@ pub mod operators;
 pub mod semantic_types;
 pub mod thir;
 
+use crate::semantic_types::ConstArguments;
+
 /// A module of the program, by its place in the program's order. Tables of
 /// per-module results are vectors indexed by it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -41,11 +43,20 @@ pub struct DefId {
     pub index: u32,
 }
 
+/// A function as a call names it: its declaration, and what its `const`
+/// parameters are given, which makes this copy of it
+/// (`ConstArguments::NONE` for a function without them).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct FunctionCopy {
+    pub definition: DefId,
+    pub arguments: ConstArguments,
+}
+
 /// What a call runs: a declared function, or the method at this position
 /// in the table of the interface reference that is the call's first
 /// argument, which the call gives as its `self` (THIR's and MIR's `Call`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Callee {
-    Function(DefId),
+    Function(FunctionCopy),
     Method(u32),
 }

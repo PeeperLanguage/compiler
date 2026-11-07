@@ -16,7 +16,7 @@ use std::fmt::Write;
 use std::iter::Peekable;
 
 use arena::Id;
-use model::DefId;
+use model::FunctionCopy;
 use model::constant::Value;
 use model::mir;
 use model::mir::InstructionKind;
@@ -30,13 +30,14 @@ use model::semantic_types::TypeId;
 use model::semantic_types::Types;
 use model::semantic_types::range_field;
 use rustc_hash::FxHashMap;
+use source::SourceFile;
 
 use crate::Module;
 use crate::function::debug_info::DebugLocation;
 use crate::text::alloca_text;
 use crate::text::constant_text;
+use crate::text::copy_symbol;
 use crate::text::quoted;
-use crate::text::symbol;
 use crate::text::type_text;
 use model::layout::field_placed;
 use model::layout::in_memory;
@@ -54,12 +55,14 @@ const FLUSH: (&str, &str) = ("peeper_rt_v1_flush", "");
 const MEMCPY: &str = "llvm.memcpy.p0.p0.i64";
 
 impl Module<'_> {
-    /// Adds the function `definition` of this module, whose MIR is `body`.
-    pub(crate) fn add_function(&mut self, definition: DefId, body: &mir::Body, types: &Types) {
+    /// Adds the function `copy`, whose MIR is `body`: one of this module, or
+    /// a copy of another module's function this module called first.
+    pub(crate) fn add_function(&mut self, copy: FunctionCopy, body: &mir::Body, types: &Types) {
         let program = self.program;
-        let symbol = symbol(program, definition);
+        let symbol = copy_symbol(program, types, copy);
+        let file = &program.modules[copy.definition.module.index()].ast.file;
         let (subprogram, scope_metadata) = self
-            .add_debug_info(definition, &symbol, body, types)
+            .add_debug_info(copy, file, &symbol, body, types)
             .unzip();
         // Each string constant as an operand: a `&cstr`'s global, a `&str`'s
         // global and length.
@@ -77,6 +80,7 @@ impl Module<'_> {
             .collect();
         let mut function = Function {
             module: self,
+            file,
             strings,
             body,
             types,
@@ -241,6 +245,7 @@ pub(crate) fn global(symbol: &str) -> String {
 /// given.
 struct Function<'m, 'p, 'b> {
     module: &'m mut Module<'p>,
+    file: &'p SourceFile, // the function's own, which a copy's module may not be
     strings: Vec<Option<String>>, // by constant: each string as an operand
     body: &'b mir::Body,
     types: &'b Types,
@@ -275,7 +280,9 @@ impl Function<'_, '_, '_> {
     /// (`add_function`) and, in a debug build, the debug declaration of
     /// each one with a name.
     fn variables(&mut self, out: &mut String) {
-        let file = self.module.file();
+        let file = self.file;
+        let file_metadata =
+            (self.module.metadata.as_mut()).map(|metadata| metadata.file_node(&file.path));
         for variable in self.body.variables.ids() {
             let index = variable.index();
             let mir::Variable {
@@ -288,7 +295,8 @@ impl Function<'_, '_, '_> {
                 let text = alloca_text(self.types, ty, self.module.target);
                 _ = writeln!(out, "  %v{index} = alloca {text}");
             }
-            let Some(metadata) = &mut self.module.metadata else {
+            let (Some(metadata), Some(file_metadata)) = (&mut self.module.metadata, file_metadata)
+            else {
                 continue;
             };
             if hidden {
@@ -305,7 +313,6 @@ impl Function<'_, '_, '_> {
             } else {
                 String::new()
             };
-            let file_metadata = metadata.file;
             let declared = metadata.add(format_args!(
                 "!DILocalVariable(name: {}, {argument}scope: !{}, file: !{file_metadata}, line: {line}, type: !{debug_type})",
                 quoted(file.slice(span).as_bytes()),

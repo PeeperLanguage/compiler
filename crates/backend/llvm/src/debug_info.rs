@@ -25,37 +25,49 @@ const DEEPEST_DEBUG_TYPE: usize = 5_000;
 
 /// The module's debug info: numbered metadata nodes.
 pub(crate) struct Metadata {
-    pub(crate) text: String, // each node's line, `!N = ...`, in order
-    pub(crate) count: usize, // the nodes so far; the next one's number
-    pub(crate) file: usize,  // the DIFile of the module's source file
-    pub(crate) unit: usize,  // the DICompileUnit, the scope of every function
+    pub(crate) text: String,         // each node's line, `!N = ...`, in order
+    pub(crate) count: usize,         // the nodes so far; the next one's number
+    files: FxHashMap<String, usize>, // the DIFile of each source file, by path
+    pub(crate) unit: usize,          // the DICompileUnit, the scope of every function
     debug_types: FxHashMap<TypeId, usize>, // each type's debug type
-    depth: usize,            // what `debug_type` is inside now
+    depth: usize,                    // what `debug_type` is inside now
 }
 impl Metadata {
     /// The debug info of a module in the file `path`, with no function yet.
-    pub(crate) fn new(path: &Path) -> Metadata {
-        let name = path.file_name().unwrap_or_default().to_string_lossy();
-        let folder = path.parent().unwrap_or(Path::new("")).to_string_lossy();
+    pub(crate) fn new(path: &str) -> Metadata {
         let mut metadata = Metadata {
             text: String::new(),
             count: 0,
-            file: 0,
+            files: FxHashMap::default(),
             unit: 0,
             debug_types: FxHashMap::default(),
             depth: 0,
         };
-        metadata.file = metadata.add(format_args!(
-            "!DIFile(filename: {}, directory: {})",
-            quoted(name.as_bytes()),
-            quoted(folder.as_bytes())
-        ));
-        let file = metadata.file;
+        let file = metadata.file_node(path);
         metadata.unit = metadata.add(format_args!(
             "distinct !DICompileUnit(language: DW_LANG_C, file: !{file}, producer: \"peeper\", \
              isOptimized: false, runtimeVersion: 0, emissionKind: FullDebug)"
         ));
         metadata
+    }
+
+    /// The DIFile of the source file at `path`, added the first time: the
+    /// module's own, or that of a copy of another module's function.
+    pub(crate) fn file_node(&mut self, path: &str) -> usize {
+        if let Some(&id) = self.files.get(path) {
+            return id;
+        }
+        let key = path.to_string();
+        let path = Path::new(path);
+        let name = path.file_name().unwrap_or_default().to_string_lossy();
+        let folder = path.parent().unwrap_or(Path::new("")).to_string_lossy();
+        let id = self.add(format_args!(
+            "!DIFile(filename: {}, directory: {})",
+            quoted(name.as_bytes()),
+            quoted(folder.as_bytes())
+        ));
+        self.files.insert(key, id);
+        id
     }
 
     /// Adds the node `node` and gives its number.

@@ -1,0 +1,15 @@
+// Each type or value a `const` parameter is given makes one copy of the
+// function: two types make two functions, as do two values, each called
+// twice.
+fn Size(const T: type) -> usize {
+    return size_of(T);
+}
+
+fn Twice(const n: usize) -> usize {
+    return n * 2;
+}
+
+fn main() {
+    println(Size(i32), Size(i64), Size(i32), Size(i64));
+    println(Twice(2), Twice(3), Twice(2), Twice(3));
+}

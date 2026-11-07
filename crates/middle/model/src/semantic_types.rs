@@ -9,9 +9,29 @@ use bigint::Limbs;
 use rustc_hash::FxHashMap;
 
 use crate::DefId;
+use crate::constant::Constant;
+use crate::constant::value_text;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct TypeId(u32);
+
+/// What a function's `const` parameters are given, in order, by their place
+/// in `Types`'s list of them (`Types::const_arguments`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct ConstArguments(u32);
+
+impl ConstArguments {
+    /// None: the arguments of a function without `const` parameters.
+    pub const NONE: ConstArguments = ConstArguments(0);
+}
+
+/// What one `const` parameter is given: a type for `const T: type`, else a
+/// value known when compiling.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum ConstArgument {
+    Type(TypeId),
+    Value(Constant),
+}
 
 /// A struct's functions that are an interface's methods, by its place in
 /// `Types`'s list of them: the table of an interface reference.
@@ -533,6 +553,10 @@ pub struct Types {
     /// `ImplementationId`; the checker adds one at the first conversion of
     /// a reference to its struct to a reference to its interface.
     implementations: Vec<Box<[DefId]>>,
+    /// Each list of `const` arguments, by `ConstArguments`, the empty one
+    /// first.
+    argument_lists: Vec<Box<[ConstArgument]>>,
+    argument_ids: FxHashMap<Box<[ConstArgument]>, ConstArguments>,
 }
 
 impl Types {
@@ -544,7 +568,10 @@ impl Types {
             types: Vec::new(),
             ids: FxHashMap::default(),
             implementations: Vec::new(),
+            argument_lists: Vec::new(),
+            argument_ids: FxHashMap::default(),
         };
+        types.const_arguments(&[]);
         for ty in FIXED {
             types.intern(ty.clone());
         }
@@ -571,6 +598,62 @@ impl Types {
         // Only added to, like the types.
         let added = &other.implementations[self.implementations.len()..];
         self.implementations.extend_from_slice(added);
+        for list in &other.argument_lists[self.argument_lists.len()..] {
+            self.const_arguments(list);
+        }
+    }
+
+    /// The id of the list of `const` arguments `list`, made the first time
+    /// it is seen.
+    pub fn const_arguments(&mut self, list: &[ConstArgument]) -> ConstArguments {
+        if let Some(&id) = self.argument_ids.get(list) {
+            return id;
+        }
+        let id = ConstArguments(
+            u32::try_from(self.argument_lists.len()).expect("fewer than 2^32 lists"),
+        );
+        self.argument_lists.push(list.into());
+        self.argument_ids.insert(list.into(), id);
+        id
+    }
+
+    /// What the list `arguments` holds.
+    pub fn arguments(&self, arguments: ConstArguments) -> &[ConstArgument] {
+        &self.argument_lists[arguments.0 as usize]
+    }
+
+    /// `name<T, 3>`: the function `name` of the copy made for `arguments`,
+    /// each type as `name_of` names its declaration, each value as Peeper
+    /// text; `name` alone without `const` arguments.
+    pub fn copy_text<N: fmt::Display>(
+        &self,
+        name: String,
+        arguments: ConstArguments,
+        name_of: impl Fn(DefId) -> N + Copy,
+    ) -> String {
+        let given = self.arguments(arguments);
+        if given.is_empty() {
+            return name;
+        }
+        let texts: Vec<String> = (given.iter())
+            .map(|argument| self.argument_text(argument, name_of))
+            .collect();
+        format!("{name}<{}>", texts.join(", "))
+    }
+
+    /// `argument` as `copy_text` writes it: a type as `name_of` names its
+    /// declaration, a value as Peeper text.
+    pub fn argument_text<N: fmt::Display>(
+        &self,
+        argument: &ConstArgument,
+        name_of: impl Fn(DefId) -> N + Copy,
+    ) -> String {
+        match argument {
+            ConstArgument::Type(ty) => self.text(*ty, name_of),
+            ConstArgument::Value(Constant { ty, value }) => {
+                value_text(value, &self[*ty]).to_string()
+            }
+        }
     }
 
     /// The parameters a reference returned by a function of type `signature`

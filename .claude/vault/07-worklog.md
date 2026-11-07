@@ -984,3 +984,98 @@ ran `check.sh` fully green.
   expressions; an array literal wins when `{` follows. Every `.peep` file
   in the repo parses as before or better (3 more parse).
 - `scripts/check.sh` passed.
+
+## `const` parameters, `core:memory` (2026-11-07, `feature/size-of`, uncommitted)
+
+- Owner: allocators move to `core:memory`, which gains `Realloc` (a method
+  of `Allocator`), `Replace` and `New`; `const` parameters take types and,
+  later the same day, values known when compiling.
+- `core:allocator` is now `core:memory`. `Realloc(&mut self, memory,
+  old_size, new_size, align) -> rawptr` on `Heap` (C `realloc`, size at
+  least 1, so 0 does not free), `Arena` (the newest piece in place, else a
+  new piece and a copy), `Pool` (the same chunk, else `none`), `Stack`
+  (newest piece only, else a panic). Runtime `peeper_rt_v1_realloc`;
+  interpreter `realloc`. Fixtures `run_realloc` (+ i686).
+- `New(const T: type, allocator) -> *T` and `Replace(const T: type, place:
+  &mut T, value: T) -> T` (the bytes of `value` and `place` traded).
+- `ast::Param.constant`, `ast::Type::Type` (`type` as a parameter's type).
+- A call names a `FunctionCopy` (`DefId` and `ConstArguments`, an interned
+  list of `ConstArgument::Type` or `::Value`); a plain function is its copy
+  with `NONE`. MIR, the interpreter (`mir_of`), LLVM (`copy_symbol`:
+  `path.Name<module.Type>`, `Name<3>`), dumps and the queue (by the module
+  whose compile built it) all take copies. Debug info points a copy at its
+  own file (`Metadata::file_node`).
+- Checker: `Checking.arguments`; `resolve_global` reads a `const T: type`
+  from the innermost entry. A copy's signature is checked on its first
+  call (`copy_type`) and its body by the compile after the module
+  (`next_copy`). A `const` value is a constant of the body. Errors in a
+  copy are reported in the calling module with "in `Name<T>`, the copy
+  made for this call" at the call; the same error in two copies once. A
+  copy made in a copy's body reports where the outer one does; its
+  signature's errors go to the call's module first, so the outer copy
+  counts them.
+- A function with `const` parameters gets its own signature checked, with
+  invalid types for `T`; an error there makes it invalid. Its body is
+  checked only through copies (open QUESTION 3 default).
+- Refused: `const mut`, `const ...`, `type` on a plain parameter,
+  `const x: T` (not supported yet), `extern`, interface methods, a struct
+  method with `const` parameters as an interface's, a `main` with them, a
+  non-constant argument (the `const` statement's messages). Copies nested
+  64 deep: one error, and no more copies are built.
+- The interface hash includes the text of a function with `const`
+  parameters: an importer's copy is built from its body (test
+  `a_type_parameter_body_edit_checks_its_importers`, fails without it).
+- Fixtures: `run_const_parameters` (+ i686: two modules calling the same
+  copies, a copy calling a copy, a method, a constant running a copy,
+  values, `New`, `Replace`), `ll_const_parameters`,
+  `negative_const_parameters` (16 errors), `negative_const_parameters_main`,
+  `negative_endless_copies`. Panic lines in the allocator and realloc
+  fixtures moved down 23 lines.
+- tree-sitter-peeper (`feature/size-of`): `const` before a parameter (the
+  old `comptime` there removed), `type` as its type; corpus test.
+- Benchmark (`perf stat`, one compile = (3 runs - 1 run) / 2): 3,824.6 M
+  at the step-1 checkpoint, 3,854.6 M now, +0.8%. Removed: a per-name scan
+  in `resolve_global` (now only for entries given arguments), a per
+  variable file lookup in LLVM. The sampled profile misses about half the
+  instructions there and does not show where the rest goes; switching
+  single checks off moved the count by 10-15 M either way.
+- `scripts/check.sh`: all pass but `whitespace`, which flags the blank
+  last line the compiler writes after a module's `declare` lines in
+  `ll_size_of/expected.ll` (marked `git add -N`); committed `ll` fixtures
+  end the same way.
+
+### Review fixes for `const` parameters (2026-11-07, uncommitted)
+
+- A copy no longer checks code its constants rule out: an `if` on a
+  constant `bool` keeps only the way it takes, and when that way always
+  leaves the block (`leaves`), the rest of the block is not checked. Code
+  after a written `return`, or after an `if` decided at run time, is still
+  checked, as in a plain function. `Count(const n: u64)` recursing to
+  `Count(n - 1)` stops at 0 instead of nesting 64 deep or failing on
+  `0 - 1`.
+- LLVM names a float argument by its bits (`copy_symbol`): `Same(NAN)` and
+  `Same(-NAN)` printed alike and made one name twice, which clang refused.
+- `copy_called`: a missing `const` argument hands back the function's own
+  type, so `check_call` reports the one argument count (counting the
+  `const` parameters); a failed argument sets a `failed` flag instead of an
+  invalid-type marker in the list.
+- `record`: skips only a real copy (one in `copies`), so a function's own
+  signature records its facts; `const_value_type` turns facts off while it
+  reads a value parameter's type again for a call. Test
+  `a_function_with_const_parameters_records_its_signature_once` (fails with
+  either half undone).
+- Fixtures: `run_const_parameters` and its i686 copy gain `Count` (run and
+  in a constant), `Sign` (a decided `else`) and the NaN copies;
+  `negative_const_parameters` gains `Scaled()` and `Dead`, a type error
+  after a written `return` in a copy (18 errors; without the written-`if`
+  rule the `Dead` error is gone).
+- Speed: `scripts/bench-instructions.py`, three runs each: checkpoint
+  3,815.9 to 3,823.7 M, now 3,856.0 to 3,861.5 M, +0.9%. A profile with
+  enough samples (period 200,000, 11 compiles against 1) puts +23 M in
+  `check`, spread over about ten places of 1 to 4 M each (the new checks
+  per function and call, the `FunctionCopy` table). Tried, each within
+  noise (about 5 M): sizing the `bodies` table up front, `#[inline]` on
+  `record`, switching off the `const` scans in `check_call`,
+  `compile_module` and the interface hash. Not fixed: no single cause.
+- `scripts/check.sh`: all pass but `whitespace` (the `ll_size_of` blank
+  last line, as above).

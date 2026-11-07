@@ -269,7 +269,8 @@ fn compile<'p>(
             false, // names are for editors
             |output| {
                 let compile::Output::Function(compile::CheckedFunction {
-                    definition,
+                    function,
+                    module,
                     thir,
                     mir,
                     types,
@@ -285,9 +286,9 @@ fn compile<'p>(
                 if queue.is_some() || dumps.iter().any(|dump| matches!(dump, Dump::Mir)) {
                     flow::cleanup::remove_unused_code(&mut mir);
                 }
-                dumped.add(definition, thir, &mir, types);
+                dumped.add(function, thir, &mir, types);
                 if let Some(queue) = queue.as_deref_mut() {
-                    queue.add(definition, mir, types);
+                    queue.add(module, function, mir, types);
                 }
             },
         )

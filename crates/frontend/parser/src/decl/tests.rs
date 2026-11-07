@@ -25,6 +25,28 @@ fn parses_variadic_parameters() {
     assert_eq!(dump_of(text), want);
 }
 
+/// `const T: type` takes a type; `type` is a type only there, which the
+/// checker decides, so the parser reads it in any parameter.
+#[test]
+fn parses_type_parameters() {
+    let text = "fn f(x: i32, const T: type, t: type);\n";
+    let want = "module
+  function declaration
+    declared name f
+    parameter
+      declared name x
+      type name i32
+    const parameter
+      declared name T
+      type of a type type
+    parameter
+      declared name t
+      type of a type type
+";
+    assert!(messages(text).is_empty());
+    assert_eq!(dump_of(text), want);
+}
+
 /// The lexer reads `&&` as one token; in a type it is two references.
 #[test]
 fn parses_two_references_written_as_one_token() {

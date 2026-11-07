@@ -1,0 +1,2 @@
+// A program starts at one `main`, which takes no `const` parameter.
+fn main(const T: type) {}

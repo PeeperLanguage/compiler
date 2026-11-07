@@ -130,6 +130,18 @@ impl ThirBuilder<'_, '_> {
                 .error(diagnostics::INVALID_OPERATION, message, name.span);
             return None;
         };
+        self.check_constant_value(value, declared)
+    }
+
+    /// `value`, of the type `declared` when given, as a value known at
+    /// compile time: a constant's, or a `const` parameter's argument
+    /// (`copy_called`). Calls in it run now. `None` after an error, or when
+    /// it is known only when the program runs, reported.
+    pub(crate) fn check_constant_value(
+        &mut self,
+        value: Id<ast::Expr>,
+        declared: Option<TypeId>,
+    ) -> Option<Constant> {
         let span = self.checker.module().ast.exprs.span(value);
         let outer = std::mem::replace(&mut self.in_constant, true);
         let checked = match declared {

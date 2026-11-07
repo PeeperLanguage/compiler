@@ -25,6 +25,7 @@ use crate::function::global;
 use crate::function::print::write_extended;
 use crate::function::print::write_limbs;
 use crate::function::value_name;
+use crate::text::copy_symbol;
 use crate::text::symbol;
 use crate::text::type_text;
 use model::layout::in_memory;
@@ -49,8 +50,9 @@ impl Function<'_, '_, '_> {
         let name = value_name(id);
         let (callee, receiver, arguments) = match callee {
             Callee::Function(function) => {
-                let symbol = symbol(self.module.program, function);
-                if project::extern_symbol(&self.module.program.modules, function) != Ok(None) {
+                let symbol = copy_symbol(self.module.program, types, function);
+                let definition = function.definition;
+                if project::extern_symbol(&self.module.program.modules, definition) != Ok(None) {
                     return self.write_c_call(out, id, &symbol, arguments, location);
                 }
                 let callee = global(&symbol);

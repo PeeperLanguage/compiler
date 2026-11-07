@@ -41,7 +41,7 @@ impl Checked {
         let previous = std::mem::take(&mut self.results);
         let cache_facts = |output: compile::Output| match output {
             compile::Output::Function(compile::CheckedFunction {
-                definition,
+                module,
                 thir,
                 facts,
                 types,
@@ -50,7 +50,7 @@ impl Checked {
                 let facts = facts
                     .iter()
                     .map(|fact| CachedFact::new(program, fact, Some(thir), types));
-                found.entry(definition.module).or_default().extend(facts);
+                found.entry(module).or_default().extend(facts);
             }
             compile::Output::Constant {
                 definition,

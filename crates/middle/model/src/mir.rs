@@ -420,7 +420,7 @@ impl Printer<'_> {
     fn write_instruction<N: Display>(
         &mut self,
         kind: &InstructionKind,
-        name_of: impl Fn(DefId) -> N,
+        name_of: impl Fn(DefId) -> N + Copy,
     ) {
         match kind {
             InstructionKind::Store { place, value } => {
@@ -469,7 +469,9 @@ impl Printer<'_> {
             } => {
                 match callee {
                     Callee::Function(function) => {
-                        _ = write!(self.out, "call {}(", name_of(*function));
+                        let name = name_of(function.definition).to_string();
+                        let copy = self.types.copy_text(name, function.arguments, name_of);
+                        _ = write!(self.out, "call {copy}(");
                     }
                     Callee::Method(slot) => _ = write!(self.out, "call method {slot}("),
                 }

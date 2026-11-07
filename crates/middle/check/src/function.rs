@@ -1,24 +1,32 @@
 //! A function's body built to checked MIR (THIR, lowering, the path checks),
 //! and calls run at compile time on it (`evaluate_call`).
 
+use std::sync::Arc;
+
 use diagnostics::Diagnostic;
 use eval::interpreter::Failure;
 use model::Callee;
 use model::DefId;
+use model::FunctionCopy;
+use model::ModuleId;
 use model::ast;
 use model::constant::Value;
 use model::mir;
+use model::semantic_types::ConstArguments;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
 use model::thir;
 use rustc_hash::FxHashSet;
 use source::Span;
 
+use crate::COPY_DEPTH_LIMIT;
 use crate::Checker;
+use crate::Checking;
+use crate::Copied;
 
-/// How far the body of a function is built (`Checker::build_function`).
+/// How far the body of a function is built (`Checker::build_function`),
+/// once it is.
 pub(crate) enum Built {
-    NotYet,
     /// Built once, so what its checks found is reported.
     Reported,
     /// Built for a run at compile time and kept for the next run: its MIR,
@@ -27,36 +35,153 @@ pub(crate) enum Built {
 }
 
 impl Checker<'_> {
-    /// Builds the body of the function `definition`, asked for at `used_at`,
-    /// into `thir`, only to run it at compile time when `to_run`: checks it
-    /// (`check_body`), lowers it to MIR and runs the path checks. `None` when it has no body
-    /// or its signature had an error; else its MIR, `None` when it had an
-    /// error. What it finds is reported by its first build only: a later one
-    /// (the compile's, after a run at compile time, or the other way round)
-    /// finds the same and drops it.
+    /// Builds the body of the function `copy`, asked for at `used_at`, into
+    /// `thir`, only to run it at compile time when `to_run`: checks it
+    /// (`check_body`), lowers it to MIR and runs the path checks. `None` when
+    /// it has no body or its signature had an error; else its MIR, `None`
+    /// when it had an error. What it finds is reported by its first build
+    /// only: a later one (the compile's, after a run at compile time, or the
+    /// other way round) finds the same and drops it.
     pub fn build_function(
         &mut self,
-        definition: DefId,
+        copy: FunctionCopy,
         used_at: Span,
         thir: &mut thir::Body,
         to_run: bool,
     ) -> Option<Option<mir::Body>> {
-        let (module, index) = (definition.module.index(), definition.index as usize);
-        let ty = self.function_type(definition, used_at);
+        let module = copy.definition.module.index();
+        let ty = self.copy_type(copy, used_at);
         // Decided now: a run at compile time inside this build builds it too.
-        let first = matches!(self.module_checks[module].bodies[index], Built::NotYet);
+        let first = !self.bodies.contains_key(&copy);
         if first {
-            self.module_checks[module].bodies[index] = Built::Reported;
+            self.bodies.insert(copy, Built::Reported);
         }
         let reported = self.module_checks[module].diagnostics.len();
-        let checked = self.check_body(definition, used_at, thir, to_run);
-        let mir = checked.then(|| self.lower_function(definition, ty, thir));
+        let checked = self.check_body(copy, used_at, thir, to_run);
+        let mir = checked.then(|| self.lower_function(copy.definition, ty, thir));
         let found = &mut self.module_checks[module].diagnostics;
         let failed = found[reported..].iter().any(Diagnostic::is_error);
         if !first {
             found.truncate(reported);
+        } else if copy.arguments != ConstArguments::NONE {
+            let into = self.copies[&copy].reported_in;
+            self.report_from_copy(copy, reported, into);
         }
         mir.map(|mir| mir.filter(|_| !failed))
+    }
+
+    /// The type of `copy`, asked for at `used_at`: a plain function's
+    /// (`function_type`), or, for a function with `const T: type`
+    /// parameters, the type of its copy for the types it is given, made the
+    /// first time a call asks for it and kept for the compile to build its
+    /// body (`next_copy`). Invalid when the function's own signature, or
+    /// the copy's, has an error, or when copies are made inside each other
+    /// too deep (`COPY_DEPTH_LIMIT`), reported at `used_at`.
+    pub fn copy_type(&mut self, copy: FunctionCopy, used_at: Span) -> TypeId {
+        let pattern = self.function_type(copy.definition, used_at);
+        if copy.arguments == ConstArguments::NONE || pattern == TypeId::INVALID {
+            return pattern;
+        }
+        if let Some(copied) = self.copies.get(&copy) {
+            return copied.signature;
+        }
+        let checking = self.checking.last().expect("a call is being checked");
+        let made_inside = FunctionCopy {
+            definition: checking.definition,
+            arguments: checking.arguments,
+        };
+        let (depth, reported_in) = match self.copies.get(&made_inside) {
+            Some(inside) => (inside.depth + 1, inside.reported_in),
+            None => (1, self.current_module()),
+        };
+        if depth > COPY_DEPTH_LIMIT {
+            // Reported once: the body that made the copy has the error.
+            if std::mem::replace(&mut self.copies_stopped, true) {
+                return TypeId::INVALID;
+            }
+            let name = project::declared_path(self.modules, copy.definition);
+            let message = format!(
+                "`{name}` makes a new copy of itself inside each copy, without end: \
+                 copies nest {COPY_DEPTH_LIMIT} deep here"
+            );
+            return self.error(diagnostics::CIRCULAR_DEPENDENCY, message, used_at);
+        }
+        self.copies.insert(
+            copy,
+            Copied {
+                signature: TypeId::INVALID,
+                depth,
+                reported_in,
+                called_in: self.current_module(),
+                called_at: used_at,
+            },
+        );
+        let module = copy.definition.module.index();
+        let reported = self.module_checks[module].diagnostics.len();
+        self.checking.push(Checking {
+            definition: copy.definition,
+            arguments: copy.arguments,
+            used_at,
+            to_run: false,
+        });
+        let signature = self.check_function(copy.definition);
+        self.checking.pop();
+        let caller = self.current_module();
+        self.report_from_copy(copy, reported, caller);
+        let copied = self.copies.get_mut(&copy).expect("the copy was just made");
+        copied.signature = signature;
+        if signature != TypeId::INVALID {
+            self.unbuilt_copies.push(copy);
+        }
+        signature
+    }
+
+    /// A copy of a function with `const T: type` parameters whose body the
+    /// compile has not built (`build_function`), the newest first; building
+    /// one may make more. None once copies nested too deep.
+    pub fn next_copy(&mut self) -> Option<FunctionCopy> {
+        self.unbuilt_copies.pop().filter(|_| !self.copies_stopped)
+    }
+
+    /// Moves what checking `copy` reported in its function's module, past
+    /// the first `reported` diagnostics, to the module `into`, each marking
+    /// the call it was made for. Another copy's check may find the same in
+    /// the function's text: the module keeps the first.
+    fn report_from_copy(&mut self, copy: FunctionCopy, reported: usize, into: ModuleId) {
+        let modules = self.modules;
+        let definition = copy.definition;
+        let found = &mut self.module_checks[definition.module.index()].diagnostics;
+        if found.len() == reported {
+            return;
+        }
+        let found: Vec<Diagnostic> = found.drain(reported..).collect();
+        let Copied {
+            called_in,
+            called_at,
+            ..
+        } = self.copies[&copy];
+        let name = self.types.copy_text(
+            project::declared_path(modules, definition),
+            copy.arguments,
+            |definition| project::declared_text(modules, definition),
+        );
+        let file = &modules[called_in.index()].ast.file;
+        let into = &mut self.module_checks[into.index()].diagnostics;
+        for diagnostic in found {
+            let place = |diagnostic: &Diagnostic| {
+                let label = diagnostic.labels.first();
+                label.map(|label| (Arc::as_ptr(&label.file), label.span))
+            };
+            let same = |earlier: &Diagnostic| {
+                earlier.code == diagnostic.code
+                    && earlier.message == diagnostic.message
+                    && place(earlier) == place(&diagnostic)
+            };
+            if !into.iter().any(same) {
+                let message = format!("in `{name}`, the copy made for this call");
+                into.push(diagnostic.label(file, called_at, message));
+            }
+        }
     }
 
     /// The MIR of the checked THIR `thir` of the function `definition`, of
@@ -103,7 +228,7 @@ impl Checker<'_> {
     /// reported unless a function it runs had an error, which was.
     pub(crate) fn evaluate_call(
         &mut self,
-        function: DefId,
+        function: FunctionCopy,
         arguments: &[Value],
         span: Span,
     ) -> Option<Value> {
@@ -113,23 +238,23 @@ impl Checker<'_> {
         // cycle, not one that only may.
         let (mut reached, mut pending) = (FxHashSet::default(), vec![function]);
         while let Some(next) = pending.pop() {
+            if self.copies_stopped {
+                return None; // reported
+            }
             if !reached.insert(next) {
                 continue;
             }
-            let (module, index) = (next.module.index(), next.index as usize);
-            if !matches!(self.module_checks[module].bodies[index], Built::Kept(_)) {
-                if self
-                    .checking
-                    .iter()
-                    .any(|checking| checking.definition == next)
-                {
+            if !matches!(self.bodies.get(&next), Some(Built::Kept(_))) {
+                if self.checking.iter().any(|checking| {
+                    checking.definition == next.definition && checking.arguments == next.arguments
+                }) {
                     continue;
                 }
                 let mut thir = thir::Body::default();
                 let mir = self.build_function(next, span, &mut thir, true).flatten();
-                self.module_checks[module].bodies[index] = Built::Kept(mir.map(Box::new));
+                self.bodies.insert(next, Built::Kept(mir.map(Box::new)));
             }
-            let Built::Kept(Some(mir)) = &self.module_checks[module].bodies[index] else {
+            let Some(Built::Kept(Some(mir))) = self.bodies.get(&next) else {
                 continue;
             };
             // A method is called through a table, so each function in one
@@ -141,7 +266,11 @@ impl Checker<'_> {
                         ..
                     } => pending.push(function),
                     mir::InstructionKind::ToInterface { implementation, .. } => {
-                        pending.extend_from_slice(self.types.implementation(implementation));
+                        let methods = self.types.implementation(implementation).iter();
+                        pending.extend(methods.map(|&definition| FunctionCopy {
+                            definition,
+                            arguments: ConstArguments::NONE,
+                        }));
                     }
                     _ => {}
                 }
@@ -149,23 +278,21 @@ impl Checker<'_> {
         }
         let module = self.current_module().index();
         let ran = &mut self.module_checks[module].ran_modules;
-        for definition in reached {
-            if !ran.contains(&definition.module) {
-                ran.push(definition.module);
+        for copy in reached {
+            if !ran.contains(&copy.definition.module) {
+                ran.push(copy.definition.module);
             }
         }
-        let mir_of = |definition: DefId| match &self.module_checks[definition.module.index()].bodies
-            [definition.index as usize]
-        {
-            Built::Kept(mir) => mir.as_deref(),
-            Built::NotYet | Built::Reported => None,
+        let mir_of = |copy: FunctionCopy| match self.bodies.get(&copy) {
+            Some(Built::Kept(mir)) => mir.as_deref(),
+            None | Some(Built::Reported) => None,
         };
         // Where the run stopped (`None`: at this call), and why.
         let (place, message) = 'failed: {
             let (callee, place) = match mir_of(function) {
                 Some(body) => {
                     match eval::interpreter::run_function(
-                        function,
+                        function.definition,
                         body,
                         arguments,
                         &self.types,
@@ -186,7 +313,7 @@ impl Checker<'_> {
                         Err(Failure::Exited(_)) => unreachable!("a constant's call cannot exit"),
                     }
                 }
-                None => (function, None),
+                None => (function.definition, None),
             };
             if let Some(start) =
                 (self.checking.iter()).position(|checking| checking.definition == callee)

@@ -25,6 +25,29 @@ iface Allocator {
     fn Free(&mut self, memory: rawptr)
 }
 
+// A new `T` from `allocator`, not set yet: `none` when it has no room.
+fn New(const T: type, allocator: &mut Allocator) -> *T {
+    return allocator.Allocate(size_of(T), align_of(T)) as *T;
+}
+
+// Puts `value` in `place` and gives back the value that was there: a way to
+// take a value out of a place behind a reference, which cannot be moved
+// from.
+fn Replace(const T: type, place: &mut T, value: T) -> T {
+    let mut old = value;
+    // `old` and `place` trade their bytes.
+    let a = @old as rawptr;
+    let b = @place.* as rawptr;
+    for i in 0..size_of(T) {
+        let x = (a + i) as *u8;
+        let y = (b + i) as *u8;
+        let byte = x.*;
+        x.* = y.*;
+        y.* = byte;
+    }
+    return old;
+}
+
 // Whether every allocator here can start a piece at a multiple of `align`:
 // the heap's blocks start at a multiple of 16.
 fn aligns(align: usize) -> bool {

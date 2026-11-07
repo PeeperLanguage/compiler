@@ -13,7 +13,6 @@ pub mod write;
 use std::collections::BTreeMap;
 use std::collections::HashSet;
 use std::fmt::Write;
-use std::path::Path;
 
 use model::DefId;
 use model::ModuleId;
@@ -79,10 +78,9 @@ impl<'p> Module<'p> {
         mode: BuildMode,
     ) -> Module<'p> {
         let metadata = match mode {
-            BuildMode::Debug => {
-                let path = Path::new(&program.modules[module.index()].ast.file.path);
-                Some(Metadata::new(path))
-            }
+            BuildMode::Debug => Some(Metadata::new(
+                &program.modules[module.index()].ast.file.path,
+            )),
             BuildMode::Release => None,
         };
         Module {

@@ -215,6 +215,8 @@ impl<'t> Dumper<'t> {
                 (
                     if p.variadic {
                         "variadic parameter"
+                    } else if p.constant {
+                        "const parameter"
                     } else {
                         "parameter"
                     },
@@ -320,6 +322,7 @@ impl<'t> Dumper<'t> {
             Type::Optional(inner) => ("optional type", None, one(inner)),
             Type::RawPointer => ("raw pointer type", None, vec![]),
             Type::Owner => ("self type", None, vec![]),
+            Type::Type => ("type of a type", None, vec![]),
             Type::FixedArray { length, element } => {
                 let length = match length {
                     Length::Number(span) => Item::Leaf("number literal", span),

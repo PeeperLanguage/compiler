@@ -1,0 +1,10 @@
+name = "negative_const_parameters_main"
+build = "program"
+
+[test]
+mode = "run"
+outcome = "failure"
+stderr_contains = [
+    "program entrypoint must be a local body-backed `fn main()` or `fn main() -> i32`",
+    "main.peep:2:4\n",
+]

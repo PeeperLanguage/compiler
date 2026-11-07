@@ -2,9 +2,11 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use super::CheckedFunction;
+use super::ModuleResults;
 use super::Output;
 use super::Results;
 use super::run;
+use diagnostics::Diagnostic;
 use model::ModuleId;
 use model::machine::Machine;
 
@@ -450,13 +452,13 @@ fn each_way_out_of_a_block_ends_its_variables_newest_first() {
         false,
         |output| {
             if let Output::Function(CheckedFunction {
-                definition,
+                function,
                 mir: Some(mir),
                 types,
                 ..
             }) = output
             {
-                let file = &program.modules[definition.module.index()].ast.file;
+                let file = &program.modules[function.definition.module.index()].ast.file;
                 text.push_str(&mir.text(types, file, |_| ""));
             }
         },
@@ -691,10 +693,10 @@ fn recompile(modules: &[(&str, &str)], previous: Results) -> (Results, Vec<Strin
     let loaded = load(modules);
     let mut checked: Vec<String> = Vec::new();
     let results = run(&loaded, x86_64(), previous, None, false, |output| {
-        let Output::Function(CheckedFunction { definition, .. }) = output else {
+        let Output::Function(CheckedFunction { module, .. }) = output else {
             return;
         };
-        let path = &loaded.modules[definition.module.index()].path;
+        let path = &loaded.modules[module.index()].path;
         if !checked.contains(path) {
             checked.push(path.clone());
         }
@@ -964,9 +966,9 @@ fn a_function_run_at_compile_time_records_its_facts_once() {
         |output| {
             let (owner, facts) = match output {
                 Output::Function(CheckedFunction {
-                    definition, facts, ..
+                    function, facts, ..
                 }) => {
-                    let declaration = &tree.decls[tree.declaration(definition.index)];
+                    let declaration = &tree.decls[tree.declaration(function.definition.index)];
                     (declaration.name().text(&tree.file), facts)
                 }
                 Output::Facts { facts, .. } => ("module", facts),
@@ -1120,4 +1122,111 @@ fn a_prelude_edit_checks_what_it_changes() {
     );
     let (_, checked) = recompile(&[value, main], second);
     assert_eq!(checked, ["core:global", "app:main"]);
+}
+
+/// What a copy's check finds goes to the module that called for it, with
+/// that call marked, also from a copy made inside another copy; an error
+/// every copy finds in the function's text is reported once.
+#[test]
+fn copies_report_once_to_the_calling_module() {
+    let program = load(&[
+        (
+            "app:list",
+            "fn Twice(const T: type, x: T) -> T { let wrong: i32 = true; return add(T, x); }
+            fn add(const T: type, x: T) -> T { return x + x; }",
+        ),
+        (
+            "app:main",
+            "import \"app:list\";
+            fn main() { list::Twice(i32, 1); list::Twice(bool, true); list::Twice(i64, 2); }",
+        ),
+    ]);
+    let results = run(&program, x86_64(), Results::default(), None, false, |_| {});
+    let found = |module: &ModuleResults| -> Vec<(String, Vec<String>)> {
+        let labels = |diagnostic: &Diagnostic| {
+            let label = |label: &diagnostics::Label| {
+                format!("{} {}", label.file.slice(label.span), label.message)
+            };
+            diagnostic.labels.iter().map(label).collect()
+        };
+        let diagnostics = module.diagnostics.iter();
+        diagnostics
+            .map(|diagnostic| (diagnostic.message.clone(), labels(diagnostic)))
+            .collect()
+    };
+    assert_eq!(found(&results.modules[0]), []);
+    let call = |argument: &str| format!("list::Twice({argument})");
+    assert_eq!(
+        found(&results.modules[1]),
+        [
+            (
+                "mismatched types: expected `i32`, found `bool`".to_string(),
+                vec![
+                    "true ".to_string(),
+                    // Copies are built newest first.
+                    format!(
+                        "{} in `Twice<i64>`, the copy made for this call",
+                        call("i64, 2")
+                    ),
+                ]
+            ),
+            (
+                "operator `+` cannot be applied to `bool`".to_string(),
+                vec![
+                    "x + x ".to_string(),
+                    "add(T, x) in `add<bool>`, the copy made for this call".to_string(),
+                ]
+            ),
+        ]
+    );
+}
+
+/// An importer's call builds a copy of a function with `const T: type`
+/// parameters, so an edit of its body checks the importer again.
+#[test]
+fn a_type_parameter_body_edit_checks_its_importers() {
+    let utils = |body: &str| format!("fn Size(const T: type) -> usize {{ return {body}; }}");
+    let main = (
+        "app:main",
+        "import \"app:utils\";\nfn main() { utils::Size(i32); }",
+    );
+    let before = utils("size_of(T)");
+    let (first, _) = recompile(&[("app:utils", &before), main], Results::default());
+    let after = utils("align_of(T)");
+    let (_, checked) = recompile(&[("app:utils", &after), main], first);
+    assert_eq!(checked, ["app:main"]);
+}
+
+/// A function with `const` parameters records the facts of its own
+/// signature once, though each call reads a value parameter's type again;
+/// a copy records none.
+#[test]
+fn a_function_with_const_parameters_records_its_signature_once() {
+    let program = load(&[(
+        "app:main",
+        "fn main() { let x = Pick(i32, 2, 3); let y = Pick(i32, 4, 5); }
+            fn Pick(const T: type, const n: i64, x: T) -> T { return x; }",
+    )]);
+    let tree = &program.modules[0].ast;
+    let mut found: Vec<&str> = Vec::new();
+    run(
+        &program,
+        x86_64(),
+        Results::default(),
+        None,
+        true,
+        |output| {
+            let facts = match output {
+                Output::Function(CheckedFunction { facts, .. }) | Output::Facts { facts, .. } => {
+                    facts
+                }
+                Output::Constant { .. } => return,
+            };
+            found.extend(facts.iter().map(|fact| tree.file.slice(fact.span)));
+        },
+    );
+    // Checked at the first call, before its arguments.
+    let expected = ["Pick", "i64", "T", "T", "i32", "2", "3", "x"];
+    assert_eq!(found[..expected.len()], expected);
+    assert_eq!(found.iter().filter(|&&text| text == "i64").count(), 1);
 }

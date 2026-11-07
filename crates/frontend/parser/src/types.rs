@@ -247,6 +247,7 @@ impl Parser {
                 p.add(
                     start,
                     Param {
+                        constant: false,
                         mutable: false,
                         name,
                         ty,

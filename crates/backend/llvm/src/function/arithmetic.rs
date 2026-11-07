@@ -249,7 +249,7 @@ impl Function<'_, '_, '_> {
         debug_scope: Id<mir::DebugScope>,
     ) {
         let location = self.location(span, debug_scope);
-        let file = self.module.file();
+        let file = self.file;
         let text = project::panic_text(&self.module.program.root, file, message, span);
         let string = self.module.add_string(&text);
         self.module.declare(WRITE, || {

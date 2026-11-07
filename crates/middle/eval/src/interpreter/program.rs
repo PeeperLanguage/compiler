@@ -7,6 +7,7 @@
 use arena::Id;
 use bigint::Limbs;
 use model::DefId;
+use model::FunctionCopy;
 use model::constant::Value;
 use model::layout::field_placed;
 use model::layout::in_memory;
@@ -93,7 +94,7 @@ pub fn run<'b>(
     body: &'b mir::Body,
     types: &'b Types,
     target: &'b Machine,
-    mir_of: &dyn Fn(DefId) -> Option<&'b mir::Body>,
+    mir_of: &dyn Fn(FunctionCopy) -> Option<&'b mir::Body>,
     facts: &ProgramFacts<'_>,
 ) -> Outcome {
     let host = Host {

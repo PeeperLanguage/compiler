@@ -24,10 +24,13 @@ slices (`&[]T`) merged. Open branch: `feature/interfaces`. Order of work
    a `const T: type` parameter takes a type known when compiling, and each
    type gets its own copy of the function; a plain `T: type` is refused for
    now; `<T>` generics stay. Any type works as a type argument.
-   - [~] Step 1: `size_of(T)` and `align_of(T)`, `usize` constants, on
+   - [x] Step 1: `size_of(T)` and `align_of(T)`, `usize` constants, on
      `feature/size-of` (stacked on `feature/allocator-interface`).
-   - [ ] Step 2: `const T: type` parameters and their copies.
-   - [ ] Step 3: `core:allocator` uses them (`New`).
+   - [x] Step 2: `const` parameters and their copies: a type
+     (`const T: type`) or a value known when compiling (`const n: i64`,
+     owner 2026-11-07), one copy per type or value. Waiting for review.
+   - [x] Step 3: `core:allocator` renamed `core:memory`, with `Realloc`,
+     `New` and `Replace`. Waiting for review.
 
 Later: lifetimes of references held in structs; enums and `match` with
 `?T` (put off by the owner 2026-10-30); generics.

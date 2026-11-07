@@ -8,5 +8,5 @@ exit_code = 101
 stdout_contains = ["arena: true true true\narena list: 6\narena reset: true 6\narena released: true\npool: true true true\npool reuse: true\npool list: 6\npool of a wrong align: 0\npool of a huge chunk: true\nstack: true true\nstack list: 10\nheap list: 55 true\nfreeing out of order\n"]
 stderr_contains = [
     "panic: a stack's pieces are freed newest first\n",
-    "memory.peep:234:9\n",
+    "memory.peep:257:9\n",
 ]

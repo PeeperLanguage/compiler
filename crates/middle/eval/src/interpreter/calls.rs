@@ -6,6 +6,7 @@ use std::rc::Rc;
 use arena::Id;
 use model::Callee;
 use model::DefId;
+use model::FunctionCopy;
 use model::constant::Value;
 use model::layout::in_memory;
 use model::layout::layout;
@@ -13,6 +14,7 @@ use model::mir;
 use model::mir::InstructionKind;
 use model::mir::Operand;
 use model::mir::Terminator;
+use model::semantic_types::ConstArguments;
 use model::semantic_types::ImplementationId;
 use model::semantic_types::TypeId;
 use source::Span;
@@ -209,20 +211,25 @@ impl<'b> Interpreter<'b, '_> {
         callee: Callee,
         arguments: &[Operand],
     ) -> Result<(), Failure> {
-        let (function, receiver) = match callee {
-            Callee::Function(function) => (function, None),
+        let (copy, receiver) = match callee {
+            Callee::Function(copy) => (copy, None),
             Callee::Method(slot) => {
                 let Register::Interface { address, table } = self.operand(&arguments[0]) else {
                     unreachable!("a method is called on an interface reference")
                 };
                 let implementation = ImplementationId::from_index(table as usize);
-                let function = self.types.implementation(implementation)[slot as usize];
-                (function, Some(Register::Address(address)))
+                let definition = self.types.implementation(implementation)[slot as usize];
+                let copy = FunctionCopy {
+                    definition,
+                    arguments: ConstArguments::NONE,
+                };
+                (copy, Some(Register::Address(address)))
             }
         };
+        let function = copy.definition;
         let frame = self.frame();
         let span = frame.body.instructions.span(id);
-        let Some(body) = (self.mir_of)(function) else {
+        let Some(body) = (self.mir_of)(copy) else {
             if self.host.is_some() {
                 return self.call_outside(id, function, arguments);
             }

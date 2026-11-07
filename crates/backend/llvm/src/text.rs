@@ -5,11 +5,13 @@ use std::fmt::Display;
 use std::fmt::Write;
 
 use model::DefId;
+use model::FunctionCopy;
 use model::constant::Constant;
 use model::constant::Value;
 use model::layout::in_memory;
 use model::layout::layout;
 use model::machine::Machine;
+use model::semantic_types::ConstArgument;
 use model::semantic_types::Float;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
@@ -25,6 +27,33 @@ pub(crate) fn symbol(program: &project::Program, definition: DefId) -> String {
             let name = project::declared_path(&program.modules, definition);
             format!("{path}.{name}")
         })
+}
+
+/// The name the linker knows the copy `copy` by: its function's `symbol`,
+/// with its `const` arguments, each type by its module's path and name
+/// (`myapp:main.New<myapp:main.Node>`), so two modules' types of one name
+/// make two names, and each float value by its bits, as two NaNs print
+/// alike.
+pub(crate) fn copy_symbol(program: &project::Program, types: &Types, copy: FunctionCopy) -> String {
+    let modules = &program.modules;
+    let qualified = |definition: DefId| {
+        let path = &modules[definition.module.index()].path;
+        format!("{path}.{}", project::declared_text(modules, definition))
+    };
+    let name = symbol(program, copy.definition);
+    let given = types.arguments(copy.arguments);
+    if given.is_empty() {
+        return name;
+    }
+    let text = |argument: &ConstArgument| match argument {
+        ConstArgument::Value(Constant {
+            value: Value::Float(bits),
+            ..
+        }) => format!("{bits:#x}"),
+        _ => types.argument_text(argument, qualified),
+    };
+    let texts: Vec<String> = given.iter().map(text).collect();
+    format!("{name}<{}>", texts.join(", "))
 }
 /// The LLVM type of a value of type `ty`, written where it is printed.
 pub(crate) fn type_text(types: &Types, ty: TypeId) -> impl Display {

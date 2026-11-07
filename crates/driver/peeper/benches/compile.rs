@@ -84,7 +84,8 @@ fn main() {
                 false,
                 |output| {
                     let compile::Output::Function(compile::CheckedFunction {
-                        definition,
+                        function,
+                        module,
                         mir,
                         types,
                         ..
@@ -94,7 +95,7 @@ fn main() {
                     };
                     let mut mir = mir.expect("the program has no errors");
                     flow::cleanup::remove_unused_code(&mut mir);
-                    queue.add(definition, mir, types);
+                    queue.add(module, function, mir, types);
                 },
             )
         });

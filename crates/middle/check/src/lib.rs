@@ -21,10 +21,13 @@ use diagnostics::Diagnostic;
 use diagnostics::fix::Fix;
 use function::Built;
 use model::DefId;
+use model::FunctionCopy;
 use model::ModuleId;
 use model::ast;
 use model::constant::Constant;
 use model::machine::Machine;
+use model::semantic_types::ConstArgument;
+use model::semantic_types::ConstArguments;
 use model::semantic_types::ImplementationId;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
@@ -58,11 +61,48 @@ pub struct Checker<'p> {
     /// module is the module being checked (`current_module`). One asked for
     /// again while it is here depends on itself.
     checking: Vec<Checking>,
+    /// How far the body of each function, or each copy of one, is built
+    /// (`build_function`).
+    bodies: FxHashMap<FunctionCopy, Built>,
+    /// Each copy of a function with `const T: type` parameters made so far
+    /// (`copy_type`).
+    copies: FxHashMap<FunctionCopy, Copied>,
+    /// The copies made whose bodies the compile has not built yet, in the
+    /// order made; it takes them (`next_copy`).
+    unbuilt_copies: Vec<FunctionCopy>,
+    /// Whether copies nested too deep (`COPY_DEPTH_LIMIT`): then no copy's
+    /// body is built any more, as a function that makes two copies inside
+    /// each would make twice as many at each depth.
+    copies_stopped: bool,
 }
+
+/// A copy of a function with `const T: type` parameters (`Checker::copies`).
+struct Copied {
+    signature: TypeId, // its function type, invalid when it has an error
+    /// The copies it is made inside, each in the body of the one before,
+    /// counting itself: 1 for one a plain function's body makes.
+    depth: u32,
+    /// The module whose check made it, or the copy it is made inside: what
+    /// the check of its body finds is reported there. Its signature's
+    /// errors go to the call's module, as the call's.
+    reported_in: ModuleId,
+    /// The call it was made for, in the module `called_in`.
+    called_in: ModuleId,
+    called_at: Span,
+}
+
+/// How deep copies may be made inside each other's bodies (`Copied::depth`):
+/// a function whose copy calls a copy for a new type each time would make
+/// copies without end.
+const COPY_DEPTH_LIMIT: u32 = 64;
 
 /// A declaration being checked (`Checker::checking`).
 struct Checking {
     definition: DefId,
+    /// What its `const` parameters are given, when it is a function that
+    /// has them: a copy's, or invalid types in its own signature
+    /// (`own_arguments`); else `ConstArguments::NONE`.
+    arguments: ConstArguments,
     /// Where its asker wrote its name (its own name, when checked for its
     /// own sake).
     used_at: Span,
@@ -89,8 +129,6 @@ pub struct ModuleChecks<'p> {
     /// Each module constant: its type and value, `None` when it had an error
     /// (`check_constant`).
     pub constants: Vec<State<Option<Constant>>>,
-    /// Each function: how far its body is built (`build_function`).
-    bodies: Vec<Built>,
     /// The modules whose functions its constants may run at compile time
     /// (`evaluate_call`), so a constant's value depends on their bodies,
     /// which no interface holds.
@@ -129,7 +167,6 @@ impl<'p> Checker<'p> {
                     scope,
                     declared_types: vec![State::NotStarted; declarations],
                     constants: vec![State::NotStarted; declarations],
-                    bodies: (0..declarations).map(|_| Built::NotYet).collect(),
                     ran_modules: Vec::new(),
                     facts: Vec::new(),
                     diagnostics,
@@ -144,6 +181,10 @@ impl<'p> Checker<'p> {
             target,
             record_facts,
             checking: Vec::new(),
+            bodies: FxHashMap::default(),
+            copies: FxHashMap::default(),
+            unbuilt_copies: Vec::new(),
+            copies_stopped: false,
         }
     }
 
@@ -224,6 +265,7 @@ impl<'p> Checker<'p> {
         }
         self.checking.push(Checking {
             definition,
+            arguments: ConstArguments::NONE,
             used_at,
             to_run: false,
         });
@@ -376,21 +418,56 @@ impl<'p> Checker<'p> {
 
     /// Records the fact `kind` about the text at `span` in the module being
     /// checked, when facts are recorded (`new`), unless it is in a body
-    /// built only to run (`Checking::to_run`).
+    /// built only to run (`Checking::to_run`) or in a copy, whose facts are
+    /// of what it is given only. The function's own signature, checked with
+    /// invalid types (`own_arguments`), is no copy.
     pub(crate) fn record(&mut self, span: Span, kind: FactKind) {
         let Some(checking) = self.checking.last().filter(|_| self.record_facts) else {
             return;
         };
-        if !checking.to_run {
+        let copy = FunctionCopy {
+            definition: checking.definition,
+            arguments: checking.arguments,
+        };
+        if !checking.to_run && !self.copies.contains_key(&copy) {
             let module = checking.definition.module.index();
             self.module_checks[module].facts.push(Fact { span, kind });
         }
     }
 
-    /// What `name` stands for at the top level: a built-in type, which no
-    /// declaration hides; else a name in the module's scope; else an
-    /// exported name of the prelude.
+    /// What `name` stands for at the top level: a `const T: type` parameter
+    /// of the function being checked, the type it is given
+    /// (`Checking::arguments`; a `const` value is a local of the body);
+    /// else a built-in type, which no declaration
+    /// hides; else a name in the module's scope; else an exported name of
+    /// the prelude.
     pub(crate) fn resolve_global(&mut self, name: &str) -> Option<Symbol> {
+        let checking = self
+            .checking
+            .last()
+            .expect("a declaration is being checked");
+        if checking.arguments != ConstArguments::NONE {
+            let ast::Decl::Function(function) =
+                project::declaration(self.modules, checking.definition)
+            else {
+                unreachable!("only a function is given `const` arguments")
+            };
+            let tree = &self.module().ast;
+            let const_parameters = (tree.children.lists.items(function.signature.parameters))
+                .map(|parameter| tree.children.params[parameter])
+                .filter(|parameter| parameter.constant);
+            let given = self.types.arguments(checking.arguments);
+            for (parameter, given) in const_parameters.zip(given) {
+                if let ast::Type::Type = tree.types[parameter.ty]
+                    && let &ConstArgument::Type(ty) = given
+                    && parameter
+                        .name
+                        .is_some_and(|written| written.text(&tree.file) == name)
+                {
+                    return Some(Symbol::Builtin(ty));
+                }
+            }
+        }
         if let Some(builtin) = self.types.builtin(name, self.target.pointer_bits) {
             return Some(Symbol::Builtin(builtin));
         }

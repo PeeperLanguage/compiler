@@ -8,11 +8,14 @@ use arena::List;
 use bigint::Limbs;
 use model::Callee;
 use model::DefId;
+use model::FunctionCopy;
 use model::ast;
 use model::ast::Ident;
 use model::constant::Constant;
 use model::constant::Value;
 use model::layout::layout;
+use model::semantic_types::ConstArgument;
+use model::semantic_types::ConstArguments;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
 use model::semantic_types::Types;
@@ -26,7 +29,9 @@ use source::Span;
 use crate::builder::ThirBuilder;
 use crate::builtin::LayoutFact;
 use crate::builtin::layout_function;
+use crate::declaration::const_parameter;
 use crate::declaration::is_self;
+use crate::function::function_declaration;
 use crate::scope;
 
 impl ThirBuilder<'_, '_> {
@@ -162,7 +167,9 @@ impl ThirBuilder<'_, '_> {
     /// its name or its path, can be called, or with a dot, `x.name(arguments)`,
     /// a type's function or an interface reference's method, which gets `x`
     /// as its `self`. A `...` parameter takes all the arguments past the
-    /// others (`check_variadic`).
+    /// others (`check_variadic`). A function with `const` parameters is
+    /// called as its copy for what is written in their places
+    /// (`copy_called`).
     pub(super) fn check_call(
         &mut self,
         callee: Id<ast::Expr>,
@@ -212,6 +219,22 @@ impl ThirBuilder<'_, '_> {
                 None
             }
         };
+        // The written arguments come after the receiver's.
+        let first = usize::from(receiver.is_some());
+        // The places among the written arguments of what a copy is for.
+        let mut const_places = Vec::new();
+        let found = match found {
+            Some((Callee::Function(function), _))
+                if let definition = function.definition
+                    && let declared = function_declaration(self.checker.modules, definition)
+                    && let tree = &self.checker.modules[definition.module.index()].ast
+                    && const_parameter(tree, declared.signature).is_some() =>
+            {
+                self.copy_called(definition, arguments, first, &mut const_places, span)
+            }
+            found => found,
+        };
+        let not_const = |&(place, _): &(usize, Id<ast::Expr>)| !const_places.contains(&place);
         let signature = found.map(|(callee, ty)| (callee, ty, self.checker.types[ty].clone()));
         let Some((
             callee,
@@ -224,7 +247,8 @@ impl ThirBuilder<'_, '_> {
             },
         )) = signature
         else {
-            for argument in tree.children.lists.items(arguments) {
+            let written = tree.children.lists.items(arguments).enumerate();
+            for (_, argument) in written.filter(not_const) {
                 let argument = match tree.exprs[argument] {
                     ast::Expr::Spread(values) => values,
                     _ => argument,
@@ -233,16 +257,16 @@ impl ThirBuilder<'_, '_> {
             }
             return Expr::INVALID;
         };
-        // The written arguments come after the receiver's.
-        let first = usize::from(receiver.is_some());
         let fixed = parameters.len() - usize::from(variadic) - first;
+        // A `const` parameter is not among the type's, but takes an argument.
+        let all = fixed + const_places.len();
         let arity_matches = if variadic {
-            arguments.len() >= fixed
+            arguments.len() >= all
         } else {
-            arguments.len() == fixed
+            arguments.len() == all
         };
         if !arity_matches {
-            let message = argument_count_message(text, fixed, variadic, arguments.len());
+            let message = argument_count_message(text, all, variadic, arguments.len());
             self.checker
                 .error(diagnostics::WRONG_ARGUMENT_COUNT, message, span);
         }
@@ -259,7 +283,8 @@ impl ThirBuilder<'_, '_> {
             };
             checked.push(argument.into());
         }
-        let mut given = tree.children.lists.items(arguments);
+        let written = tree.children.lists.items(arguments).enumerate();
+        let mut given = written.filter(not_const).map(|(_, argument)| argument);
         for (&parameter, argument) in parameters[first..first + fixed].iter().zip(given.by_ref()) {
             let argument = self.add_required(argument, parameter);
             self.reborrow_in_place(argument);
@@ -317,8 +342,12 @@ impl ThirBuilder<'_, '_> {
     /// reported an error.
     fn function_called(&mut self, symbol: Option<Symbol>, span: Span) -> Option<(Callee, TypeId)> {
         match symbol {
-            Some(Symbol::Function(function)) => {
-                let ty = self.checker.function_type(function, span);
+            Some(Symbol::Function(definition)) => {
+                let ty = self.checker.function_type(definition, span);
+                let function = FunctionCopy {
+                    definition,
+                    arguments: ConstArguments::NONE,
+                };
                 Some((Callee::Function(function), ty))
             }
             Some(_) => {
@@ -370,8 +399,82 @@ impl ThirBuilder<'_, '_> {
         let Callee::Function(function) = callee else {
             unreachable!("a type's member is a function")
         };
-        self.takes_self(function, span)
+        self.takes_self(function.definition, span)
             .then_some((place, callee, signature))
+    }
+
+    /// The copy of the function `definition` that its call at `span` with
+    /// the written `arguments`, after `first` of the receiver, asks for,
+    /// and its type. The argument in the place of each `const` parameter,
+    /// put in `const_places`, is what the copy is made for: a type for
+    /// `const T: type` (`resolve_type_argument`), else a value of the
+    /// parameter's type known when compiling. When one is missing, the
+    /// function itself and its own type, for `check_call` to report the
+    /// count. `None` when one has an error, or the function's signature
+    /// has one, reported.
+    fn copy_called(
+        &mut self,
+        definition: DefId,
+        arguments: List<ast::Expr>,
+        first: usize,
+        const_places: &mut Vec<usize>,
+        span: Span,
+    ) -> Option<(Callee, TypeId)> {
+        let modules = self.checker.modules;
+        let tree = &modules[definition.module.index()].ast;
+        let declared = function_declaration(modules, definition);
+        let parameters = tree.children.lists.items(declared.signature.parameters);
+        // `self` is never `const`, so a `const` parameter is past the receiver.
+        let const_parameters: Vec<(usize, ast::Param)> = (parameters.enumerate())
+            .map(|(place, parameter)| (place, tree.children.params[parameter]))
+            .filter(|(_, parameter)| parameter.constant)
+            .map(|(place, parameter)| (place - first, parameter))
+            .collect();
+        const_places.extend(const_parameters.iter().map(|&(place, _)| place));
+        let written: Vec<Id<ast::Expr>> =
+            (self.checker.module().ast.children.lists.items(arguments)).collect();
+        let pattern = self.checker.function_type(definition, span);
+        if pattern == TypeId::INVALID {
+            return None; // reported
+        }
+        // Too few arguments: `check_call` reports it, by the function's own type.
+        if const_parameters
+            .last()
+            .is_some_and(|&(place, _)| place >= written.len())
+        {
+            let function = FunctionCopy {
+                definition,
+                arguments: ConstArguments::NONE,
+            };
+            return Some((Callee::Function(function), pattern));
+        }
+        let mut given = Vec::with_capacity(const_parameters.len());
+        let mut failed = false;
+        for (place, parameter) in const_parameters {
+            let argument = written[place];
+            if let ast::Type::Type = tree.types[parameter.ty] {
+                let ty = self.checker.resolve_type_argument(argument);
+                failed |= ty == TypeId::INVALID;
+                given.push(ConstArgument::Type(self.checker.types.real(ty)));
+                continue;
+            }
+            let ty = self
+                .checker
+                .const_value_type(definition, parameter.ty, span);
+            match self.check_constant_value(argument, Some(ty)) {
+                Some(constant) => given.push(ConstArgument::Value(constant)),
+                None => failed = true, // reported
+            }
+        }
+        if failed {
+            return None;
+        }
+        let copy = FunctionCopy {
+            definition,
+            arguments: self.checker.types.const_arguments(&given),
+        };
+        let ty = self.checker.copy_type(copy, span);
+        Some((Callee::Function(copy), ty))
     }
 
     /// The method `name` of the interface reference `reference`, to
