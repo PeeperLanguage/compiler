@@ -28,7 +28,7 @@ fn main() {
             ("app".to_string(), folder.join("src")),
             ("core".to_string(), folder.join("core")),
         ]),
-        entry: folder.join("src/main.peep"),
+        entry: Some(folder.join("src/main.peep")),
         root: folder.clone(),
         name: "app".to_string(),
     };

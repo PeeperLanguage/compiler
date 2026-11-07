@@ -133,7 +133,7 @@ impl Server<'_> {
     }
 
     /// The module read from `file` in each program last checked that holds
-    /// it, by the program's entry file, with what that check keeps. A module
+    /// it, in the order of what it is kept by, with what that check keeps. A module
     /// read from other text than the editor now has, before a check or after
     /// one that could not load, is left out: its places are not the
     /// editor's.

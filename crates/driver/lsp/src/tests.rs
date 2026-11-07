@@ -610,7 +610,7 @@ fn names_across_modules() {
     std::fs::create_dir_all(folder.join("src")).unwrap();
     std::fs::write(
         folder.join("peeper.toml"),
-        "name = \"app\"\nbuild = \"bin\"\n",
+        "name = \"app\"\nbuild = \"program\"\n",
     )
     .unwrap();
     let utils = "fn Add(a: i32, b: i32) -> i32 { return a + b; }\n#[extern(\"cap\")] fn Cap() -> u8;\n/// The cap.\nconst Limit: u8 = 200;\nfn Twice(n: i32) -> i32 { return n * 2; }\nconst Ratio: f32 = 0.1;\nconst Broken: i32 = true;\nstruct Spot { x: i32 }\nfn Spot::Get(&self) -> i32 { return self.x; }\nfn Spot::raw(&self) -> i32 { return self.x; }\n";
@@ -834,7 +834,7 @@ fn checks_an_open_file_nothing_imports() {
     std::fs::create_dir_all(folder.join("src")).unwrap();
     std::fs::write(
         folder.join("peeper.toml"),
-        "name = \"app\"\nbuild = \"bin\"\n",
+        "name = \"app\"\nbuild = \"program\"\n",
     )
     .unwrap();
     std::fs::write(folder.join("src/main.peep"), "fn main() {}\n").unwrap();
@@ -867,6 +867,46 @@ fn checks_an_open_file_nothing_imports() {
     );
 }
 
+/// A file of a library is checked as part of it: a library has no entry, so
+/// its check is kept by its folder, and its other files are checked too.
+#[test]
+fn checks_a_library_by_its_folder() {
+    let folder = std::env::temp_dir().join(format!("peeper-lsp-library-{}", std::process::id()));
+    _ = std::fs::remove_dir_all(&folder);
+    std::fs::create_dir_all(folder.join("src")).unwrap();
+    std::fs::write(
+        folder.join("peeper.toml"),
+        "name = \"tools\"\nbuild = \"lib\"\n",
+    )
+    .unwrap();
+    let used = folder.join("src/used.peep");
+    std::fs::write(&used, "fn Used() -> i32 { return 1; }\n").unwrap();
+    let wrong = folder.join("src/wrong.peep");
+    std::fs::write(&wrong, "fn Wrong() -> i32 { return true; }\n").unwrap();
+    let (connection, client) = Connection::memory();
+    let mut server = Server::new(&connection, Path::new(""), true);
+    let text = std::fs::read_to_string(&used).unwrap();
+    let uri = Url::from_file_path(&used).unwrap();
+    let document = json!({ "uri": uri, "languageId": "peeper", "version": 1, "text": text });
+    let open = Notification::new(
+        "textDocument/didOpen".to_string(),
+        json!({ "textDocument": document }),
+    );
+    server.apply_notification(open).unwrap();
+    let Message::Notification(published) = client.receiver.recv().unwrap() else {
+        panic!("no publish");
+    };
+    let published: PublishDiagnosticsParams = serde_json::from_value(published.params).unwrap();
+    assert_eq!(published.uri, Url::from_file_path(&wrong).unwrap());
+    assert_eq!(
+        published.diagnostics.len(),
+        1,
+        "{:?}",
+        published.diagnostics
+    );
+    assert_eq!(server.checked.keys().collect::<Vec<_>>(), [&folder]);
+}
+
 /// A request answers only from a check of the text the editor has now:
 /// not while an edit waits for its check, nor after an edit that could not
 /// be loaded. An edit of a bundled library's module checks every program
@@ -877,6 +917,8 @@ fn answers_only_from_the_current_text() {
     _ = std::fs::remove_dir_all(&folder);
     let libraries = folder.join("libs");
     std::fs::create_dir_all(libraries.join("shared/src")).unwrap();
+    let shared = "name = \"shared\"\nbuild = \"lib\"\n";
+    std::fs::write(libraries.join("shared/peeper.toml"), shared).unwrap();
     let library = libraries.join("shared/src/values.peep");
     std::fs::write(&library, "const Value: i32 = 1;\n").unwrap();
     let uses = "import \"shared:values\";\nfn main() { let v = values::Value; }\n";
@@ -884,7 +926,7 @@ fn answers_only_from_the_current_text() {
     let project = |name: &str| {
         let main = folder.join(name).join("src/main.peep");
         std::fs::create_dir_all(main.parent().unwrap()).unwrap();
-        let manifest = format!("name = \"{name}\"\nbuild = \"bin\"\n");
+        let manifest = format!("name = \"{name}\"\nbuild = \"program\"\n");
         std::fs::write(folder.join(name).join("peeper.toml"), manifest).unwrap();
         std::fs::write(&main, uses).unwrap();
         main

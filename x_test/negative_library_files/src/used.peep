@@ -1,0 +1,4 @@
+// A library has no `main`: each file of it is a module.
+fn Double(x: i32) -> i32 {
+    return x * 2;
+}

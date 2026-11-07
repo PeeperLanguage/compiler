@@ -265,6 +265,19 @@ fn fixtures() {
             }
         }
     }
+    // Each bundled library checks clean on its own: every file of it, with
+    // no program around it.
+    let libraries = root.join("../_builtin_library").canonicalize();
+    let libraries = libraries.expect("_builtin_library exists");
+    for library in std::fs::read_dir(&libraries).expect("_builtin_library lists") {
+        let library = library.expect("a library folder lists").path();
+        let output = (Command::new(&compiler).arg("check").arg(&library).output())
+            .expect("the compiler runs");
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            failures.push(format!("{}: does not check\n{stderr}", library.display()));
+        }
+    }
     assert!(checked > 0, "no check fixtures in {}", root.display());
     assert!(failures.is_empty(), "{}", failures.join("\n\n"));
     if cfg!(target_os = "linux") {

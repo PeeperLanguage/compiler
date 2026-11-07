@@ -244,7 +244,8 @@ pub struct Program {
     /// which panic messages name its files from, so a program is the same
     /// wherever its project is.
     pub root: PathBuf,
-    /// The module of the project's entry file, which must declare `main`.
+    /// The module of the project's entry file, which must declare `main`;
+    /// `None` for a library.
     pub entry: Option<ModuleId>,
 }
 
@@ -264,9 +265,11 @@ pub struct Project {
     /// <project>/src and "core" to <installation>/libs/core/src; an import
     /// "myapp:utils/file" names <project>/src/utils/file.peep.
     pub packages: HashMap<String, PathBuf>,
-    pub entry: PathBuf, // the file the program starts at
-    pub root: PathBuf,  // the project folder, or the folder of the file
-    pub name: String,   // the project's package name, or the file's name without `.peep`
+    /// The file the program starts at; `None` for a library, whose every
+    /// source file is loaded.
+    pub entry: Option<PathBuf>,
+    pub root: PathBuf, // the project folder, or the folder of the file
+    pub name: String,  // the project's package name, or the file's name without `.peep`
 }
 
 /// The one spelling of `path` that files are found and compared by:
@@ -309,7 +312,8 @@ pub fn path_text(path: &Path) -> String {
 }
 
 /// The project at `path`: a folder holding peeper.toml, whose program starts
-/// at src/main.peep, or a single file, checked on its own with no imports.
+/// at src/main.peep and whose library is each file of src, or a single file,
+/// checked on its own with no imports.
 /// `libraries` holds the bundled libraries, one folder each. The error is a
 /// full message naming the file it is about.
 pub fn find(path: &Path, libraries: &Path) -> Result<Project, String> {
@@ -327,7 +331,7 @@ pub fn find(path: &Path, libraries: &Path) -> Result<Project, String> {
             .into_owned();
         return Ok(Project {
             packages,
-            entry: path,
+            entry: Some(path),
             root,
             name,
         });
@@ -337,14 +341,16 @@ pub fn find(path: &Path, libraries: &Path) -> Result<Project, String> {
 }
 
 /// The project in the folder `root`, which `manifest` describes, beside the
-/// bundled libraries `packages`. The error is a full message naming the file
-/// it is about.
+/// bundled libraries `packages`. A library of a bundled library's name is
+/// that library being worked on, so it takes its place. The error is a full
+/// message naming the file it is about.
 pub fn project_in(
     root: PathBuf,
     manifest: manifest::Manifest,
     mut packages: HashMap<String, PathBuf>,
 ) -> Result<Project, String> {
-    if packages.contains_key(&manifest.name) {
+    let library = manifest.build == manifest::Build::Library;
+    if !library && packages.contains_key(&manifest.name) {
         let file = root.join(manifest::FILE_NAME);
         return Err(format!(
             "{}: project name `{}` is taken by a bundled library",
@@ -353,7 +359,7 @@ pub fn project_in(
         ));
     }
     let source = root.join(SOURCE_FOLDER);
-    let entry = entry(&source);
+    let entry = (!library).then(|| entry(&source));
     packages.insert(manifest.name.clone(), source);
     Ok(Project {
         packages,
@@ -404,8 +410,9 @@ pub fn create(dir: &Path, name: &str, libraries: &Path) -> Result<bool, String> 
     }
 }
 
-/// Maps each library folder in `libraries` to its src folder. No libraries
-/// folder means no bundled libraries.
+/// Maps the name of each library in `libraries`, a folder whose peeper.toml
+/// has `build = "lib"`, to its src folder. No libraries folder means no
+/// bundled libraries.
 fn bundled_libraries(libraries: &Path) -> HashMap<String, PathBuf> {
     let Ok(libraries) = canonical_path(libraries) else {
         return HashMap::new(); // an empty path names no folder
@@ -415,10 +422,11 @@ fn bundled_libraries(libraries: &Path) -> HashMap<String, PathBuf> {
     };
     entries
         .flatten()
-        .filter(|entry| entry.path().is_dir())
         .filter_map(|entry| {
-            let name = entry.file_name().into_string().ok()?;
-            manifest::is_valid_name(&name).then(|| (name, entry.path().join(SOURCE_FOLDER)))
+            let folder = entry.path();
+            let manifest = manifest::read(&folder).ok()?;
+            (manifest.build == manifest::Build::Library)
+                .then(|| (manifest.name, folder.join(SOURCE_FOLDER)))
         })
         .collect()
 }
@@ -439,7 +447,8 @@ struct Job {
     standalone: bool, // a file in no package, checked on its own: it cannot import
 }
 
-/// Reads `project`'s entry and every module it imports, directly or not. Files
+/// Reads `project`'s entry, or each source file of a library, and every
+/// module they import, directly or not. Files
 /// are read and parsed by a pool of worker threads, or by this thread on wasm,
 /// which cannot start one; only this thread touches the module map, and each
 /// module is touched only by its worker until it is handed over.
@@ -459,7 +468,13 @@ pub fn load(project: &Project, open_files: &HashMap<PathBuf, impl AsRef<str> + S
         std::thread::available_parallelism().map_or(1, |n| n.get())
     };
 
-    let (entry_path, in_package) = import_path_of(&project.packages, &project.entry);
+    let mut starts = Vec::new();
+    match &project.entry {
+        Some(entry) => starts.push(entry.clone()),
+        None => add_source_files(&project.packages[&project.name], &mut starts),
+    }
+    let entry_path =
+        (project.entry.as_ref()).map(|entry| import_path_of(&project.packages, entry).0);
     let mut modules = HashMap::new();
     let (send_job, jobs) = mpsc::channel::<Job>();
     let jobs = Mutex::new(jobs);
@@ -482,12 +497,17 @@ pub fn load(project: &Project, open_files: &HashMap<PathBuf, impl AsRef<str> + S
             });
         }
 
-        let mut seen = HashSet::from([entry_path.clone()]);
-        _ = send_job.send(Job {
-            path: entry_path.clone(),
-            file: project.entry.clone(),
-            standalone: !in_package,
-        });
+        let mut seen = HashSet::new();
+        for file in starts {
+            let (path, in_package) = import_path_of(&project.packages, &file);
+            if seen.insert(path.clone()) {
+                _ = send_job.send(Job {
+                    path,
+                    file,
+                    standalone: !in_package,
+                });
+            }
+        }
         // A module of the project that an editor has open is checked even
         // when no import reaches it from the entry.
         for file in open_files
@@ -553,7 +573,25 @@ pub fn load(project: &Project, open_files: &HashMap<PathBuf, impl AsRef<str> + S
         diagnostics,
         checkable,
         root: project.root.clone(),
-        entry: ids.get(&entry_path).copied(),
+        entry: entry_path.and_then(|path| ids.get(&path).copied()),
+    }
+}
+
+/// Adds each source file in `folder` and the folders in it to `files`. A
+/// folder that cannot be read adds nothing: a page's files are not on disk.
+fn add_source_files(folder: &Path, files: &mut Vec<PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(folder) else {
+        return;
+    };
+    // A link to a folder is not followed: one back up would load the same
+    // files again on each way round.
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+            add_source_files(&path, files);
+        } else if path.to_string_lossy().ends_with(SOURCE_EXTENSION) {
+            files.push(path);
+        }
     }
 }
 

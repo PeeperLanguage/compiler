@@ -27,17 +27,10 @@ use serde_json::Value;
 use serde_json::json;
 use source::SourceFile;
 
-/// The bundled library, every file of it, since there is no disk to find it on.
-const CORE_FILES: [(&str, &str); 2] = [
-    (
-        "global.peep",
-        include_str!("../../../../_builtin_library/core/src/global.peep"),
-    ),
-    (
-        "memory.peep",
-        include_str!("../../../../_builtin_library/core/src/memory.peep"),
-    ),
-];
+/// Every file of the bundled libraries, by its path in `_builtin_library`
+/// (`core/src/global.peep`), since there is no disk to find them on;
+/// build.rs lists them.
+const LIBRARY_FILES: &[(&str, &str)] = include!(concat!(env!("OUT_DIR"), "/library_files.rs"));
 
 /// The target a check assumes: what most programs are built for.
 const TARGET: &str = "x86_64-linux";
@@ -64,30 +57,42 @@ fn main() -> ExitCode {
     ExitCode::SUCCESS
 }
 
-/// The program `files` make up: `files` maps each file's path in the project
-/// to its text. The error is why peeper.toml gives no project, as a full
-/// message.
-fn load(files: HashMap<String, String>) -> Result<project::Program, String> {
-    let core = Path::new("/core/src");
+/// The project `files` make up and its program: `files` maps each file's
+/// path in the project to its text. The error is why peeper.toml gives no
+/// project, as a full message.
+fn load(files: HashMap<String, String>) -> Result<(project::Project, project::Program), String> {
     let Some(text) = files.get(manifest::FILE_NAME) else {
         return Err(format!("no {} in this project", manifest::FILE_NAME));
     };
     let manifest = manifest::parse(text, Path::new(manifest::FILE_NAME))?;
-    let libraries = HashMap::from([("core".to_string(), core.to_path_buf())]);
+    // Each library is a folder whose peeper.toml has `build = "lib"`, as on
+    // a disk (`project::find`).
+    let libraries = (LIBRARY_FILES.iter())
+        .filter_map(|&(path, text)| {
+            let path = Path::new(path);
+            let folder = Path::new("/").join(path.parent()?);
+            (path.file_name()? == manifest::FILE_NAME).then_some(())?;
+            let library = manifest::parse(text, &folder.join(manifest::FILE_NAME))
+                .expect("a bundled library's peeper.toml reads");
+            (library.build == manifest::Build::Library).then(|| (library.name, folder.join("src")))
+        })
+        .collect();
     let project = project::project_in(PathBuf::new(), manifest, libraries)?;
     let page_files = files
         .into_iter()
         .map(|(name, text)| (PathBuf::from(name), text));
-    let core_files = CORE_FILES.map(|(name, text)| (core.join(name), text.to_string()));
-    let open_files: HashMap<PathBuf, String> = page_files.chain(core_files).collect();
-    Ok(project::load(&project, &open_files))
+    let library_files =
+        (LIBRARY_FILES.iter()).map(|&(path, text)| (Path::new("/").join(path), text.to_string()));
+    let open_files: HashMap<PathBuf, String> = page_files.chain(library_files).collect();
+    let program = project::load(&project, &open_files);
+    Ok((project, program))
 }
 
 /// The diagnostics of the program `files` make up, as `peeper check` finds
 /// them (`diagnostics_json`). `files` maps each file's path in the project to its text.
 fn check(files: HashMap<String, String>) -> Value {
     let program = match load(files) {
-        Ok(program) => program,
+        Ok((_, program)) => program,
         Err(message) => return json!([manifest_entry(&message)]),
     };
     // As in `peeper check`, errors in loading would only be repeated.
@@ -113,10 +118,14 @@ fn check(files: HashMap<String, String>) -> Value {
 /// panic's text last), each piece a `text` and its `stream`, and its
 /// `exit_code`.
 fn run(files: HashMap<String, String>) -> Value {
-    let program = match load(files) {
-        Ok(program) => program,
+    let (project, program) = match load(files) {
+        Ok(loaded) => loaded,
         Err(message) => return json!({ "diagnostics": message, "run": null }),
     };
+    if project.entry.is_none() {
+        let message = format!("`{}` {}", project.name, manifest::LIBRARY_HAS_NO_MAIN);
+        return json!({ "diagnostics": message, "run": null });
+    }
     let target = Machine::named(TARGET).expect("the target is a machine");
     let (results, ran) = compile::interpret(&program, target);
     let ran = ran.map(|ran| {

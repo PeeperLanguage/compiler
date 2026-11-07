@@ -1079,3 +1079,73 @@ ran `check.sh` fully green.
   `compile_module` and the interface hash. Not fixed: no single cause.
 - `scripts/check.sh`: all pass but `whitespace` (the `ll_size_of` blank
   last line, as above).
+
+### Libraries as projects (`feature/library-manifest`, 2026-11-07, uncommitted)
+
+Branched from `9920cf40` in its own worktree, to merge into
+`feature/size-of` later.
+- The browser embeds every file under `_builtin_library/` through a
+  build.rs list (`LIBRARY_FILES`), not a hand-written `CORE_FILES`; its
+  libraries come from their embedded `peeper.toml`. Test
+  `every_core_module_is_built_in` (fails when the list misses a file).
+- `Manifest::build` (`Build::Program | Build::Library`): `build = "program"`,
+  `build = "lib"`, or none for a program; anything else is an error. Not
+  required, so existing projects and the website's playground manifest keep
+  working.
+- `Project::entry` is `None` for a library: `load` starts from each `.peep`
+  file of its `src/`, folders too; `Program::entry` is `None`.
+- A bundled library is a folder of `libs/` whose `peeper.toml` says
+  `build = "lib"`, named by that file, not by the folder. A library project
+  of a bundled library's name takes its place (working on `core` checks
+  that `core`); a program of that name is still refused.
+- `_builtin_library/core/peeper.toml`: `name = "core"`, `build = "lib"`, so
+  `peeper check _builtin_library/core` checks every core file, and the
+  editor checks a core file as part of `core`, not alone.
+- `peeper build`, `run` and `run -interpret` refuse a library: "`name` is a
+  library (`build = "lib"`), so it has no `main` to build or run".
+- Editor: a check is kept by the entry file, or a library's folder
+  (`checked_key`); `project_of` also finds the project of that folder. Its
+  tests wrote `build = "bin"`, which was never read; now `"program"`.
+- Tests: `reads_what_the_project_builds`, `a_library_loads_each_of_its_files`,
+  `a_bundled_library_is_named_by_its_manifest`,
+  `checks_a_library_by_its_folder` (fails with a wrong key). Fixtures:
+  `negative_library_files` (an error in a file nothing imports),
+  `run_library`; the fixture runner also checks each bundled library alone
+  (fails on a broken core file). The 13 `build = "lib"` fixtures pass as
+  libraries.
+- Review fixes: the browser's run refuses a library with the same message
+  as `peeper run` (`manifest::LIBRARY_HAS_NO_MAIN`, one text for both),
+  where it showed nothing before (test `a_library_does_not_run`); a link to
+  a folder inside a library, or a bundled library, is not followed, as one
+  back up loaded each file again on each way round (in
+  `a_library_loads_each_of_its_files`).
+- Merged into `feature/size-of` as uncommitted changes (nothing is
+  committed on either branch): a three-way merge of each file against
+  `9920cf40`; two conflicts, the browser's file list (the generated list
+  kept) and this log's end (both sections kept). The core test now looks
+  for `core:memory`. `scripts/check.sh` after the merge: all pass but
+  `whitespace` (the `ll_size_of` blank last line, as before); `core`, with
+  `New` and `Replace`, checks clean alone. Codedb rows updated. Backup of
+  the size-of state before the merge: `playground/backup-size-of-2026-11-07/`.
+- Not done: the website (its docs on `peeper.toml`), once the feature is
+  complete.
+
+### Review of the `size_of` step and the merged tree (2026-11-07, uncommitted)
+
+- A `const` type parameter given `&str` or `&cstr` was taken for bare
+  text: `Replace(&str, ...)` and `v: T` were refused ("`T` is text of any
+  length"), and `size_of(&T)` gave 16 for `&&str` (8 is right). The text
+  rules in `named_type_at` and `text_view` now look at the written name
+  (`Types::builtin`), not at what the name resolves to. Fixtures:
+  `run_const_parameters`, `run_i686_const_parameters` (`Referred`,
+  `Replace(&str, ...)`); each half of the fix, undone, fails them.
+- A top-level function named `size_of` or `align_of` was accepted, and a
+  call of it went to the built-in with a far-off error. `scope::collect`
+  now reports "`size_of` is a built-in function" at the declaration
+  (`negative_size_of`, 15 errors; fails without the check). This gives
+  `layout_function` a second caller, so it stays.
+- `scripts/check.sh`: all pass but `whitespace` (the `ll_size_of` blank
+  last line, gone once committed).
+- Decided: a `const T: type` argument is always written at the call, even
+  where a later argument fixes it (`Replace(i64, &mut n, 9)`); working it
+  out from the arguments is left to `<T>` generics.

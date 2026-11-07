@@ -39,7 +39,7 @@ fn load(modules: &[(&str, &str)]) -> project::Program {
         .collect();
     let project = project::Project {
         packages,
-        entry: folder("app").join("main.peep"),
+        entry: Some(folder("app").join("main.peep")),
         root: PathBuf::from("/peeper-build-test"),
         name: "app".to_string(),
     };

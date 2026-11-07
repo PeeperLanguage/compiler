@@ -148,6 +148,7 @@ fn folder_errors() {
         &root,
         &[
             ("core/peeper.toml", b"name = \"core\""),
+            ("libs/core/peeper.toml", b"name = \"core\"\nbuild = \"lib\""),
             ("libs/core/src/x.peep", b""),
             ("empty/x", b""),
         ],

@@ -35,7 +35,7 @@ fn program_ll(text: &str, target: &str) -> HashMap<String, String> {
             ("core".to_string(), folder.join("core")),
             ("lib".to_string(), library.clone()),
         ]),
-        entry: folder.join("src/main.peep"),
+        entry: Some(folder.join("src/main.peep")),
         root: folder.clone(),
         name: "app".to_string(),
     };
