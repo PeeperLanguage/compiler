@@ -1217,7 +1217,7 @@ From PR #182's Windows CI run and two reviews of the branch:
 - `scripts/check.sh`: all pass. The new library error first failed
   `checks_a_project`, whose `libs/core` had no peeper.toml; it has one now.
 
-### Untangling the codebase (2026-11-07, `refactor/untangle` from 472a9e5c, not committed)
+### Untangling the codebase (2026-11-07, `refactor/untangle`, 0e1edf53)
 
 A pass for hidden links (copies that must change together), needless links
 and special cases, in ten fixes and one recheck round by three subagents.
