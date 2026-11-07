@@ -75,9 +75,9 @@ bb0:
   %i4 = call i32 @"ll_interfaces:main.grown"({ ptr, ptr } %i3)
   %i5.0.x = sext i32 %i4 to i64
   store i64 %i5.0.x, ptr %i5.0.m
-  call void (i32, i32, ptr) @"peeper_rt_v2_print_int"(i32 1, i32 1, ptr %i5.0.m)
-  call void (ptr, i64) @"peeper_rt_v1_print_bytes"(ptr @.str.0, i64 1)
-  call void () @"peeper_rt_v1_flush"()
+  call void @"peeper_rt_v2_print_int"(i32 1, i32 1, ptr %i5.0.m)
+  call void @"peeper_rt_v1_print_bytes"(ptr @.str.0, i64 1)
+  call void @"peeper_rt_v1_flush"()
   ret void
 }
 

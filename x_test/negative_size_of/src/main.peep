@@ -29,3 +29,6 @@ fn main() {
 fn size_of(x: i32) -> i32 {
     return x;
 }
+
+// Nor does any other declaration.
+const align_of: i32 = 1;

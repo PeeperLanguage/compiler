@@ -112,13 +112,7 @@ impl<'b> Interpreter<'b, '_> {
         let body = self.frame().body;
         let span = body.instructions.span(id);
         let ty = body.instructions[id].ty;
-        // A slice or interface reference lent again whole: its own two
-        // words, read again. A slice of an array behind a reference also
-        // ends at `Dereference`, so the type picks the step.
-        if let (Type::Slice { .. }, Some((own, Projection::SliceElements)))
-        | (Type::InterfaceReference { .. }, Some((own, Projection::Dereference))) =
-            (&self.types[ty], place.split_last())
-        {
+        if let Some(own) = place.lent_again(&self.types[ty]) {
             let located = self.locate(&own, span)?;
             return self.read_value(located.address, ty, span);
         }

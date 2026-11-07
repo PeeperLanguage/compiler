@@ -54,7 +54,6 @@ dependencies = [
  "model",
  "project",
  "serde_json",
- "source",
  "toml_edit",
 ]
 
@@ -87,7 +86,6 @@ dependencies = [
  "lower",
  "model",
  "parser",
- "project",
  "rustc-hash",
  "source",
 ]
@@ -96,7 +94,6 @@ dependencies = [
 name = "compile"
 version = "0.3.1"
 dependencies = [
- "arena",
  "check",
  "diagnostics",
  "eval",
@@ -160,7 +157,6 @@ name = "diagnostics"
 version = "0.3.1"
 dependencies = [
  "source",
- "token",
  "unicode-general-category",
 ]
 
@@ -198,6 +194,7 @@ version = "0.3.1"
 dependencies = [
  "arena",
  "bigint",
+ "llvm",
  "model",
  "runtime_abi",
  "source",
@@ -410,9 +407,6 @@ checksum = "47d9d19d1d6efa0109d2f65ff4c85cddd50bd572e5a00127ab10987290bcefae"
 [[package]]
 name = "literal"
 version = "0.3.1"
-dependencies = [
- "diagnostics",
-]
 
 [[package]]
 name = "llvm"
@@ -421,7 +415,6 @@ dependencies = [
  "arena",
  "bigint",
  "compile",
- "flow",
  "model",
  "project",
  "runtime_abi",
@@ -511,6 +504,8 @@ version = "0.3.1"
 dependencies = [
  "arena",
  "bigint",
+ "diagnostics",
+ "literal",
  "rustc-hash",
  "source",
 ]
@@ -541,17 +536,14 @@ dependencies = [
 name = "peeper"
 version = "0.3.1"
 dependencies = [
- "arena",
  "compile",
  "diagnostics",
  "eval",
- "flow",
  "lexer",
  "llvm",
  "lsp",
  "model",
  "project",
- "source",
  "toml_edit",
 ]
 
@@ -613,6 +605,9 @@ dependencies = [
 [[package]]
 name = "runtime_abi"
 version = "0.3.1"
+dependencies = [
+ "source",
+]
 
 [[package]]
 name = "rustc-hash"

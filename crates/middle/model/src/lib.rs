@@ -10,6 +10,7 @@ pub mod layout;
 pub mod machine;
 pub mod mir;
 pub mod operators;
+pub mod program;
 pub mod semantic_types;
 pub mod thir;
 

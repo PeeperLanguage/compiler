@@ -19,9 +19,10 @@ const STACK_LIMIT: u64 = 8 << 20;
 /// Where the data starts, an address every target's pointers hold.
 const DATA_START: u64 = 1 << 30;
 /// A constant's run never reuses this memory, so it has room for all its
-/// steps can copy (`STEP_LIMIT` of `BYTES_PER_STEP`): a long loop that uses
-/// no address stops at its steps, if at all.
+/// steps can copy (a constant's `STEP_LIMIT` of `BYTES_PER_STEP`): a long
+/// loop that uses no address stops at its steps, if at all.
 const CONSTANT_STACK_LIMIT: u64 = 256 << 20;
+const _: () = assert!(CONSTANT_STACK_LIMIT >= super::STEP_LIMIT as u64 * super::BYTES_PER_STEP);
 /// How many bytes of data a run may use. Past this an allocation fails, as
 /// when a machine has no more memory.
 const DATA_LIMIT: u64 = 256 << 20;

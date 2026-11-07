@@ -14,6 +14,7 @@ use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 
 use model::machine::Machine;
+use model::machine::Os;
 
 use crate::BuildMode;
 use crate::Module;
@@ -72,14 +73,14 @@ fn link(
         .args(sdk_flags(target)?)
         .args(clang_flag(target))
         .args(objects);
-    if target.os != "windows" {
+    if target.os != Os::Windows {
         // LLVM turns a float `%` into a call of `fmod`. Before the runtime,
         // whose archive holds a slower one.
         linker.arg("-lm");
     }
     linker.arg(runtime);
     if mode == BuildMode::Release {
-        linker.arg(if target.os == "macos" {
+        linker.arg(if target.os == Os::Macos {
             "-Wl,-dead_strip,-S,-x" // ld64.lld has no `-s`
         } else {
             "-Wl,--gc-sections,-s"
@@ -161,7 +162,7 @@ fn compile_modules(
 /// look for the SDK, so it is asked of the system's `xcrun`, which is part of
 /// macOS, not of a toolchain.
 pub fn sdk_flags(target: &Machine) -> Result<Vec<String>, String> {
-    if target.os != "macos" {
+    if target.os != Os::Macos {
         return Ok(Vec::new());
     }
     let no_sdk =
@@ -177,10 +178,15 @@ pub fn sdk_flags(target: &Machine) -> Result<Vec<String>, String> {
     Ok(vec!["-isysroot".to_owned(), sdk])
 }
 
+/// The folder of an installation that holds peeper's own LLVM toolchain;
+/// scripts/setup.sh fills it in a checkout's `build` folder, and it and
+/// scripts/build.sh and .github/workflows/release.yml spell it too.
+pub const TOOLCHAIN_FOLDER: &str = "toolchains/native";
+
 /// The LLVM tool `name` of `installation`, in its toolchain folder; peeper
 /// uses only its own, which must be LLVM 23 or newer (docs/ir-design.md).
 pub(crate) fn tool(installation: &Path, name: &str) -> PathBuf {
-    installation.join("toolchains/native/bin").join(name)
+    installation.join(TOOLCHAIN_FOLDER).join("bin").join(name)
 }
 
 /// Runs `command`, a clang or archiver call, for `action`; what it printed

@@ -292,6 +292,12 @@ impl Type {
         }
     }
 
+    /// Whether a value of this type is laid out as a slice, its fields in
+    /// `slice_field`: a slice, or a `&str`, which views bytes.
+    pub fn is_slice_shaped(&self) -> bool {
+        matches!(self, Type::Slice { .. } | Type::Str)
+    }
+
     /// `Some(mutable)` for a type whose values borrow what they view, a
     /// reference, a slice or an interface reference: the loan rules hold for
     /// each.
@@ -462,6 +468,13 @@ pub fn range_fields(element: TypeId, step: TypeId) -> [(&'static str, TypeId); 5
         ("delta", element),
         ("inclusive", TypeId::BOOL),
     ]
+}
+
+/// Where each of the two fields of a slice value is, and of a `&str`, which
+/// is laid out as a slice of its bytes (`Type::is_slice_shaped`).
+pub mod slice_field {
+    pub const ADDRESS: u32 = 0; // of its first element
+    pub const LENGTH: u32 = 1;
 }
 
 /// Where each field of a range value is in `range_fields`.
@@ -764,14 +777,17 @@ impl Types {
     }
 
     /// The built-in type `name` stands for: one in `NAMED`, `isize` and `usize`
-    /// (as wide as a pointer, `pointer_bits`), or `iN` and `uN` for N from 1 to
+    /// (as wide as a pointer: the `usize` this table was made with), or `iN` and `uN` for N from 1 to
     /// `Integer::MAX_BITS`, written without leading zeros. A number literal's
     /// suffix (`5u24`) is one of these names too.
-    pub fn builtin(&mut self, name: &str, pointer_bits: u32) -> Option<TypeId> {
+    pub fn builtin(&mut self, name: &str) -> Option<TypeId> {
         if let Some(&(_, id)) = NAMED.iter().find(|(text, _)| *text == name) {
             return Some(id);
         }
-        Some(self.intern(Type::Integer(integer_named(name, pointer_bits)?)))
+        let Type::Integer(pointer) = self[self.usize] else {
+            unreachable!("`usize` is an integer")
+        };
+        Some(self.intern(Type::Integer(integer_named(name, pointer.bits)?)))
     }
 
     /// `range[element]`, of the integer type `element` (an alias looked

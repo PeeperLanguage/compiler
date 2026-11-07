@@ -148,7 +148,7 @@ fn help_fixes_become_quick_fixes() {
         "context": { "diagnostics": [published] },
     });
     let (connection, _client) = Connection::memory();
-    let server = Server::new(&connection, Path::new(""), true);
+    let server = Server::new(&connection, Path::new("no-libraries"), true);
     let Response { result, error, .. } =
         server.answer_code_actions(RequestId::from(1), params.clone());
     assert!(error.is_none(), "{error:?}");
@@ -168,7 +168,7 @@ fn help_fixes_become_quick_fixes() {
     );
     // An editor that takes no versioned edits gets none for text not
     // checked, as this file is not; else it gets them in `changes`.
-    let unchecked = Server::new(&connection, Path::new(""), false);
+    let unchecked = Server::new(&connection, Path::new("no-libraries"), false);
     let refused = unchecked.answer_code_actions(RequestId::from(2), params);
     assert_eq!(refused.result, Some(json!([])));
     let unversioned = lsp_diagnostics(&diagnostic, &open_files, false).remove(0);
@@ -193,7 +193,8 @@ fn publishes_and_clears_diagnostics() {
     let uri = Url::from_file_path(&file).unwrap();
 
     let (server, client) = Connection::memory();
-    let thread = std::thread::spawn(move || serve_connection(server, Path::new("")).unwrap());
+    let thread =
+        std::thread::spawn(move || serve_connection(server, Path::new("no-libraries")).unwrap());
     let send = |message: Message| client.sender.send(message).unwrap();
     let request = |id: i32, method: &str, params: serde_json::Value| {
         Message::Request(Request::new(
@@ -277,7 +278,7 @@ fn fixes_all_sure_problems() {
     std::fs::write(&file, text).unwrap();
     let uri = Url::from_file_path(&file).unwrap();
     let (connection, client) = Connection::memory();
-    let mut server = Server::new(&connection, Path::new(""), true);
+    let mut server = Server::new(&connection, Path::new("no-libraries"), true);
     let document = json!({ "uri": uri, "languageId": "peeper", "version": 3, "text": text });
     let open = json!({ "textDocument": document });
     let open = Notification::new("textDocument/didOpen".to_string(), open);
@@ -322,7 +323,7 @@ fn a_save_checks_at_once() {
     std::fs::write(&file, "fn main() {}\n").unwrap();
     let uri = Url::from_file_path(&file).unwrap();
     let (connection, client) = Connection::memory();
-    let mut server = Server::new(&connection, Path::new(""), true);
+    let mut server = Server::new(&connection, Path::new("no-libraries"), true);
     let change = json!({
         "textDocument": { "uri": uri, "version": 2 },
         "contentChanges": [{ "text": "fn main() { a $ b; }\n" }],
@@ -361,7 +362,7 @@ fn answers_definition_and_hover() {
     std::fs::write(&file, "fn main() {}\n").unwrap();
     let uri = Url::from_file_path(&file).unwrap();
     let (connection, _client) = Connection::memory();
-    let mut server = Server::new(&connection, Path::new(""), true);
+    let mut server = Server::new(&connection, Path::new("no-libraries"), true);
     let text = "type Meters = i64;\nfn main() {\n    let total: Meters = 1;\n    let more = total;\n}\n// let me\nstruct Run {\n    length: Meters,\n}\nfn ops(a: i32, x: f64) -> f64 {\n    let q = a/2;\n    const C = -(7 / 2);\n    return x - -1.0;\n}\nfn refs(m: i32) -> i32 {\n    let r = &m;\n    let both = m & 3;\n    let mut x = 1;\n    let p = @x;\n    let s = [2]i32{1, 2};\n    return r.* + s[0];\n}\nconst SMALL: u8 = 200;\nfn literals(n: u8) -> u8 {\n    let wide: f32 = 2;\n    let low: i8 = -128;\n    println(\"hi\", c\"x\");\n    let big: u8 = 300;\n    return n * 3;\n}\nfn walks(r: range[i32]) {}\n#[extern(\"cap\")]\nfn cap() -> u8;\nfn many(values: ...i32) -> &[]i32 in values {\n    return values;\n}\n";
     let document = json!({ "uri": uri, "languageId": "peeper", "version": 1, "text": text });
     let open = Notification::new(
@@ -542,7 +543,7 @@ fn P::half(&self) -> i32 {
     std::fs::write(&file, text).unwrap();
     let uri = Url::from_file_path(&file).unwrap();
     let (connection, _client) = Connection::memory();
-    let mut server = Server::new(&connection, Path::new(""), true);
+    let mut server = Server::new(&connection, Path::new("no-libraries"), true);
     let document = json!({ "uri": uri, "languageId": "peeper", "version": 1, "text": text });
     let open = Notification::new(
         "textDocument/didOpen".to_string(),
@@ -633,7 +634,7 @@ const NAME: &str = \"Ada\";
     std::fs::write(&main_file, main).unwrap();
     std::fs::write(&utils_file, utils).unwrap();
     let (connection, _client) = Connection::memory();
-    let mut server = Server::new(&connection, Path::new(""), true);
+    let mut server = Server::new(&connection, Path::new("no-libraries"), true);
     let notify = |server: &mut Server, method: &str, params: serde_json::Value| {
         server
             .apply_notification(Notification::new(method.to_string(), params))
@@ -688,7 +689,7 @@ const NAME: &str = \"Ada\";
     );
     // What is known of a variable is kept once, with its declaration:
     // `count`, `total`, `sum`, `wide`, `wrong`, `ratio`, `broken`.
-    let facts = &server.checked[&main_file].facts[&main_file];
+    let facts = &server.checked[&folder].facts[&main_file];
     let variables = facts
         .iter()
         .filter(|fact| matches!(fact.kind, CachedKind::Variable { .. }));
@@ -843,7 +844,7 @@ fn checks_an_open_file_nothing_imports() {
     std::fs::write(&unused, text).unwrap();
     let uri = Url::from_file_path(&unused).unwrap();
     let (connection, client) = Connection::memory();
-    let mut server = Server::new(&connection, Path::new(""), true);
+    let mut server = Server::new(&connection, Path::new("no-libraries"), true);
     let document = json!({ "uri": uri, "languageId": "peeper", "version": 1, "text": text });
     let open = Notification::new(
         "textDocument/didOpen".to_string(),
@@ -884,7 +885,7 @@ fn checks_a_library_by_its_folder() {
     let wrong = folder.join("src/wrong.peep");
     std::fs::write(&wrong, "fn Wrong() -> i32 { return true; }\n").unwrap();
     let (connection, client) = Connection::memory();
-    let mut server = Server::new(&connection, Path::new(""), true);
+    let mut server = Server::new(&connection, Path::new("no-libraries"), true);
     let text = std::fs::read_to_string(&used).unwrap();
     let uri = Url::from_file_path(&used).unwrap();
     let document = json!({ "uri": uri, "languageId": "peeper", "version": 1, "text": text });
@@ -905,8 +906,8 @@ fn checks_a_library_by_its_folder() {
         published.diagnostics
     );
     assert_eq!(server.checked.keys().collect::<Vec<_>>(), [&folder]);
-    // Made a program, it is kept by its entry, and wrong.peep, which it no
-    // longer loads, has its diagnostic cleared.
+    // Made a program, it is kept by its folder still, and wrong.peep, which
+    // it no longer loads, has its diagnostic cleared.
     std::fs::write(folder.join("peeper.toml"), "name = \"tools\"\n").unwrap();
     let main = folder.join("src/main.peep");
     std::fs::write(&main, "fn main() {}\n").unwrap();
@@ -923,7 +924,7 @@ fn checks_a_library_by_its_folder() {
         published.uri == Url::from_file_path(&wrong).unwrap() && published.diagnostics.is_empty()
     });
     assert!(cleared, "wrong.peep keeps its diagnostic");
-    assert_eq!(server.checked.keys().collect::<Vec<_>>(), [&main]);
+    assert_eq!(server.checked.keys().collect::<Vec<_>>(), [&folder]);
 }
 
 /// A request answers only from a check of the text the editor has now:

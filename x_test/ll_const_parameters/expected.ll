@@ -22,35 +22,35 @@ bb0:
   %i2 = call i64 @"ll_const_parameters:main.Size<i32>"()
   %i3 = call i64 @"ll_const_parameters:main.Size<i64>"()
   store i64 %i0, ptr %i4.0.m
-  call void (i32, i32, ptr) @"peeper_rt_v2_print_int"(i32 0, i32 1, ptr %i4.0.m)
+  call void @"peeper_rt_v2_print_int"(i32 0, i32 1, ptr %i4.0.m)
   store i64 %i1, ptr %i4.1.m
-  call void (ptr, i64) @"peeper_rt_v1_print_bytes"(ptr @.str.0, i64 1)
-  call void (i32, i32, ptr) @"peeper_rt_v2_print_int"(i32 0, i32 1, ptr %i4.1.m)
+  call void @"peeper_rt_v1_print_bytes"(ptr @.str.0, i64 1)
+  call void @"peeper_rt_v2_print_int"(i32 0, i32 1, ptr %i4.1.m)
   store i64 %i2, ptr %i4.2.m
-  call void (ptr, i64) @"peeper_rt_v1_print_bytes"(ptr @.str.0, i64 1)
-  call void (i32, i32, ptr) @"peeper_rt_v2_print_int"(i32 0, i32 1, ptr %i4.2.m)
+  call void @"peeper_rt_v1_print_bytes"(ptr @.str.0, i64 1)
+  call void @"peeper_rt_v2_print_int"(i32 0, i32 1, ptr %i4.2.m)
   store i64 %i3, ptr %i4.3.m
-  call void (ptr, i64) @"peeper_rt_v1_print_bytes"(ptr @.str.0, i64 1)
-  call void (i32, i32, ptr) @"peeper_rt_v2_print_int"(i32 0, i32 1, ptr %i4.3.m)
-  call void (ptr, i64) @"peeper_rt_v1_print_bytes"(ptr @.str.1, i64 1)
-  call void () @"peeper_rt_v1_flush"()
+  call void @"peeper_rt_v1_print_bytes"(ptr @.str.0, i64 1)
+  call void @"peeper_rt_v2_print_int"(i32 0, i32 1, ptr %i4.3.m)
+  call void @"peeper_rt_v1_print_bytes"(ptr @.str.1, i64 1)
+  call void @"peeper_rt_v1_flush"()
   %i5 = call i64 @"ll_const_parameters:main.Twice<2>"()
   %i6 = call i64 @"ll_const_parameters:main.Twice<3>"()
   %i7 = call i64 @"ll_const_parameters:main.Twice<2>"()
   %i8 = call i64 @"ll_const_parameters:main.Twice<3>"()
   store i64 %i5, ptr %i9.0.m
-  call void (i32, i32, ptr) @"peeper_rt_v2_print_int"(i32 0, i32 1, ptr %i9.0.m)
+  call void @"peeper_rt_v2_print_int"(i32 0, i32 1, ptr %i9.0.m)
   store i64 %i6, ptr %i9.1.m
-  call void (ptr, i64) @"peeper_rt_v1_print_bytes"(ptr @.str.0, i64 1)
-  call void (i32, i32, ptr) @"peeper_rt_v2_print_int"(i32 0, i32 1, ptr %i9.1.m)
+  call void @"peeper_rt_v1_print_bytes"(ptr @.str.0, i64 1)
+  call void @"peeper_rt_v2_print_int"(i32 0, i32 1, ptr %i9.1.m)
   store i64 %i7, ptr %i9.2.m
-  call void (ptr, i64) @"peeper_rt_v1_print_bytes"(ptr @.str.0, i64 1)
-  call void (i32, i32, ptr) @"peeper_rt_v2_print_int"(i32 0, i32 1, ptr %i9.2.m)
+  call void @"peeper_rt_v1_print_bytes"(ptr @.str.0, i64 1)
+  call void @"peeper_rt_v2_print_int"(i32 0, i32 1, ptr %i9.2.m)
   store i64 %i8, ptr %i9.3.m
-  call void (ptr, i64) @"peeper_rt_v1_print_bytes"(ptr @.str.0, i64 1)
-  call void (i32, i32, ptr) @"peeper_rt_v2_print_int"(i32 0, i32 1, ptr %i9.3.m)
-  call void (ptr, i64) @"peeper_rt_v1_print_bytes"(ptr @.str.1, i64 1)
-  call void () @"peeper_rt_v1_flush"()
+  call void @"peeper_rt_v1_print_bytes"(ptr @.str.0, i64 1)
+  call void @"peeper_rt_v2_print_int"(i32 0, i32 1, ptr %i9.3.m)
+  call void @"peeper_rt_v1_print_bytes"(ptr @.str.1, i64 1)
+  call void @"peeper_rt_v1_flush"()
   ret void
 }
 

@@ -66,7 +66,7 @@ call.
 
 ## Fixtures (`x_test/*/peeper.toml`)
 
-Modes: `check` (91), `run` (89), `mir` (19, with `expected.mir`), `ll` (13,
+Modes: `check` (95), `run` (90), `mir` (19, with `expected.mir`), `ll` (13,
 with `expected.ll`). `negative_*` fixtures expect errors; `warn_*` warnings;
 `run_i686_*` build for `i686-linux`. `PEEPER_BLESS=1` rewrites expected files.
 

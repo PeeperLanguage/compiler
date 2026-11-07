@@ -34,8 +34,8 @@ bb0:
   call void @llvm.memcpy.p0.p0.i64(ptr %i2.1, ptr %i1, i64 12, i1 false), !dbg !13
   call void @llvm.memcpy.p0.p0.i64(ptr %i4, ptr %v0, i64 24, i1 false), !dbg !15
   call void @print.0(ptr %i4), !dbg !16
-  call void (ptr, i64) @"peeper_rt_v1_print_bytes"(ptr @.str.3, i64 1), !dbg !16
-  call void () @"peeper_rt_v1_flush"(), !dbg !16
+  call void @"peeper_rt_v1_print_bytes"(ptr @.str.3, i64 1), !dbg !16
+  call void @"peeper_rt_v1_flush"(), !dbg !16
   ret void, !dbg !17
 }
 
@@ -47,19 +47,19 @@ loop:
   %index = phi i64 [ 0, %entry ], [ %next, %step ]
   %first = icmp eq i64 %index, 0
   %separator = select i1 %first, ptr @.str.0, ptr @.str.1
-  call void (ptr) @"peeper_rt_v1_print_text"(ptr %separator)
+  call void @"peeper_rt_v1_print_text"(ptr %separator)
   %element = getelementptr inbounds i32, ptr %value, i64 %index
   %element.v = load i32, ptr %element
   %element.v.x = sext i32 %element.v to i64
   store i64 %element.v.x, ptr %element.v.m
-  call void (i32, i32, ptr) @"peeper_rt_v2_print_int"(i32 1, i32 1, ptr %element.v.m)
+  call void @"peeper_rt_v2_print_int"(i32 1, i32 1, ptr %element.v.m)
   br label %step
 step:
   %next = add i64 %index, 1
   %more = icmp ult i64 %next, 3
   br i1 %more, label %loop, label %done
 done:
-  call void (ptr) @"peeper_rt_v1_print_text"(ptr @.str.2)
+  call void @"peeper_rt_v1_print_text"(ptr @.str.2)
   ret void
 }
 
@@ -70,7 +70,7 @@ loop:
   %index = phi i64 [ 0, %entry ], [ %next, %step ]
   %first = icmp eq i64 %index, 0
   %separator = select i1 %first, ptr @.str.0, ptr @.str.1
-  call void (ptr) @"peeper_rt_v1_print_text"(ptr %separator)
+  call void @"peeper_rt_v1_print_text"(ptr %separator)
   %element = getelementptr inbounds [12 x i8], ptr %value, i64 %index
   call void @print.1(ptr %element)
   br label %step
@@ -79,7 +79,7 @@ step:
   %more = icmp ult i64 %next, 2
   br i1 %more, label %loop, label %done
 done:
-  call void (ptr) @"peeper_rt_v1_print_text"(ptr @.str.2)
+  call void @"peeper_rt_v1_print_text"(ptr @.str.2)
   ret void
 }
 

@@ -55,20 +55,17 @@ fn program_ll(text: &str, target: &str) -> HashMap<String, String> {
                 &program,
                 target,
                 compile::Results::default(),
-                None,
+                false,
                 false,
                 |output| {
-                    if let compile::Output::Function(compile::CheckedFunction {
-                        function,
-                        module,
-                        mir,
-                        types,
-                        ..
-                    }) = output
-                    {
-                        let mut mir = mir.unwrap();
-                        flow::cleanup::remove_unused_code(&mut mir);
-                        queue.add(module, function, mir, types);
+                    if let compile::Output::Function(checked) = output {
+                        let compile::CheckedFunction {
+                            function,
+                            module,
+                            types,
+                            ..
+                        } = checked;
+                        queue.add(module, function, checked.into_mir().unwrap(), types);
                     }
                 },
             )
@@ -409,8 +406,8 @@ fn scope(line: &str) -> &str {
 #[test]
 fn constants_from_bits() {
     let mut types = Types::new(64);
-    let u200 = types.builtin("u200", 64).unwrap();
-    let i3 = types.builtin("i3", 64).unwrap();
+    let u200 = types.builtin("u200").unwrap();
+    let i3 = types.builtin("i3").unwrap();
     let constant = |ty: TypeId, value: Value| {
         crate::text::constant_text(&types, &Constant { ty, value }).to_string()
     };

@@ -125,6 +125,9 @@ impl Lists {
         if items.is_empty() {
             return List::EMPTY;
         }
+        // A list holds parts of one source file, which spans count in 32
+        // bits (`source::MAX_FILE_BYTES`); a checked cast here is measurable.
+        debug_assert!(self.items.len() + items.len() <= u32::MAX as usize);
         let start = self.items.len() as u32;
         self.items.extend_from_slice(items);
         List {

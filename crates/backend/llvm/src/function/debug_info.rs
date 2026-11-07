@@ -70,7 +70,7 @@ impl Module<'_> {
         let target = self.target;
         let metadata = self.metadata.as_mut()?;
         let modules = &self.program.modules;
-        let (name, _) = project::declared_name(modules, copy.definition);
+        let (name, _) = model::program::declared_name(modules, copy.definition);
         let (line, _) = source.position(name.span.start as usize);
         let program = self.program;
         // As `add_function` passes them: a value kept in memory by its
@@ -100,8 +100,8 @@ impl Module<'_> {
             signature.join(", ")
         ));
         let (file, unit) = (metadata.file_node(&source.path), metadata.unit);
-        let declared = project::declared_path(modules, copy.definition);
-        let name_of = |definition| project::declared_text(modules, definition);
+        let declared = model::program::declared_path(modules, copy.definition);
+        let name_of = |definition| model::program::declared_text(modules, definition);
         let subprogram = metadata.add(format_args!(
             "distinct !DISubprogram(name: {}, linkageName: {}, scope: !{file}, file: !{file}, \
              line: {line}, type: !{subroutine}, scopeLine: {line}, spFlags: DISPFlagDefinition, \

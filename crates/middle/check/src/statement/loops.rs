@@ -200,6 +200,7 @@ impl ThirBuilder<'_, '_> {
             Stmt::Let {
                 variable: items,
                 value: Some(iterable),
+                keeps_temporaries: true, // as in Rust
             },
             span,
         );
@@ -255,6 +256,7 @@ impl ThirBuilder<'_, '_> {
             Stmt::Let {
                 variable,
                 value: Some(element_value),
+                keeps_temporaries: false,
             },
             value.span,
         );

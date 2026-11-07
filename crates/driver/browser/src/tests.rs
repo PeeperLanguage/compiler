@@ -13,7 +13,7 @@ fn files(entries: &[(&str, &str)]) -> HashMap<String, String> {
 const MANIFEST: &str = manifest::FILE_NAME;
 
 /// What `files` load to, when their peeper.toml gives a project.
-fn loaded(files: HashMap<String, String>) -> project::Program {
+fn loaded(files: HashMap<String, String>) -> model::program::Program {
     let project = project_of(&files).expect("the files are a project");
     load(&project, files)
 }
@@ -224,14 +224,13 @@ fn check_fixtures_fail_here_with_the_same_number_of_errors() {
         let summary = wanted
             .into_iter()
             .flatten()
-            .filter_map(|text| {
-                text.as_str()?
-                    .strip_prefix("Compilation failed with ")?
-                    .strip_suffix(" error(s)")
-            })
+            .filter_map(|text| text.as_str()?.strip_prefix("Compilation failed with "))
             .next();
+        // The count starts the summary, which may go on with warnings or end
+        // early ("32 error").
         if let Some(summary) = summary {
-            assert_eq!(errors.to_string(), summary, "{name}: {found:#?}");
+            let count: String = summary.chars().take_while(char::is_ascii_digit).collect();
+            assert_eq!(errors.to_string(), count, "{name}: {found:#?}");
         }
         checked += 1;
     }

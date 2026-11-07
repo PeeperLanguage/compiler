@@ -43,7 +43,7 @@ fn compile_growth_kb(text: String) -> u64 {
         &program,
         target,
         compile::Results::default(),
-        None,
+        false,
         false,
         |_| {},
     );

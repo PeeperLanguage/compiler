@@ -11,6 +11,7 @@ use model::semantic_types::TypeId;
 use model::semantic_types::range_field;
 use model::semantic_types::range_fields;
 use model::thir;
+use runtime_abi::messages::RANGE_STEP_MESSAGE;
 
 use crate::Loop;
 use crate::Lowering;
@@ -50,7 +51,7 @@ impl Lowering<'_> {
         if !matches!(step, mir::Operand::Constant(_)) {
             let zero = self.integer_constant(size, 0);
             let failed = self.binary(BinaryOp::EqualTo, step, zero, TypeId::BOOL, step_span);
-            self.emit_check(failed, "range step is zero", step_span);
+            self.emit_check(failed, RANGE_STEP_MESSAGE, step_span);
         }
         let inclusive = self.add_constant(Constant {
             ty: TypeId::BOOL,

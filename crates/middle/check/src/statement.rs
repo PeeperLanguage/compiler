@@ -15,7 +15,6 @@ use model::ast;
 use model::ast::Ident;
 use model::constant::Value;
 use model::semantic_types::ConstArgument;
-use model::semantic_types::ConstArguments;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
 use model::thir::Block;
@@ -68,60 +67,61 @@ impl Checker<'_> {
         };
         let (parameters, result) = (parameters.clone(), *result);
         let tree = &self.modules[module].ast;
-        self.checking.push(Checking {
+        let checking = Checking {
             definition,
             arguments,
             used_at,
-            to_run,
-        });
-        body.clear();
-        let mut builder = ThirBuilder::new(self, body, result);
-        let outermost = builder.body.add(
-            Block {
-                parent: None,
-                statements: List::EMPTY,
-            },
-            tree.blocks.span(block),
-        );
-        // Empty, so nothing is allocated, for a function without `const` parameters.
-        let mut given = builder
-            .checker
-            .types
-            .arguments(arguments)
-            .to_vec()
-            .into_iter();
-        let mut types = parameters.iter();
-        for parameter in tree.children.lists.items(function.signature.parameters) {
-            let parameter = tree.children.params[parameter];
-            let name = parameter.name.unwrap_or_default();
-            // A `const` value is a constant of the body; a `const T: type`
-            // is a type (`resolve_global`).
-            if parameter.constant {
-                if let Some(ConstArgument::Value(constant)) = given.next() {
-                    let constant = builder.body.constants.push(Some(constant), name.span);
-                    builder.declare(name, Local::Constant(constant));
-                }
-                continue;
-            }
-            let ty = *types
-                .next()
-                .expect("the signature has each parameter that is not `const`");
-            let variable = builder.body.add(
-                Variable {
-                    ty,
-                    mutable: parameter.mutable,
-                    initialized: true,
-                    scope: outermost,
-                    hidden: false,
+            records_facts: !to_run,
+        };
+        self.checking_in(checking, |checker| {
+            body.clear();
+            let mut builder = ThirBuilder::new(checker, body, result);
+            let outermost = builder.body.add(
+                Block {
+                    parent: None,
+                    statements: List::EMPTY,
                 },
-                name.span,
+                tree.blocks.span(block),
             );
-            builder.declare(name, Local::Variable(variable));
-        }
-        let statements = builder.check_statements(None, tree.blocks[block].statements);
-        builder.body.blocks[outermost].statements = statements;
+            // Empty, so nothing is allocated, for a function without `const` parameters.
+            let mut given = builder
+                .checker
+                .types
+                .arguments(arguments)
+                .to_vec()
+                .into_iter();
+            let mut types = parameters.iter();
+            for parameter in tree.children.lists.items(function.signature.parameters) {
+                let parameter = tree.children.params[parameter];
+                let name = parameter.name.unwrap_or_default();
+                // A `const` value is a constant of the body; a `const T: type`
+                // is a type (`resolve_global`).
+                if parameter.constant {
+                    if let Some(ConstArgument::Value(constant)) = given.next() {
+                        let constant = builder.body.constants.push(Some(constant), name.span);
+                        builder.declare(name, Local::Constant(constant));
+                    }
+                    continue;
+                }
+                let ty = *types
+                    .next()
+                    .expect("the signature has each parameter that is not `const`");
+                let variable = builder.body.add(
+                    Variable {
+                        ty,
+                        mutable: parameter.mutable,
+                        initialized: true,
+                        scope: outermost,
+                        hidden: false,
+                    },
+                    name.span,
+                );
+                builder.declare(name, Local::Variable(variable));
+            }
+            let statements = builder.check_statements(None, tree.blocks[block].statements);
+            builder.body.blocks[outermost].statements = statements;
+        });
         // A part of the signature that failed was reported with the signature.
-        self.checking.pop();
         body.has_errors = parameters.contains(&TypeId::INVALID)
             || result == TypeId::INVALID
             || self.module_checks[module].diagnostics[reported..]
@@ -144,7 +144,8 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
     ) -> List<Stmt> {
         let mut checked: Vec<NonZeroU32> = Vec::with_capacity(statements.len() + 1);
         checked.extend(first.map(NonZeroU32::from));
-        let in_copy = self.in_copy();
+        // A copy's constants may rule out code.
+        let in_copy = self.checker.in_copy();
         for written in self.checker.module().ast.children.lists.items(statements) {
             if let Some(statement) = self.check_statement(written) {
                 checked.push(statement.into());
@@ -160,13 +161,6 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
             }
         }
         self.body.children.lists.add(&checked)
-    }
-
-    /// Whether the body being built is a copy of a function with `const`
-    /// parameters, whose code its constants may rule out.
-    fn in_copy(&self) -> bool {
-        let checking = self.checker.checking.last();
-        checking.is_some_and(|checking| checking.arguments != ConstArguments::NONE)
     }
 
     /// Whether the checked `statement` always leaves its block: by
@@ -280,7 +274,7 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
         }
         // No local holds a type's name, so only top-level names can clash.
         let ty = match self.checker.resolve_global(text) {
-            Some(Symbol::Builtin(_)) => None,
+            Some(Symbol::Builtin(_) | Symbol::TypeArgument(_)) => None,
             Some(Symbol::Type(definition)) => Some(definition),
             _ => {
                 self.checker
@@ -302,7 +296,8 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
             "declared here",
         );
         if let Some(definition) = ty {
-            let (declared, declared_in) = project::declared_name(self.checker.modules, definition);
+            let (declared, declared_in) =
+                model::program::declared_name(self.checker.modules, definition);
             diagnostic = diagnostic.label(declared_in, declared.span, "the type is declared here");
         }
         self.checker.report(diagnostic);
@@ -379,7 +374,9 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
                     let condition = self.add_required(condition, TypeId::BOOL);
                     // A copy holds only the branch its constants choose.
                     let chosen = match self.body.exprs[condition].kind {
-                        ExprKind::Constant(Value::Bool(taken)) if self.in_copy() => Some(taken),
+                        ExprKind::Constant(Value::Bool(taken)) if self.checker.in_copy() => {
+                            Some(taken)
+                        }
                         _ => None,
                     };
                     match chosen {

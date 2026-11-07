@@ -23,7 +23,7 @@ pub(crate) struct Server<'s> {
     open_files: HashMap<PathBuf, OpenFile>,
     /// Whether the editor takes versioned edits (`workspace_edit`).
     versioned_edits: bool,
-    pub(crate) checked: HashMap<PathBuf, Checked>, // by each program's entry file, or library's folder
+    pub(crate) checked: HashMap<PathBuf, Checked>, // by its project's folder, or a lone file (`project_of`)
     /// Files changed and not checked yet; their programs are checked once
     /// `deadline` passes.
     pub(crate) pending: HashSet<PathBuf>,

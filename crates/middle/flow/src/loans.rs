@@ -528,7 +528,22 @@ impl Loans<'_> {
             mir::InstructionKind::ToInterface { reference, .. } => {
                 copy(held, target, self.operand_holders(reference));
             }
-            _ => unreachable!("a value holding a loan has its step"),
+            // These give no value that holds a loan: the checker refuses
+            // an array of references (`ArrayParts`), `&&` and `||` give a
+            // `bool` (`Phi`), and a reference converts only to an address.
+            mir::InstructionKind::Store { .. }
+            | mir::InstructionKind::Length(_)
+            | mir::InstructionKind::Address(_)
+            | mir::InstructionKind::Binary { .. }
+            | mir::InstructionKind::Unary { .. }
+            | mir::InstructionKind::Convert(_)
+            | mir::InstructionKind::ArrayParts(_)
+            | mir::InstructionKind::Print { .. }
+            | mir::InstructionKind::Phi(_)
+            | mir::InstructionKind::Check { .. }
+            | mir::InstructionKind::ScopeEnd(_) => {
+                unreachable!("a value holding a loan has its step")
+            }
         }
     }
 
@@ -844,7 +859,18 @@ impl Loans<'_> {
                     span: self.body.instructions.span(id),
                 });
             }
-            _ => return None,
+            // These use values only, never a place.
+            mir::InstructionKind::Binary { .. }
+            | mir::InstructionKind::Unary { .. }
+            | mir::InstructionKind::Convert(_)
+            | mir::InstructionKind::Call { .. }
+            | mir::InstructionKind::ToInterface { .. }
+            | mir::InstructionKind::Aggregate(_)
+            | mir::InstructionKind::ArrayParts(_)
+            | mir::InstructionKind::Print { .. }
+            | mir::InstructionKind::Field { .. }
+            | mir::InstructionKind::Phi(_)
+            | mir::InstructionKind::Check { .. } => return None,
         };
         Some(Access {
             variable: place.variable,

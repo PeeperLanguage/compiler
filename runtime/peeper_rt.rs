@@ -166,36 +166,41 @@ unsafe extern "C" fn peeper_rt_v1_print_bytes(text: *const u8, length: usize) {
 #[unsafe(no_mangle)]
 unsafe extern "C" fn peeper_rt_v2_print_int(is_signed: i32, count: i32, limbs: *const u64) {
     let count = count as usize;
-    if count == 1 {
-        let value = unsafe { limbs.read_unaligned() };
-        if is_signed != 0 && (value as i64) < 0 {
-            buffer_output(b"-");
-            number_text::write_decimal(value.wrapping_neg(), 1, &mut buffer_output);
-        } else {
-            number_text::write_decimal(value, 1, &mut buffer_output);
+    // Most integers fit a limb, and need no memory from the heap.
+    let mut one_limb = ([0u64; 1], [0u32; number_text::max_chunks(1)]);
+    let block = if count == 1 {
+        core::ptr::null_mut()
+    } else {
+        // The limbs, then the nine-digit chunks of the decimal text, in one
+        // block; a program that cannot get it stops as a panic does.
+        let bytes = count * size_of::<u64>() + number_text::max_chunks(count) * size_of::<u32>();
+        let block = unsafe { malloc(bytes) };
+        if block.is_null() {
+            unsafe {
+                for piece in [abi::PANIC_PREFIX, b"out of memory\n"] {
+                    system_write(STDERR, piece.as_ptr().cast(), piece.len() as i32);
+                }
+                exit(PANIC_EXIT_CODE)
+            }
         }
-        return;
-    }
-    // The limbs, then the nine-digit chunks of the decimal text, in one
-    // block; a program that cannot get it stops as a panic does.
-    let max_chunks = number_text::max_chunks(count);
-    let bytes = count * size_of::<u64>() + max_chunks * size_of::<u32>();
-    let block = unsafe { malloc(bytes) };
-    if block.is_null() {
-        let message = b"panic: out of memory\n";
-        unsafe {
-            system_write(STDERR, message.as_ptr().cast(), message.len() as i32);
-            exit(PANIC_EXIT_CODE)
-        }
-    }
-    let wide = unsafe { core::slice::from_raw_parts_mut(block.cast::<u64>(), count) };
-    let chunks =
-        unsafe { core::slice::from_raw_parts_mut(wide.as_mut_ptr_range().end.cast(), max_chunks) };
+        block
+    };
+    let (wide, chunks): (&mut [u64], &mut [u32]) = if block.is_null() {
+        (&mut one_limb.0, &mut one_limb.1)
+    } else {
+        let wide = unsafe { core::slice::from_raw_parts_mut(block.cast::<u64>(), count) };
+        let chunks = wide.as_mut_ptr_range().end.cast();
+        let chunks =
+            unsafe { core::slice::from_raw_parts_mut(chunks, number_text::max_chunks(count)) };
+        (wide, chunks)
+    };
     for (index, limb) in wide.iter_mut().enumerate() {
         *limb = unsafe { limbs.add(index).read_unaligned() };
     }
     number_text::write_integer(is_signed != 0, wide, chunks, &mut buffer_output);
-    unsafe { free(block) }
+    if !block.is_null() {
+        unsafe { free(block) }
+    }
 }
 
 // `number_text` says how it reads.

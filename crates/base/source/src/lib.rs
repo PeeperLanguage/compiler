@@ -8,6 +8,10 @@ pub fn grow_stack<R>(walk: impl FnOnce() -> R) -> R {
     stacker::maybe_grow(RED_ZONE, SEGMENT, walk)
 }
 
+/// The most bytes a source file may hold: a span's offsets are 32 bits.
+/// The loader refuses a longer file.
+pub const MAX_FILE_BYTES: usize = u32::MAX as usize;
+
 /// The byte range `start..end` of one file's text.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct Span {
@@ -17,6 +21,13 @@ pub struct Span {
 
 impl Span {
     pub fn new(start: usize, end: usize) -> Span {
+        // The loader refuses a longer file, so this only checks that; a
+        // checked cast here and in `arena::Lists::add` cost 4% of a whole
+        // check (measured).
+        debug_assert!(
+            end <= MAX_FILE_BYTES,
+            "a source file is at most `MAX_FILE_BYTES`"
+        );
         Span {
             start: start as u32,
             end: end as u32,
@@ -47,7 +58,7 @@ impl SourceFile {
         let text = text.into();
         let mut lines = Vec::with_capacity(text.bytes().filter(|&b| b == b'\n').count() + 1);
         lines.push(0);
-        lines.extend(text.match_indices('\n').map(|(i, _)| i as u32 + 1));
+        lines.extend(text.match_indices('\n').map(|(i, _)| Span::at(i + 1).start));
         SourceFile {
             path: path.into(),
             text,

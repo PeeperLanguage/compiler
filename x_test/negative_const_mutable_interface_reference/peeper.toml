@@ -1,0 +1,11 @@
+name = "negative_const_mutable_interface_reference"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = [
+    "[T0004]: a constant cannot hold a mutable reference, as all its uses would share one value",
+    "src/main.peep:10:27",
+    "Compilation failed with 1 error(s)",
+]

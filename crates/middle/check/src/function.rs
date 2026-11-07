@@ -85,11 +85,11 @@ impl Checker<'_> {
         if let Some(copied) = self.copies.get(&copy) {
             return copied.signature;
         }
-        let checking = self.checking.last().expect("a call is being checked");
-        let made_inside = FunctionCopy {
-            definition: checking.definition,
-            arguments: checking.arguments,
-        };
+        let made_inside = self
+            .checking
+            .last()
+            .expect("a call is being checked")
+            .copy();
         let (depth, reported_in) = match self.copies.get(&made_inside) {
             Some(inside) => (inside.depth + 1, inside.reported_in),
             None => (1, self.current_module()),
@@ -99,7 +99,7 @@ impl Checker<'_> {
             if std::mem::replace(&mut self.copies_stopped, true) {
                 return TypeId::INVALID;
             }
-            let name = project::declared_path(self.modules, copy.definition);
+            let name = model::program::declared_path(self.modules, copy.definition);
             let message = format!(
                 "`{name}` makes a new copy of itself inside each copy, without end: \
                  copies nest {COPY_DEPTH_LIMIT} deep here"
@@ -118,14 +118,14 @@ impl Checker<'_> {
         );
         let module = copy.definition.module.index();
         let reported = self.module_checks[module].diagnostics.len();
-        self.checking.push(Checking {
+        let checking = Checking {
             definition: copy.definition,
             arguments: copy.arguments,
             used_at,
-            to_run: false,
-        });
-        let signature = self.check_function(copy.definition);
-        self.checking.pop();
+            records_facts: true,
+        };
+        let signature =
+            self.checking_in(checking, |checker| checker.check_function(copy.definition));
         let caller = self.current_module();
         self.report_from_copy(copy, reported, caller);
         let copied = self.copies.get_mut(&copy).expect("the copy was just made");
@@ -161,9 +161,9 @@ impl Checker<'_> {
             ..
         } = self.copies[&copy];
         let name = self.types.copy_text(
-            project::declared_path(modules, definition),
+            model::program::declared_path(modules, definition),
             copy.arguments,
-            |definition| project::declared_text(modules, definition),
+            |definition| model::program::declared_text(modules, definition),
         );
         let file = &modules[called_in.index()].ast.file;
         let into = &mut self.module_checks[into.index()].diagnostics;
@@ -216,7 +216,7 @@ impl Checker<'_> {
             file,
             types,
             *result,
-            |definition| project::declared_text(modules, definition),
+            |definition| model::program::declared_text(modules, definition),
             diagnostics,
         );
         Some(mir)
@@ -245,9 +245,7 @@ impl Checker<'_> {
                 continue;
             }
             if !matches!(self.bodies.get(&next), Some(Built::Kept(_))) {
-                if self.checking.iter().any(|checking| {
-                    checking.definition == next.definition && checking.arguments == next.arguments
-                }) {
+                if self.checking.iter().any(|checking| checking.copy() == next) {
                     continue;
                 }
                 let mut thir = thir::Body::default();
@@ -313,15 +311,19 @@ impl Checker<'_> {
                         Err(Failure::Exited(_)) => unreachable!("a constant's call cannot exit"),
                     }
                 }
-                None => (function.definition, None),
+                None => (function, None),
             };
+            // Another copy of a function being checked is no cycle.
             if let Some(start) =
-                (self.checking.iter()).position(|checking| checking.definition == callee)
+                (self.checking.iter()).position(|checking| checking.copy() == callee)
             {
                 self.report_cycle(start, span);
                 return None;
             }
-            if function_declaration(self.modules, callee).body.is_some() {
+            if function_declaration(self.modules, callee.definition)
+                .body
+                .is_some()
+            {
                 return None; // its error was reported
             }
             let message = "an `extern` function cannot run at compile time";
@@ -334,7 +336,7 @@ impl Checker<'_> {
         let file = &self.module().ast.file;
         let diagnostic = match place {
             Some((function, stopped)) => {
-                let (_, callee_file) = project::declared_name(self.modules, function);
+                let (_, callee_file) = model::program::declared_name(self.modules, function);
                 (diagnostic.label(file, span, "")).label(callee_file, stopped, message)
             }
             None => diagnostic.label(file, span, message),
@@ -346,10 +348,10 @@ impl Checker<'_> {
 
 /// The function `definition`, as written.
 pub(crate) fn function_declaration(
-    modules: &[project::Module],
+    modules: &[model::program::Module],
     definition: DefId,
 ) -> &ast::Function {
-    match project::declaration(modules, definition) {
+    match model::program::declaration(modules, definition) {
         ast::Decl::Function(function) => function,
         _ => unreachable!("`{definition:?}` is a function"),
     }

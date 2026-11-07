@@ -94,7 +94,7 @@ impl Metadata {
     /// `None` for `void`.
     pub(crate) fn debug_type(
         &mut self,
-        program: &project::Program,
+        program: &model::program::Program,
         types: &Types,
         ty: TypeId,
         target: &Machine,
@@ -167,7 +167,7 @@ impl Metadata {
                     .map_or(TypeId::U8, |(element, _)| element);
                 let base = self.debug_type(program, types, types.real(element), target);
                 let base = base.expect("an element has a value's type");
-                let name = project::type_text(&program.modules, types, ty);
+                let name = model::program::type_text(&program.modules, types, ty);
                 // Its members name it, so its number comes first.
                 let composite = self.reserve();
                 let pointer = self.add(format_args!(
@@ -185,7 +185,7 @@ impl Metadata {
             }
             // Its address and its methods' table, neither of a known type.
             Type::InterfaceReference { .. } => {
-                let name = project::type_text(&program.modules, types, ty);
+                let name = model::program::type_text(&program.modules, types, ty);
                 let composite = self.reserve();
                 let pointer = self.add(format_args!(
                     "!DIDerivedType(tag: DW_TAG_pointer_type, baseType: null, size: {pointer_bits})"
@@ -223,8 +223,8 @@ impl Metadata {
             Type::Struct {
                 definition, fields, ..
             } => {
-                let (name, file) = project::declared_name(&program.modules, *definition);
-                let names = project::field_names(&program.modules, *definition);
+                let (name, file) = model::program::declared_name(&program.modules, *definition);
+                let names = model::program::field_names(&program.modules, *definition);
                 let parts = (names.zip(fields.iter().copied())).collect::<Vec<_>>();
                 let shape = (ty, name.text(file), &parts[..]);
                 return Some(self.debug_struct(program, types, shape, target));
@@ -251,7 +251,7 @@ impl Metadata {
     /// range's (`range_fields`).
     pub(crate) fn debug_struct(
         &mut self,
-        program: &project::Program,
+        program: &model::program::Program,
         types: &Types,
         (ty, name, fields): (TypeId, &str, &[(&str, TypeId)]),
         target: &Machine,

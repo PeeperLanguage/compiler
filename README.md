@@ -163,7 +163,7 @@ The generated `src/main.peep`:
 
 ```peeper
 fn main() {
-    Write(Stdout, c"Hello from Peeper!\n", 19);
+    println("Hello from Peeper!");
 }
 ```
 

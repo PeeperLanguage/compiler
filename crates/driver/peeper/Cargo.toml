@@ -7,15 +7,12 @@ license-file.workspace = true
 publish.workspace = true
 
 [dependencies]
-arena.workspace = true
 model.workspace = true
-source.workspace = true
 diagnostics.workspace = true
 lexer.workspace = true
 project.workspace = true
 compile.workspace = true
 eval.workspace = true
-flow.workspace = true
 llvm.workspace = true
 lsp.workspace = true
 

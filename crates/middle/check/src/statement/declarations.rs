@@ -94,7 +94,11 @@ impl ThirBuilder<'_, '_> {
         }
         let variable = self.body.add(declared_variable, name.span);
         self.declare(name, Local::Variable(variable));
-        Stmt::Let { variable, value }
+        Stmt::Let {
+            variable,
+            value,
+            keeps_temporaries: false,
+        }
     }
 
     /// Keeps the temporary that `value`, a `let`'s value, lends itself to the

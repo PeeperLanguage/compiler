@@ -340,8 +340,11 @@ fn partial_move(
             format!("move the whole {whole}, or read only parts that copy"),
         )
     };
+    // As the checker lends one again (`ThirBuilder::reborrow`).
     let lent_through = match *moved {
-        Type::Reference { mutable: true, .. } => Some(".*"),
+        Type::Reference { mutable: true, .. } | Type::InterfaceReference { mutable: true, .. } => {
+            Some(".*")
+        }
         Type::Slice { mutable: true, .. } => Some("[..]"),
         _ => None,
     };

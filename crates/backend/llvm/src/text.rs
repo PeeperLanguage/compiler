@@ -19,14 +19,12 @@ use model::semantic_types::Types;
 
 /// The name the linker knows the function `definition` by: its `#[extern]`
 /// name, else its module's path and its name (`myapp:util.Parse`).
-pub(crate) fn symbol(program: &project::Program, definition: DefId) -> String {
-    project::extern_symbol(&program.modules, definition)
-        .expect("the checker reported a malformed `extern`")
-        .unwrap_or_else(|| {
-            let path = &program.modules[definition.module.index()].path;
-            let name = project::declared_path(&program.modules, definition);
-            format!("{path}.{name}")
-        })
+pub(crate) fn symbol(program: &model::program::Program, definition: DefId) -> String {
+    model::program::c_symbol(&program.modules, definition).unwrap_or_else(|| {
+        let path = &program.modules[definition.module.index()].path;
+        let name = model::program::declared_path(&program.modules, definition);
+        format!("{path}.{name}")
+    })
 }
 
 /// The name the linker knows the copy `copy` by: its function's `symbol`,
@@ -34,11 +32,18 @@ pub(crate) fn symbol(program: &project::Program, definition: DefId) -> String {
 /// (`myapp:main.New<myapp:main.Node>`), so two modules' types of one name
 /// make two names, and each float value by its bits, as two NaNs print
 /// alike.
-pub(crate) fn copy_symbol(program: &project::Program, types: &Types, copy: FunctionCopy) -> String {
+pub(crate) fn copy_symbol(
+    program: &model::program::Program,
+    types: &Types,
+    copy: FunctionCopy,
+) -> String {
     let modules = &program.modules;
     let qualified = |definition: DefId| {
         let path = &modules[definition.module.index()].path;
-        format!("{path}.{}", project::declared_text(modules, definition))
+        format!(
+            "{path}.{}",
+            model::program::declared_text(modules, definition)
+        )
     };
     let name = symbol(program, copy.definition);
     let given = types.arguments(copy.arguments);

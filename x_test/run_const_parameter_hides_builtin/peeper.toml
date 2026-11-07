@@ -1,0 +1,9 @@
+name = "run_const_parameter_hides_builtin"
+build = "program"
+
+# A `const` type parameter named `str` hides the built-in text type in its
+# function: given `i32`, `&str` is a reference to an `i32`.
+[test]
+mode = "run"
+outcome = "exit_code"
+exit_code = 7

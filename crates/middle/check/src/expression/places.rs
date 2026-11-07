@@ -388,10 +388,11 @@ impl ThirBuilder<'_, '_> {
         let file = &self.checker.module().ast.file;
         let text = name.text(file);
         let modules = self.checker.modules;
-        let found = project::field_names(modules, definition).position(|field| field == text);
+        let found =
+            model::program::field_names(modules, definition).position(|field| field == text);
         if found.is_none() {
             let message = format!("`{}` has no field `{text}`", self.checker.type_text(ty));
-            let fields = project::field_names(modules, definition).map(|field| (field, 0));
+            let fields = model::program::field_names(modules, definition).map(|field| (field, 0));
             let meant = nearest_name(text, fields).map(str::to_string);
             self.checker
                 .report_unknown(diagnostics::UNKNOWN_FIELD, name.span, message, meant);

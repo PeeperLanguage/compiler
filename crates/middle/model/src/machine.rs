@@ -9,11 +9,12 @@ use crate::semantic_types::Integer;
 pub struct Machine {
     /// Its name for `-target` and its runtime's folder.
     pub name: &'static str,
-    /// Its architecture and system as `std::env::consts` spells them, which
-    /// find the host's row; `os` also picks the executables' suffix and
-    /// whether the math library is linked.
+    /// Its architecture as `std::env::consts` spells it, which with `os`
+    /// finds the host's row.
     arch: &'static str,
-    pub os: &'static str,
+    /// Its system, which also picks the executables' suffix and how a
+    /// program is linked.
+    pub os: Os,
     /// What clang's `--target` names it.
     pub triple: &'static str,
     /// The target `rustc` builds its runtime for.
@@ -25,6 +26,25 @@ pub struct Machine {
     pub i64_align: u64,
     /// How its C code passes values, as clang lowers it.
     pub c_abi: CAbi,
+}
+
+/// The system a machine runs.
+#[derive(PartialEq, Eq, Debug, Clone, Copy)]
+pub enum Os {
+    Linux,
+    Macos,
+    Windows,
+}
+
+impl Os {
+    /// Its name as `std::env::consts::OS` spells it.
+    pub fn name(self) -> &'static str {
+        match self {
+            Os::Linux => "linux",
+            Os::Macos => "macos",
+            Os::Windows => "windows",
+        }
+    }
 }
 
 /// The C calling conventions of the machines, as clang lowers C's integers
@@ -49,7 +69,7 @@ const MACHINES: [Machine; 7] = [
     Machine {
         name: "x86_64-linux",
         arch: "x86_64",
-        os: "linux",
+        os: Os::Linux,
         triple: "x86_64-linux-gnu",
         rust_triple: "x86_64-unknown-linux-gnu",
         pointer_bits: 64,
@@ -59,7 +79,7 @@ const MACHINES: [Machine; 7] = [
     Machine {
         name: "aarch64-linux",
         arch: "aarch64",
-        os: "linux",
+        os: Os::Linux,
         triple: "aarch64-linux-gnu",
         rust_triple: "aarch64-unknown-linux-gnu",
         pointer_bits: 64,
@@ -70,7 +90,7 @@ const MACHINES: [Machine; 7] = [
     Machine {
         name: "i686-linux",
         arch: "x86",
-        os: "linux",
+        os: Os::Linux,
         triple: "i686-linux-gnu",
         rust_triple: "i686-unknown-linux-gnu",
         pointer_bits: 32,
@@ -80,7 +100,7 @@ const MACHINES: [Machine; 7] = [
     Machine {
         name: "x86_64-macos",
         arch: "x86_64",
-        os: "macos",
+        os: Os::Macos,
         triple: "x86_64-apple-macos",
         rust_triple: "x86_64-apple-darwin",
         pointer_bits: 64,
@@ -90,7 +110,7 @@ const MACHINES: [Machine; 7] = [
     Machine {
         name: "aarch64-macos",
         arch: "aarch64",
-        os: "macos",
+        os: Os::Macos,
         triple: "arm64-apple-macos",
         rust_triple: "aarch64-apple-darwin",
         pointer_bits: 64,
@@ -100,7 +120,7 @@ const MACHINES: [Machine; 7] = [
     Machine {
         name: "x86_64-windows",
         arch: "x86_64",
-        os: "windows",
+        os: Os::Windows,
         triple: "x86_64-w64-windows-gnu",
         rust_triple: "x86_64-pc-windows-gnullvm",
         pointer_bits: 64,
@@ -110,7 +130,7 @@ const MACHINES: [Machine; 7] = [
     Machine {
         name: "aarch64-windows",
         arch: "aarch64",
-        os: "windows",
+        os: Os::Windows,
         triple: "aarch64-w64-windows-gnu",
         rust_triple: "aarch64-pc-windows-gnullvm",
         pointer_bits: 64,
@@ -125,7 +145,7 @@ impl Machine {
         let (arch, os) = (std::env::consts::ARCH, std::env::consts::OS);
         MACHINES
             .iter()
-            .find(|machine| machine.arch == arch && machine.os == os)
+            .find(|machine| machine.arch == arch && machine.os.name() == os)
             .ok_or_else(|| format!("peeper has no target for this machine, {arch}-{os}"))
     }
 
@@ -159,6 +179,6 @@ impl Machine {
 
     /// What its executables' names end with.
     pub fn executable_suffix(&self) -> &'static str {
-        if self.os == "windows" { ".exe" } else { "" }
+        if self.os == Os::Windows { ".exe" } else { "" }
     }
 }

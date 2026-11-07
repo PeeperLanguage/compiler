@@ -1216,3 +1216,59 @@ From PR #182's Windows CI run and two reviews of the branch:
   13).
 - `scripts/check.sh`: all pass. The new library error first failed
   `checks_a_project`, whose `libs/core` had no peeper.toml; it has one now.
+
+### Untangling the codebase (2026-11-07, `refactor/untangle` from 472a9e5c, not committed)
+
+A pass for hidden links (copies that must change together), needless links
+and special cases, in ten fixes and one recheck round by three subagents.
+The decision log, with every item kept and why, is
+`playground/untangle-log.md`; the whole diff is
+`playground/untangle-final.patch` (119 files, +2256 −1427).
+
+- Loading and projects: `project::library_packages` is the one owner of
+  "folders and manifests to bundled libraries" (the CLI, the editor and the
+  browser use it); `LIBRARIES_FOLDER`; a loader worker's panic is caught
+  and raised again on the main thread; `installation_dir` is a `Result`;
+  a link to a library folder counts; a path that cannot be made canonical
+  is an error. A missing core stays "no libraries", on purpose (eb1b80ad).
+  The editor keys a project's last check by its folder (or lone file).
+- `compile::run` decides "may start": `entry_point` needs no loading or
+  checking error and `require_main`; `run` gives nothing for an
+  uncheckable program. `CheckedFunction::into_mir` is the one way to the
+  cleaned MIR. `peeper` has a library target, `write_program`, that the
+  binary and the bench share.
+- Check: `Symbol::TypeArgument` (a `const T: type` parameter is no
+  built-in); `Types::builtin` reads its own `usize`; `checking_in`,
+  `in_copy`, `records_facts`; T0043 only when a type parameter is named;
+  built-in function names refused for every top-level name.
+- MIR users: `Place::lent_again`, `slice_field`, `Type::is_slice_shaped`,
+  `thir::Stmt::Let { keeps_temporaries }`; loans and `traps` list every
+  MIR kind.
+- Interpreter and backend: `binary_instruction`, `write_unary`,
+  `cast_instruction`, `saturating_conversion` in `llvm::function::
+  arithmetic`, used by the backend and `eval`'s `llvm_parity` test, which
+  `scripts/check.sh` now runs on Linux (about 30 s). `constant_refusal`
+  refuses any type that lends mutably.
+- Smaller: `source::MAX_FILE_BYTES` (loader refuses longer files; span and
+  list casts keep a debug assert, a checked cast measured +4.5%);
+  `machine::Os`; `Limbs` storage private; `TOOLCHAIN_FOLDER`; runtime
+  source path spelled once; `fix::write` keeps the path; arena dependency
+  dropped from `peeper` and `compile`; `peeper init` writes
+  `println("Hello from Peeper!");`.
+- Tests: new fixtures `negative_const_value_type_reported`,
+  `negative_const_copy_error_in_constant`,
+  `negative_interface_reference_move`,
+  `negative_const_mutable_interface_reference`,
+  `run_const_parameter_hides_builtin`; `negative_size_of` gains `const
+  align_of` (16 errors). Rust tests: `a_loading_error_leaves_no_entry_point`,
+  `a_linked_bundled_library_is_found`, `core_streams_are_the_runtimes`;
+  the browser test reads every error count. Each new test was seen to fail
+  without its fix.
+- Behavior: the old (472a9e5c) and new compilers give the same `check`
+  output, `-dump mir` and `-dump ll` on every fixture and example except
+  the six fixtures above. `peeper check` on the 10×2000-function program:
+  1.35–1.37e9 instructions, as before.
+- `scripts/check.sh`: all pass.
+- Open for the owner: L0003 used by check; the lexer ends a line at a bare
+  `\r` while line numbers count `\n` only; whether to delete the fixtures'
+  unused `program_args` support.

@@ -23,9 +23,9 @@ entry:
 bb0:
   %i0 = call i64 @"ll_size_of:main.Bytes"(i64 3)
   store i64 %i0, ptr %i1.0.m
-  call void (i32, i32, ptr) @"peeper_rt_v2_print_int"(i32 0, i32 1, ptr %i1.0.m)
-  call void (ptr, i64) @"peeper_rt_v1_print_bytes"(ptr @.str.0, i64 1)
-  call void () @"peeper_rt_v1_flush"()
+  call void @"peeper_rt_v2_print_int"(i32 0, i32 1, ptr %i1.0.m)
+  call void @"peeper_rt_v1_print_bytes"(ptr @.str.0, i64 1)
+  call void @"peeper_rt_v1_flush"()
   ret void
 }
 

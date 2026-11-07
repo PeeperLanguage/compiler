@@ -27,5 +27,7 @@ stderr_contains = [
     "main.peep:25:5\n",
     "`size_of` is a built-in function",
     "main.peep:29:4\n",
-    "Compilation failed with 15 error(s)",
+    "`align_of` is a built-in function",
+    "main.peep:34:7\n",
+    "Compilation failed with 16 error(s)",
 ]
