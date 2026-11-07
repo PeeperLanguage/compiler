@@ -42,8 +42,10 @@ as few walks per body as possible; one owner per fact.
   (`crates/middle/eval/tests/llvm_parity.rs`).
 - Loans: Rust-like, a borrow lasts to the last use of a reference holding it;
   two-phase `&mut` call arguments; per-field holders (2026-11-01).
-- Every declaration is checked, used or not. Reachability ignores constant
-  values; no "always true" warning (2026-10-17).
+- Every declaration is checked, used or not, except the body of a function
+  with `const` parameters: each copy of it is checked, so one that nothing
+  calls is not (2026-11-07). Reachability ignores constant values; no
+  "always true" warning (2026-10-17).
 - Reuse between compiles is per module, keyed on text and imported
   interfaces (2026-10-17).
 
@@ -59,16 +61,15 @@ as few walks per body as possible; one owner per fact.
   printing, `panic`, compile-time calls, C functions, paths, methods
   (`fn Point::name(&self)`, called `Point::name(&p)` or `p.name()`).
 - **Not done (parser reads, check reports T0043):** enums, optionals,
-  allocator, interfaces, generics, function values, default
+  owned interfaces, generics, function values, default
   parameters, destructuring, block expressions, pipes, dependencies.
-- **Since then (worklog, 2026-11-07):** borrowed interfaces (`&Shape`),
+- **Since then (worklog, 2026-11-06 to 2026-11-07):** borrowed interfaces (`&Shape`),
   `core:memory` (`Allocator` with `Heap`, `Arena`, `Pool`, `Stack`,
   `Realloc`, `New`, `Replace`), `rawptr + usize`, `size_of`/`align_of`,
   `const` parameters (a type or a value, one copy per set of arguments),
   and libraries as projects (`build = "lib"`); `core` is one.
-- **Planned order:** allocator; lifetimes of references in structs; enums and
-  `match` with `?T`; strings, methods, interfaces, generics; port the Go
-  fixtures.
+- **Planned order:** lifetimes of references in structs; enums and `match`
+  with `?T`; strings, owned interfaces, generics; port the Go fixtures.
 
 ## Non-goals now
 

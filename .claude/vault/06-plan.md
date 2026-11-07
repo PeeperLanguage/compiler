@@ -1,7 +1,8 @@
 # Plan
 
 `main` is at `2c498440` (2026-11-06): text views (`&str`, `&cstr`) and
-slices (`&[]T`) merged. Open branch: `feature/interfaces`. Order of work
+slices (`&[]T`) merged. Open branch: `feature/size-of`, holding the
+interface, allocator and type parameter work below, in PR #182. Order of work
 (owner, 2026-11-06, `allocator.localplan.md` ORDER OF WORK):
 
 1. [x] Borrowed interfaces: `&Shape`, `&mut Shape`, method tables
@@ -11,11 +12,11 @@ slices (`&[]T`) merged. Open branch: `feature/interfaces`. Order of work
    takes itself, the compiler frees. `defer` or destructors come later, if
    a real program needs them. What was kept: the `free` keyword removed,
    `Malloc` renamed `Allocate` (9bb5d681).
-3. [~] An `Allocator` interface in `core:allocator`, with `Heap`, `Arena`,
-   `Pool` and `Stack` (owner, 2026-11-06: before `String`, which takes its
-   memory from one), and `rawptr + usize` for them (d91d5b0f), on
-   `feature/allocator-interface`. The Website follows once the work is
-   complete.
+3. [x] An `Allocator` interface with `Heap`, `Arena`, `Pool` and `Stack`
+   (owner, 2026-11-06: before `String`, which takes its memory from one),
+   and `rawptr + usize` for them (d91d5b0f, 9920cf40). Named
+   `core:allocator` then, `core:memory` since 5f548a56. The Website
+   follows with item 6's.
 4. [-] `String`: skipped (owner, 2026-11-06). When it comes back: it
    takes a `&mut Allocator` on each call that allocates or frees, since
    structs cannot hold references yet.
@@ -37,6 +38,8 @@ slices (`&[]T`) merged. Open branch: `feature/interfaces`. Order of work
      `<T>` generics (owner, 2026-11-07).
    - [x] Step 4: bundled libraries are projects, `build = "lib"` in
      `peeper.toml` (6f56683d; built on `feature/library-manifest`).
+   - [x] Fixes from the two reviews of the branch and its Windows CI run
+     (95c9e838, eb1b80ad; worklog, "Review fixes after the PR").
    - [ ] The Website (`peeper.toml`'s `build`, `core:memory`, `size_of`,
      `const` parameters, a new wasm build), once the feature is complete.
 
@@ -58,7 +61,7 @@ type, functions of types other than structs.
   `Replace` is checked only once a program calls it).
 - The `feature/library-manifest` worktree: its work is in 6f56683d; remove
   it only when the owner says so.
-- Compile time: the `const` parameter step is about 0.8% slower on the
+- Compile time: the `const` parameter step is about 0.9% slower on the
   benchmark, spread over many small places (worklog).
 
 ## Open findings (from `fix/loans-memory-growth`, 2026-11-01; not rechecked since)

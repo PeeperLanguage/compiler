@@ -1170,3 +1170,49 @@ The work was split into four signed commits, each passing
 Each commit's tree was built in a separate index file, and the working
 files were not touched. Checking was done in a temporary worktree, removed
 after. Backups: `playground/backup-commit-2026-11-07/`.
+
+### Review fixes after the PR (2026-11-07, `feature/size-of`, 95c9e838, eb1b80ad)
+
+From PR #182's Windows CI run and two reviews of the branch:
+
+- CI (`windows-11-arm`): `run_realloc` printed `heap: 0 3` for `heap: 10 3`.
+  The fixture read `grown` after `heap.Realloc(grown, 4096, 2, 8)`, which
+  on Windows moves the piece and frees `grown`; glibc and macOS shrink in
+  place. The sum is now read before the shrink, in `run_realloc` and
+  `run_i686_realloc`. Proved by reading only: Linux cannot show it. The
+  interpreter printed 10 for the freed read: it does not notice a read of
+  memory a move freed (not changed).
+- The browser build (`build.rs`) embedded every file in `_builtin_library`;
+  a file that is not UTF-8 (`.DS_Store`, a swap file) stopped the crate
+  compiling. Now only peeper.toml and `.peep` files. Checked both ways
+  with a binary `.DS_Store` in `core`: the old script fails, the new one
+  builds.
+- A library whose `src` was missing, unreadable or empty checked clean.
+  `load` now gives M0001 "read library: {folder}: {error}" or "no source
+  files in {folder}" when no file of the library is open in an editor or on
+  a page (the browser's library files are never on disk), and the program
+  is not checked. Test: `a_library_without_files_is_an_error`.
+- `bundled_libraries` dropped a folder with no or a bad peeper.toml, or a
+  program, and let two libraries of one name replace each other: losing
+  `core` lost the prelude with no word. Each is now an error from `find`
+  and `create`; a file beside the folders (a README) is skipped; no
+  libraries folder still means none. The editor logs the error and shows
+  nothing for the file. Test: `a_bad_bundled_library_is_an_error`; the old
+  test no longer has bad folders in its libraries. The browser still
+  reads its embedded manifests on its own (it panics on a bad one).
+- The editor kept a project's last check by its entry, or a library's
+  folder; when `build` changed, the old entry and its diagnostics stayed.
+  `Server::check` now takes over the files the check under the other key
+  published, so they are cleared (`project::entry` made public for it).
+  Test: `checks_a_library_by_its_folder` switches the library to a
+  program; it fails without the fix.
+- The browser's `run` loaded a library before refusing it; `load` is split
+  into `project_of` and `load`, and `run` refuses in between, as
+  `peeper run` does.
+- Vault: the 01-product declaration-check line (copies), its "Not done"
+  and "Planned order" lines (allocator done, interfaces borrowed only),
+  the "Since then" dates; 06-plan's header and item 3; 0.9% for the
+  slowdown; 03-vocabulary fixture counts (check 91, run 89, mir 19, ll
+  13).
+- `scripts/check.sh`: all pass. The new library error first failed
+  `checks_a_project`, whose `libs/core` had no peeper.toml; it has one now.
