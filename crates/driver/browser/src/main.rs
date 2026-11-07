@@ -30,12 +30,12 @@ use source::SourceFile;
 /// The bundled library, every file of it, since there is no disk to find it on.
 const CORE_FILES: [(&str, &str); 2] = [
     (
-        "allocator.peep",
-        include_str!("../../../../_builtin_library/core/src/allocator.peep"),
-    ),
-    (
         "global.peep",
         include_str!("../../../../_builtin_library/core/src/global.peep"),
+    ),
+    (
+        "memory.peep",
+        include_str!("../../../../_builtin_library/core/src/memory.peep"),
     ),
 ];
 

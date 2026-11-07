@@ -1,8 +1,8 @@
 // run_pointer_offsets on a 32-bit target, where an offset wraps at 32 bits.
-import "core:allocator";
+import "core:memory";
 
 fn main() {
-    let mut heap = allocator::Heap.{};
+    let mut heap = memory::Heap.{};
     let block = heap.Allocate(64, 4);
     let count: usize = 3;
     let mut at = block;

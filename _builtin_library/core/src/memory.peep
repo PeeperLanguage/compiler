@@ -1,6 +1,9 @@
 #[extern("peeper_rt_v1_alloc")]
 fn allocate(size: usize) -> rawptr;
 
+#[extern("peeper_rt_v1_realloc")]
+fn reallocate(ptr: rawptr, size: usize) -> rawptr;
+
 #[extern("peeper_rt_v1_free")]
 fn free(ptr: rawptr);
 
@@ -10,8 +13,15 @@ fn free(ptr: rawptr);
 // `align` is where a piece may start: at an address that is a multiple of
 // it, a power of two up to 16. Every allocator here gives `none` for
 // another `align`, or when it has no room.
+//
+// `Realloc` gives a piece of `new_size` bytes holding the first bytes of
+// `memory`, a piece of `old_size` bytes, as many as both have: `memory`
+// itself when it can grow or shrink where it is, else a new piece, and
+// `memory` is freed. With no room it gives `none` and `memory` is kept. A
+// `memory` of `none` is a new piece.
 iface Allocator {
     fn Allocate(&mut self, size: usize, align: usize) -> rawptr,
+    fn Realloc(&mut self, memory: rawptr, old_size: usize, new_size: usize, align: usize) -> rawptr,
     fn Free(&mut self, memory: rawptr)
 }
 
@@ -26,6 +36,14 @@ fn aligned(offset: usize, align: usize) -> usize {
     return (offset + align - 1) / align * align;
 }
 
+// Copies `size` bytes from `from` to `to`, which do not overlap.
+fn copy(to: rawptr, from: rawptr, size: usize) {
+    for i in 0..size {
+        let byte = (to + i) as *u8;
+        byte.* = ((from + i) as *u8).*;
+    }
+}
+
 // The program's heap.
 struct Heap {}
 fn Heap::Allocate(&mut self, size: usize, align: usize) -> rawptr {
@@ -33,6 +51,12 @@ fn Heap::Allocate(&mut self, size: usize, align: usize) -> rawptr {
         return none;
     }
     return allocate(size);
+}
+fn Heap::Realloc(&mut self, memory: rawptr, old_size: usize, new_size: usize, align: usize) -> rawptr {
+    if !aligns(align) {
+        return none;
+    }
+    return reallocate(memory, new_size);
 }
 fn Heap::Free(&mut self, memory: rawptr) { free(memory); }
 
@@ -60,6 +84,26 @@ fn Arena::Allocate(&mut self, size: usize, align: usize) -> rawptr {
     }
     self.used = start + size;
     return self.block + start;
+}
+// The newest piece grows or shrinks where it is; another is copied to a
+// new piece.
+fn Arena::Realloc(&mut self, memory: rawptr, old_size: usize, new_size: usize, align: usize) -> rawptr {
+    if memory != none && old_size <= self.used && memory + old_size == self.block + self.used {
+        let start = self.used - old_size;
+        if aligns(align) && start % align == 0 && new_size <= self.size - start {
+            self.used = start + new_size;
+            return memory;
+        }
+    }
+    let moved = self.Allocate(new_size, align);
+    if moved != none && memory != none {
+        let mut kept = old_size;
+        if new_size < kept {
+            kept = new_size;
+        }
+        copy(moved, memory, kept);
+    }
+    return moved;
 }
 // A piece is given back only with all the others, by `Reset`.
 fn Arena::Free(&mut self, memory: rawptr) {}
@@ -115,6 +159,16 @@ fn Pool::Allocate(&mut self, size: usize, align: usize) -> rawptr {
     self.free = (chunk as *rawptr).*;
     return chunk;
 }
+// Every chunk has the same room, so a piece stays where it is.
+fn Pool::Realloc(&mut self, memory: rawptr, old_size: usize, new_size: usize, align: usize) -> rawptr {
+    if memory == none {
+        return self.Allocate(new_size, align);
+    }
+    if new_size > self.chunk || !aligns(align) || align > self.align {
+        return none;
+    }
+    return memory;
+}
 fn Pool::Free(&mut self, memory: rawptr) {
     if memory == none {
         return;
@@ -156,6 +210,21 @@ fn Stack::Allocate(&mut self, size: usize, align: usize) -> rawptr {
     self.top = piece;
     self.last = at;
     return piece;
+}
+// Only the newest piece is resized, as only it is freed. Its mark stays:
+// freeing the piece, moved or not, goes back to before it.
+fn Stack::Realloc(&mut self, memory: rawptr, old_size: usize, new_size: usize, align: usize) -> rawptr {
+    if memory == none {
+        return self.Allocate(new_size, align);
+    }
+    if memory != self.top {
+        panic "a stack's pieces are resized newest first";
+    }
+    let resized = self.arena.Realloc(memory, old_size, new_size, align);
+    if resized != none {
+        self.top = resized;
+    }
+    return resized;
 }
 fn Stack::Free(&mut self, memory: rawptr) {
     if memory == none {

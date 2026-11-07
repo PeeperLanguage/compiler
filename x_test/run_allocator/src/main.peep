@@ -1,15 +1,15 @@
-// `core:allocator`'s `Heap` gives memory and takes it back. `free` is an
+// `core:memory`'s `Heap` gives memory and takes it back. `free` is an
 // ordinary name.
-import "core:allocator";
+import "core:memory";
 
 fn free(count: i32) -> i32 { return count + 1; }
 
 fn main() {
-    let mut heap = allocator::Heap.{};
-    let memory = heap.Allocate(8, 4);
-    let numbers = memory as *i32;
+    let mut heap = memory::Heap.{};
+    let block = heap.Allocate(8, 4);
+    let numbers = block as *i32;
     numbers.* = 7;
     println(numbers.*, 9);
-    heap.Free(memory);
+    heap.Free(block);
     println("free", free(2));
 }

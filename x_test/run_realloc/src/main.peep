@@ -1,0 +1,81 @@
+// `Realloc` keeps a piece's bytes as it grows or shrinks: where it is when
+// it can, else in a new piece; with no room it gives `none` and the piece
+// is kept.
+import "core:memory";
+
+// A piece of `count` bytes holding 1, 2, 3 and up.
+fn Filled(allocator: &mut memory::Allocator, count: usize) -> rawptr {
+    let piece = allocator.Allocate(count, 1);
+    for i in 0..count {
+        let byte = (piece + i) as *u8;
+        byte.* = (i + 1) as u8;
+    }
+    return piece;
+}
+
+// The sum of the first `count` bytes of `piece`.
+fn Sum(piece: rawptr, count: usize) -> usize {
+    let mut sum: usize = 0;
+    for i in 0..count {
+        sum = sum + ((piece + i) as *u8).* as usize;
+    }
+    return sum;
+}
+
+fn Heap() {
+    let mut heap = memory::Heap.{};
+    let piece = Filled(&mut heap, 4);
+    let grown = heap.Realloc(piece, 4, 4096, 8);
+    let shrunk = heap.Realloc(grown, 4096, 2, 8);
+    println("heap:", Sum(grown, 4), Sum(shrunk, 2), heap.Realloc(shrunk, 2, 8, 3) == none);
+    // Shrunk to nothing, it is still a piece to free.
+    let empty = heap.Realloc(shrunk, 2, 0, 8);
+    println("heap to nothing:", empty != none);
+    heap.Free(empty);
+    let fresh = heap.Realloc(none, 0, 8, 8);
+    println("heap from none:", fresh != none);
+    heap.Free(fresh);
+}
+
+fn Arena() {
+    let mut arena = memory::Arena::New(64);
+    let first = Filled(&mut arena, 4);
+    let second = Filled(&mut arena, 4);
+    // The newest piece grows where it is; an older one moves.
+    let grown = arena.Realloc(second, 4, 8, 1);
+    let moved = arena.Realloc(first, 4, 6, 1);
+    println("arena:", grown == second, moved != first, Sum(grown, 4), Sum(moved, 4));
+    // Too big for what is left: `none`, and the piece is kept.
+    println("arena full:", arena.Realloc(moved, 6, 100, 1) == none, Sum(moved, 4));
+    arena.Release();
+}
+
+fn Pool() {
+    let mut pool = memory::Pool::New(16, 8, 2);
+    let piece = Filled(&mut pool, 4);
+    println("pool:", pool.Realloc(piece, 4, 16, 8) == piece, pool.Realloc(piece, 4, 17, 8) == none, Sum(piece, 4));
+    pool.Release();
+}
+
+fn Stack() {
+    let mut stack = memory::Stack::New(128);
+    let first = Filled(&mut stack, 4);
+    let second = Filled(&mut stack, 4);
+    let grown = stack.Realloc(second, 4, 12, 1);
+    println("stack:", grown == second, Sum(grown, 4));
+    stack.Free(grown);
+    // With `second` gone, `first` is the newest, and it can be freed.
+    stack.Free(first);
+    // An older piece is not the newest: resizing it stops the program.
+    let older = Filled(&mut stack, 4);
+    Filled(&mut stack, 4);
+    println("resizing an older piece");
+    stack.Realloc(older, 4, 8, 1);
+}
+
+fn main() {
+    Heap();
+    Arena();
+    Pool();
+    Stack();
+}

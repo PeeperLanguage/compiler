@@ -30,6 +30,7 @@ use runtime_abi::symbols::ALLOC;
 use runtime_abi::symbols::EXIT;
 use runtime_abi::symbols::FREE;
 use runtime_abi::symbols::READ;
+use runtime_abi::symbols::REALLOC;
 use runtime_abi::symbols::WRITE;
 
 /// The descriptor of a program's input, as in `core`.
@@ -348,6 +349,18 @@ impl<'f> Interpreter<'_, 'f> {
                     None => Register::Address(0),
                 };
                 Some(block)
+            }
+            (REALLOC | "realloc", [block, size]) => {
+                let (address, size) = (self.address_argument(block), self.size_argument(size));
+                if address == 0 {
+                    Some(self.allocated(size, span)?)
+                } else {
+                    let Some(moved) = self.memory.reallocate(address, size) else {
+                        return Err(self.fail("this resizes memory that is not allocated", span));
+                    };
+                    self.count_copy(size, span)?;
+                    Some(Register::Address(moved.unwrap_or(0)))
+                }
             }
             (FREE | "free", [block]) => {
                 let address = self.address_argument(block);

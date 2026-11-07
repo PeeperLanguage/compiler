@@ -1,7 +1,7 @@
 // What the runtime cannot do: a negative length or a stream that is not open
 // gives -1, and a block too big for the machine is null, which the program can
 // go on from.
-import "core:allocator";
+import "core:memory";
 
 fn main() {
     let negative: i32 = -1;
@@ -9,7 +9,7 @@ fn main() {
     println(Write(Stdout, c"x", negative), Read(Stdin, @buffer[0], negative));
     println(Read(negative, @buffer[0], 1));
     let huge: usize = 1;
-    let mut heap = allocator::Heap.{};
+    let mut heap = memory::Heap.{};
     println(heap.Allocate(huge << 62, 16) == none);
     println("went on");
 }

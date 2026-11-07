@@ -1,0 +1,12 @@
+name = "run_realloc"
+build = "program"
+
+[test]
+mode = "run"
+outcome = "exit_code"
+exit_code = 101
+stdout_contains = ["heap: 10 3 true\nheap to nothing: true\nheap from none: true\narena: true true 10 10\narena full: true 10\npool: true true 10\nstack: true 10\nresizing an older piece\n"]
+stderr_contains = [
+    "panic: a stack's pieces are resized newest first\n",
+    "memory.peep:221:9\n",
+]

@@ -1,9 +1,9 @@
 // `rawptr + usize` is the address that many bytes further on, so a block
 // from the heap holds values one after another.
-import "core:allocator";
+import "core:memory";
 
 fn main() {
-    let mut heap = allocator::Heap.{};
+    let mut heap = memory::Heap.{};
     let block = heap.Allocate(64, 4);
     let count: usize = 3;
     let mut at = block;

@@ -1,7 +1,7 @@
 // A raw pointer's target need not be complete: a struct can point to itself,
 // to a struct that points back, or to one declared after it, however the
 // pointer is written. The functions before the struct name it first.
-import "core:allocator";
+import "core:memory";
 
 fn Length(list: *Node) -> i32 {
     let mut count: i32 = 0;
@@ -14,7 +14,7 @@ fn Length(list: *Node) -> i32 {
 }
 
 fn Push(list: *Node, value: i32) -> *Node {
-    let mut heap = allocator::Heap.{};
+    let mut heap = memory::Heap.{};
     let node = heap.Allocate(size_of(Node), align_of(Node)) as *Node;
     node.*.value = value;
     node.*.next = list;

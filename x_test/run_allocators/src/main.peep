@@ -1,14 +1,14 @@
-// `core:allocator`'s allocators, each through the same `&mut Allocator`.
-import "core:allocator";
+// `core:memory`'s allocators, each through the same `&mut Allocator`.
+import "core:memory";
 
 struct Node { value: i32, next: *Node }
 
-// A list of up to `count` nodes, valued 1 and up, from `memory`, the last
-// made first: as many as `memory` has room for.
-fn List(memory: &mut allocator::Allocator, count: i32) -> *Node {
+// A list of up to `count` nodes, valued 1 and up, from `allocator`, the last
+// made first: as many as `allocator` has room for.
+fn List(allocator: &mut memory::Allocator, count: i32) -> *Node {
     let mut list: *Node = none;
     for i in 0..count {
-        let node = memory.Allocate(size_of(Node), align_of(Node)) as *Node;
+        let node = allocator.Allocate(size_of(Node), align_of(Node)) as *Node;
         if node == none {
             return list;
         }
@@ -30,7 +30,7 @@ fn Sum(list: *Node) -> i32 {
 }
 
 fn Arena() {
-    let mut arena = allocator::Arena::New(64);
+    let mut arena = memory::Arena::New(64);
     // A byte, then a pointer-aligned piece: it starts 8 bytes in.
     let byte = arena.Allocate(1, 1);
     let word = arena.Allocate(8, 8);
@@ -44,7 +44,7 @@ fn Arena() {
 }
 
 fn Pool() {
-    let mut pool = allocator::Pool::New(16, 8, 3);
+    let mut pool = memory::Pool::New(16, 8, 3);
     let first = pool.Allocate(16, 8);
     let second = pool.Allocate(16, 8);
     println("pool:", second == first + 16, pool.Allocate(17, 8) == none, pool.Allocate(8, 16) == none);
@@ -55,16 +55,16 @@ fn Pool() {
     pool.Free(second);
     println("pool list:", Sum(List(&mut pool, 5)));
     pool.Release();
-    let empty = allocator::Pool::New(16, 3, 3);
+    let empty = memory::Pool::New(16, 3, 3);
     println("pool of a wrong align:", empty.chunk);
     // Rounded up, a size near the top of `usize` would wrap to nothing.
     let zero: usize = 0;
-    let mut huge = allocator::Pool::New(zero - 4, 8, 2);
+    let mut huge = memory::Pool::New(zero - 4, 8, 2);
     println("pool of a huge chunk:", huge.Allocate(0, 8) == none);
 }
 
 fn Stack() {
-    let mut stack = allocator::Stack::New(256);
+    let mut stack = memory::Stack::New(256);
     let first = stack.Allocate(8, 8);
     let second = stack.Allocate(8, 8);
     stack.Free(second);
@@ -76,7 +76,7 @@ fn Stack() {
 
 // Freeing a piece of a stack that is not the newest stops the program.
 fn StackOrder() {
-    let mut stack = allocator::Stack::New(64);
+    let mut stack = memory::Stack::New(64);
     let first = stack.Allocate(8, 8);
     let second = stack.Allocate(8, 8);
     println("freeing out of order");
@@ -87,7 +87,7 @@ fn main() {
     Arena();
     Pool();
     Stack();
-    let mut heap = allocator::Heap.{};
+    let mut heap = memory::Heap.{};
     println("heap list:", Sum(List(&mut heap, 10)), heap.Allocate(8, 32) == none);
     StackOrder();
 }
