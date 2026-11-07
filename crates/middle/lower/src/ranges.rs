@@ -98,8 +98,8 @@ impl Lowering<'_> {
         let [start, end, step, inclusive] = self.lower_range_parts(range)?;
         let known = |lowering: &Self, operand| {
             let constant = lowering.mir.constant(operand)?;
-            match constant.value {
-                Value::Integer(ref value) => Some(value.clone()),
+            match &constant.value {
+                Value::Integer(value) => Some(value.clone()),
                 _ => unreachable!("the checker allows only an integer range"),
             }
         };

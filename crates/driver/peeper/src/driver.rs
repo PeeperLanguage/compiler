@@ -59,9 +59,9 @@ pub struct Command<W: Write> {
 impl<W: Write> Command<W> {
     /// Loads the program at `path` and does what `goal` asks. The result is
     /// the exit code: 1 when there are errors, else 0, or the program's own
-    /// when it ran. A folder must hold peeper.toml; its project starts at
-    /// src/main.peep. A file is checked on its own, with no project and no
-    /// imports.
+    /// when it ran. A folder must hold peeper.toml; its program starts at
+    /// src/main.peep, and a library, which only `check` takes, is each file
+    /// of src. A file is checked on its own, with no project and no imports.
     pub fn execute(&mut self, goal: &Goal) -> u8 {
         // Find the project: a folder's peeper.toml, or a single file.
         let project = match project::find(&self.path, &self.installation.join("libs")) {
@@ -71,6 +71,11 @@ impl<W: Write> Command<W> {
                 return 1;
             }
         };
+        if project.entry.is_none() && !matches!(goal, Goal::Check { .. }) {
+            let message = project::manifest::LIBRARY_HAS_NO_MAIN;
+            _ = writeln!(self.out, "peeper: `{}` {message}", project.name);
+            return 1;
+        }
         // Read and parse every module, following imports. No editor has
         // unsaved text here, so every file is read from disk.
         let program = project::load(&project, &HashMap::<PathBuf, String>::new());
@@ -269,7 +274,8 @@ fn compile<'p>(
             false, // names are for editors
             |output| {
                 let compile::Output::Function(compile::CheckedFunction {
-                    definition,
+                    function,
+                    module,
                     thir,
                     mir,
                     types,
@@ -285,9 +291,9 @@ fn compile<'p>(
                 if queue.is_some() || dumps.iter().any(|dump| matches!(dump, Dump::Mir)) {
                     flow::cleanup::remove_unused_code(&mut mir);
                 }
-                dumped.add(definition, thir, &mir, types);
+                dumped.add(function, thir, &mir, types);
                 if let Some(queue) = queue.as_deref_mut() {
-                    queue.add(definition, mir, types);
+                    queue.add(module, function, mir, types);
                 }
             },
         )

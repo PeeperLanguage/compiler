@@ -1,0 +1,7 @@
+name = "run_allocator_interface"
+build = "program"
+
+[test]
+mode = "run"
+outcome = "success"
+stdout_contains = ["7\n7 2 2\n"]

@@ -1,0 +1,8 @@
+name = "run_i686_pointer_offsets"
+build = "program"
+
+[test]
+mode = "run"
+target = "i686-linux"
+outcome = "success"
+stdout_contains = ["10 12 true false\ntrue\n"]

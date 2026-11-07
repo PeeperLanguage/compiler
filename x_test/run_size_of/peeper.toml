@@ -1,0 +1,7 @@
+name = "run_size_of"
+build = "program"
+
+[test]
+mode = "run"
+outcome = "success"
+stdout_contains = ["16 8 8 8\n1 4 8 8 4\n16 12 4\n16 16 16 16\n8 20 8 16\n48\n"]

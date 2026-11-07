@@ -126,16 +126,14 @@ impl Server<'_> {
         };
         let shown = match declared {
             Some(CachedKind::Literal { ty }) => ty.clone(),
-            Some(&CachedKind::Variable { mutable, ref ty }) => {
-                binding(mutable, token.kind.text(), ty)
-            }
+            Some(CachedKind::Variable { mutable, ty }) => binding(*mutable, token.kind.text(), ty),
             _ => token.kind.text().to_string(),
         };
         Some(doc_hover(&shown, doc))
     }
 
     /// The module read from `file` in each program last checked that holds
-    /// it, by the program's entry file, with what that check keeps. A module
+    /// it, in the order of what it is kept by, with what that check keeps. A module
     /// read from other text than the editor now has, before a check or after
     /// one that could not load, is left out: its places are not the
     /// editor's.
@@ -279,8 +277,8 @@ fn declaration_of<'a>(
             let declared = tree.decls[declaration].name().span;
             // A module constant's checked value is cached with its name.
             let mut facts = checked.facts.get(&file).into_iter().flatten();
-            let constant = facts.find_map(|fact| match fact.kind {
-                CachedKind::Constant { ref text } if fact.span == declared => text.as_ref(),
+            let constant = facts.find_map(|fact| match &fact.kind {
+                CachedKind::Constant { text } if fact.span == declared => text.as_ref(),
                 _ => None,
             });
             let elsewhere = declared_in.path != module.path;

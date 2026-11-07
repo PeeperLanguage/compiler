@@ -86,9 +86,9 @@ impl ThirBuilder<'_, '_> {
         };
         let Type::Struct {
             definition,
-            fields: ref field_types,
+            fields: field_types,
             ..
-        } = self.checker.types[ty]
+        } = &self.checker.types[ty]
         else {
             if ty != TypeId::INVALID {
                 let message = format!(
@@ -104,7 +104,7 @@ impl ThirBuilder<'_, '_> {
             }
             return Expr::INVALID;
         };
-        let field_types = field_types.clone();
+        let (definition, field_types) = (*definition, field_types.clone());
         // Where each field is set, by its index.
         let mut set: Vec<Option<Span>> = vec![None; field_types.len()];
         let mut checked: Vec<NonZeroU32> = Vec::with_capacity(fields.len());
@@ -519,8 +519,8 @@ impl ThirBuilder<'_, '_> {
         }
         let uncounted = "a range needs constant ends and step";
         let exprs = &self.body.exprs;
-        let constant = |id: Id<Expr>| match exprs[id].kind {
-            ExprKind::Constant(Value::Integer(ref limbs)) => Some(limbs),
+        let constant = |id: Id<Expr>| match &exprs[id].kind {
+            ExprKind::Constant(Value::Integer(limbs)) => Some(limbs),
             _ => None,
         };
         let ExprKind::Range {

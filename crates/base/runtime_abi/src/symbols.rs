@@ -3,6 +3,7 @@
 //! LLVM parameters.
 
 pub const ALLOC: &str = "peeper_rt_v1_alloc";
+pub const REALLOC: &str = "peeper_rt_v1_realloc";
 pub const FREE: &str = "peeper_rt_v1_free";
 pub const WRITE: &str = "peeper_rt_v1_write";
 pub const READ: &str = "peeper_rt_v1_read";

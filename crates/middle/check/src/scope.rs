@@ -18,6 +18,8 @@ use rustc_hash::FxHashMap;
 use source::SourceFile;
 use source::Span;
 
+use crate::builtin::layout_function;
+
 /// A place that holds declarations, and where each name is written. A module
 /// has one for its top-level declarations, imports and type functions. A name
 /// it does not hold is looked up next among its parent's exported names.
@@ -173,6 +175,18 @@ pub fn collect<'p>(
     for (index, declaration) in tree.declarations().enumerate() {
         let (name, symbol) = match tree.decls[declaration] {
             ast::Decl::Function(function) if function.owner.is_none() => {
+                // A call by this name is the built-in's (`check_call`).
+                let name = function.name.text(file);
+                if layout_function(name).is_some() {
+                    let message = format!("`{name}` is a built-in function");
+                    diagnostics.push(
+                        Diagnostic::new(diagnostics::ALREADY_DECLARED, message).label(
+                            file,
+                            function.name.span,
+                            "give this function another name",
+                        ),
+                    );
+                }
                 (function.name, Symbol::Function(definition(index)))
             }
             ast::Decl::Function(_) => continue, // a type's function, below

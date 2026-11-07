@@ -107,7 +107,7 @@ impl ThirBuilder<'_, '_> {
             TypeId::INVALID => self.add_expr(step, None),
             ty => self.add_required(step, ty),
         };
-        if let ExprKind::Constant(Value::Integer(ref limbs)) = self.body.exprs[step].kind
+        if let ExprKind::Constant(Value::Integer(limbs)) = &self.body.exprs[step].kind
             && limbs.as_slice().iter().all(|&limb| limb == 0)
         {
             let span = self.body.exprs.span(step);

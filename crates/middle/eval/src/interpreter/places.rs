@@ -102,8 +102,8 @@ impl<'b> Interpreter<'b, '_> {
         Ok(Located { address, ty })
     }
 
-    /// The value of the reference, slice or pointer to `place` that the
-    /// instruction `id` gives.
+    /// The value of the reference, slice, interface reference or pointer to
+    /// `place` that the instruction `id` gives.
     pub(super) fn borrow(
         &mut self,
         id: Id<mir::Instruction>,
@@ -112,13 +112,18 @@ impl<'b> Interpreter<'b, '_> {
         let body = self.frame().body;
         let span = body.instructions.span(id);
         let ty = body.instructions[id].ty;
+        // A slice or interface reference lent again whole: its own two
+        // words, read again. A slice of an array behind a reference also
+        // ends at `Dereference`, so the type picks the step.
+        if let (Type::Slice { .. }, Some((own, Projection::SliceElements)))
+        | (Type::InterfaceReference { .. }, Some((own, Projection::Dereference))) =
+            (&self.types[ty], place.split_last())
+        {
+            let located = self.locate(&own, span)?;
+            return self.read_value(located.address, ty, span);
+        }
         if !matches!(self.types[ty], Type::Slice { .. }) {
             return Ok(Register::Address(self.locate(place, span)?.address));
-        }
-        // All of a slice's elements are the slice's own two parts.
-        if let Some(slice) = place.slice_of_elements() {
-            let located = self.locate(&slice, span)?;
-            return self.read_value(located.address, ty, span);
         }
         let located = self.locate(place, span)?;
         let length = match (place.projections.last(), &self.types[located.ty]) {

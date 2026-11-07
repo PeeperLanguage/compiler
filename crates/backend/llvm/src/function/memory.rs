@@ -123,10 +123,10 @@ impl Function<'_, '_, '_> {
         }
         if let Some(&store) = rest.peek()
             && let InstructionKind::Store {
-                ref place,
+                place,
                 value: Operand::Value(value),
-            } = body.instructions[store].kind
-            && value == id
+            } = &body.instructions[store].kind
+            && *value == id
             // Computed before the value, so it must not load a reference.
             && !place.is_behind_reference()
             && !spreads_slice(body, self.types, id)

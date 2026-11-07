@@ -41,7 +41,7 @@ impl Function<'_, '_, '_> {
         let checks = traps(self.body, self.types, id);
         // The value the right operand was converted to, if it was.
         let mut converted: Option<String> = None;
-        let instruction = match self.types[left_type] {
+        let instruction = match &self.types[left_type] {
             Type::Float(_) => match op {
                 BinaryOp::Add => "fadd",
                 BinaryOp::Subtract => "fsub",
@@ -56,7 +56,17 @@ impl Function<'_, '_, '_> {
                 BinaryOp::GreaterOrEqual => "fcmp oge",
                 _ => unreachable!("check accepts no {op:?} of floats"),
             },
-            ref integer => {
+            // Not `inbounds`: a raw pointer may point anywhere.
+            Type::RawPointer { .. } if op == BinaryOp::Add => {
+                let bits = self.module.target.pointer_bits;
+                let (address, offset) = (self.operand(left), self.operand(right));
+                _ = write!(
+                    out,
+                    "  {name} = getelementptr i8, ptr {address}, i{bits} {offset}"
+                );
+                return;
+            }
+            integer => {
                 let signed = matches!(integer, Type::Integer(integer) if integer.signed);
                 match op {
                     BinaryOp::Divide | BinaryOp::Remainder => {
@@ -239,7 +249,7 @@ impl Function<'_, '_, '_> {
         debug_scope: Id<mir::DebugScope>,
     ) {
         let location = self.location(span, debug_scope);
-        let file = self.module.file();
+        let file = self.file;
         let text = project::panic_text(&self.module.program.root, file, message, span);
         let string = self.module.add_string(&text);
         self.module.declare(WRITE, || {

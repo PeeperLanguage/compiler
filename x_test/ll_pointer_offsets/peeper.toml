@@ -1,0 +1,7 @@
+name = "ll_pointer_offsets"
+build = "program"
+
+[test]
+mode = "ll"
+outcome = "success"
+release = true

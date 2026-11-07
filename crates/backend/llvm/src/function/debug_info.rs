@@ -2,7 +2,7 @@
 //! debug scope, and the location of each instruction.
 
 use arena::Id;
-use model::DefId;
+use model::FunctionCopy;
 use model::mir;
 use model::semantic_types::Types;
 use source::SourceFile;
@@ -29,7 +29,7 @@ impl Function<'_, '_, '_> {
         span: Span,
         debug_scope: Id<mir::DebugScope>,
     ) -> DebugLocation {
-        let file = self.module.file();
+        let file = self.file;
         let Some(metadata) = &mut self.module.metadata else {
             return DebugLocation(None);
         };
@@ -51,7 +51,8 @@ impl Function<'_, '_, '_> {
 }
 
 impl Module<'_> {
-    /// Adds the debug info of the function `definition`, linked as `symbol`,
+    /// Adds the debug info of the function `copy`, written in `source` and
+    /// linked as `symbol`,
     /// that has the MIR `body`: its `DISubprogram`, the scope of everything
     /// in it, and a `DILexicalBlock` for each block that declares a variable. Gives the subprogram and the
     /// metadata of each MIR debug scope: its lexical block, else its parent's;
@@ -60,14 +61,16 @@ impl Module<'_> {
     /// whose scope is the function.
     pub(super) fn add_debug_info(
         &mut self,
-        definition: DefId,
+        copy: FunctionCopy,
+        source: &SourceFile,
         symbol: &str,
         body: &mir::Body,
         types: &Types,
     ) -> Option<(usize, Vec<usize>)> {
         let target = self.target;
         let metadata = self.metadata.as_mut()?;
-        let (name, source) = project::declared_name(&self.program.modules, definition);
+        let modules = &self.program.modules;
+        let (name, _) = project::declared_name(modules, copy.definition);
         let (line, _) = source.position(name.span.start as usize);
         let program = self.program;
         // As `add_function` passes them: a value kept in memory by its
@@ -96,12 +99,18 @@ impl Module<'_> {
             "!DISubroutineType(types: !{{{}}})",
             signature.join(", ")
         ));
-        let (file, unit) = (metadata.file, metadata.unit);
+        let (file, unit) = (metadata.file_node(&source.path), metadata.unit);
+        let declared = project::declared_path(modules, copy.definition);
+        let name_of = |definition| project::declared_text(modules, definition);
         let subprogram = metadata.add(format_args!(
             "distinct !DISubprogram(name: {}, linkageName: {}, scope: !{file}, file: !{file}, \
              line: {line}, type: !{subroutine}, scopeLine: {line}, spFlags: DISPFlagDefinition, \
              unit: !{unit})",
-            quoted(project::declared_path(&self.program.modules, definition).as_bytes()),
+            quoted(
+                types
+                    .copy_text(declared, copy.arguments, name_of)
+                    .as_bytes()
+            ),
             quoted(symbol.as_bytes()),
         ));
         let mut declares = vec![false; body.debug_scopes.len()];

@@ -7,6 +7,7 @@
 use arena::Id;
 use bigint::Limbs;
 use model::DefId;
+use model::FunctionCopy;
 use model::constant::Value;
 use model::layout::field_placed;
 use model::layout::in_memory;
@@ -30,6 +31,7 @@ use runtime_abi::symbols::ALLOC;
 use runtime_abi::symbols::EXIT;
 use runtime_abi::symbols::FREE;
 use runtime_abi::symbols::READ;
+use runtime_abi::symbols::REALLOC;
 use runtime_abi::symbols::WRITE;
 
 /// The descriptor of a program's input, as in `core`.
@@ -92,7 +94,7 @@ pub fn run<'b>(
     body: &'b mir::Body,
     types: &'b Types,
     target: &'b Machine,
-    mir_of: &dyn Fn(DefId) -> Option<&'b mir::Body>,
+    mir_of: &dyn Fn(FunctionCopy) -> Option<&'b mir::Body>,
     facts: &ProgramFacts<'_>,
 ) -> Outcome {
     let host = Host {
@@ -235,16 +237,14 @@ impl<'f> Interpreter<'_, 'f> {
                 self.write_printed(text, &referred, target, span)?;
             }
             (
-                &Type::Struct {
-                    definition,
-                    ref fields,
-                    ..
+                Type::Struct {
+                    definition, fields, ..
                 },
                 &Register::Address(address),
             ) => {
                 let facts = self.host().facts;
-                text.extend_from_slice((facts.struct_name)(definition).as_bytes());
-                let names = (facts.field_names)(definition);
+                text.extend_from_slice((facts.struct_name)(*definition).as_bytes());
+                let names = (facts.field_names)(*definition);
                 for (index, name) in names.iter().enumerate() {
                     text.extend_from_slice(if index == 0 { b" { " } else { b", " });
                     text.extend_from_slice(name.as_bytes());
@@ -350,6 +350,18 @@ impl<'f> Interpreter<'_, 'f> {
                     None => Register::Address(0),
                 };
                 Some(block)
+            }
+            (REALLOC | "realloc", [block, size]) => {
+                let (address, size) = (self.address_argument(block), self.size_argument(size));
+                if address == 0 {
+                    Some(self.allocated(size, span)?)
+                } else {
+                    let Some(moved) = self.memory.reallocate(address, size) else {
+                        return Err(self.fail("this resizes memory that is not allocated", span));
+                    };
+                    self.count_copy(size, span)?;
+                    Some(Register::Address(moved.unwrap_or(0)))
+                }
             }
             (FREE | "free", [block]) => {
                 let address = self.address_argument(block);

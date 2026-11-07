@@ -1,0 +1,21 @@
+name = "negative_pointer_offsets"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = [
+    "an address is known only when the program runs",
+    "main.peep:3:23\n",
+    "this call cannot be evaluated at compile time",
+    "a pointer offset cannot run at compile time, as it could read an address",
+    "operator `+` cannot be applied to `*i32`",
+    "main.peep:17:13\n",
+    "main.peep:18:21\n",
+    "operator `-` cannot be applied to `rawptr`",
+    "main.peep:19:13\n",
+    "main.peep:20:19\n",
+    "mismatched types: expected `u64`, found `i32`",
+    "main.peep:21:19\n",
+    "Compilation failed with 7 error(s)",
+]

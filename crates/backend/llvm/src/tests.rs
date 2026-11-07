@@ -35,7 +35,7 @@ fn program_ll(text: &str, target: &str) -> HashMap<String, String> {
             ("core".to_string(), folder.join("core")),
             ("lib".to_string(), library.clone()),
         ]),
-        entry: folder.join("src/main.peep"),
+        entry: Some(folder.join("src/main.peep")),
         root: folder.clone(),
         name: "app".to_string(),
     };
@@ -59,7 +59,8 @@ fn program_ll(text: &str, target: &str) -> HashMap<String, String> {
                 false,
                 |output| {
                     if let compile::Output::Function(compile::CheckedFunction {
-                        definition,
+                        function,
+                        module,
                         mir,
                         types,
                         ..
@@ -67,7 +68,7 @@ fn program_ll(text: &str, target: &str) -> HashMap<String, String> {
                     {
                         let mut mir = mir.unwrap();
                         flow::cleanup::remove_unused_code(&mut mir);
-                        queue.add(definition, mir, types);
+                        queue.add(module, function, mir, types);
                     }
                 },
             )

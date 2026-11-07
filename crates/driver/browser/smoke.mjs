@@ -7,7 +7,14 @@ import assert from "node:assert/strict";
 import { closeSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { setFlagsFromString } from "node:v8";
 import { WASI } from "node:wasi";
+
+// Node 22 can collect garbage inside a WASI call made as a V8 fast call, and
+// segfault walking the stack (nodejs/node#46777, #53087, closed unfixed).
+// Without fast calls each WASI call takes the ordinary path, where that is
+// safe. shortcut: drop this once no supported Node crashes without it.
+setFlagsFromString("--no-turbo-fast-api-calls");
 
 const module = await WebAssembly.compile(readFileSync(process.argv[2]));
 

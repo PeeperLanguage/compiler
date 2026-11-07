@@ -8,6 +8,7 @@ use model::ast;
 use model::ast::Ident;
 use model::constant::Constant;
 use model::layout::in_memory;
+use model::semantic_types::Type;
 use model::semantic_types::TypeId;
 use model::thir::Expr;
 use model::thir::ExprKind;
@@ -106,7 +107,7 @@ impl ThirBuilder<'_, '_> {
             return;
         };
         let (start, _) = self.place_root(place);
-        if let ExprKind::Temporary { ref mut kept, .. } = self.body.exprs[start].kind {
+        if let ExprKind::Temporary { kept, .. } = &mut self.body.exprs[start].kind {
             *kept = true;
         }
     }
@@ -129,6 +130,18 @@ impl ThirBuilder<'_, '_> {
                 .error(diagnostics::INVALID_OPERATION, message, name.span);
             return None;
         };
+        self.check_constant_value(value, declared)
+    }
+
+    /// `value`, of the type `declared` when given, as a value known at
+    /// compile time: a constant's, or a `const` parameter's argument
+    /// (`copy_called`). Calls in it run now. `None` after an error, or when
+    /// it is known only when the program runs, reported.
+    pub(crate) fn check_constant_value(
+        &mut self,
+        value: Id<ast::Expr>,
+        declared: Option<TypeId>,
+    ) -> Option<Constant> {
         let span = self.checker.module().ast.exprs.span(value);
         let outer = std::mem::replace(&mut self.in_constant, true);
         let checked = match declared {
@@ -148,7 +161,9 @@ impl ThirBuilder<'_, '_> {
                 let types = &self.checker.types;
                 let message = if unknown.is_some() {
                     "the value of a constant must be known at compile time"
-                } else if in_memory(types, checked.ty) || types[checked.ty].borrows() == Some(true)
+                } else if in_memory(types, checked.ty)
+                    || types[checked.ty].borrows() == Some(true)
+                    || matches!(types[checked.ty], Type::RawPointer { .. })
                 {
                     constant_refusal(&types[checked.ty])
                 } else {

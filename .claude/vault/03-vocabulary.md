@@ -13,7 +13,7 @@ The codebase's fixed terms: use these words, with these meanings.
 | base | `literal` | literal text rules (`literal::numeric`) |
 | base | `runtime_abi` | what a running program does as seen from outside, shared by `llvm` and `eval` |
 | frontend | `token`, `lexer`, `parser` | tokens, lexing, parsing (tree in `model::ast`) |
-| frontend | `project` | loading, import resolution, module graph, `peeper.toml` |
+| frontend | `project` | loading, import resolution, module graph, `peeper.toml` (`name`, `build = "program"` or `"lib"`) |
 | middle | `model` | data only: `ast`, `thir`, `mir`, `semantic_types`, `constant`, `machine`, ids, operators |
 | middle | `check` | `Checker`: scopes, names, types, THIR, signatures, folding; builds bodies |
 | middle | `lower` | THIR to MIR |
@@ -66,7 +66,7 @@ call.
 
 ## Fixtures (`x_test/*/peeper.toml`)
 
-Modes: `check` (80), `run` (68), `mir` (17, with `expected.mir`), `ll` (9,
+Modes: `check` (91), `run` (89), `mir` (19, with `expected.mir`), `ll` (13,
 with `expected.ll`). `negative_*` fixtures expect errors; `warn_*` warnings;
 `run_i686_*` build for `i686-linux`. `PEEPER_BLESS=1` rewrites expected files.
 

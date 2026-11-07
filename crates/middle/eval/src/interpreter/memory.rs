@@ -184,6 +184,19 @@ impl Memory {
         Some(address)
     }
 
+    /// The block at `address` moved to one of at least `size` bytes, its bytes
+    /// kept up to the smaller size, as `realloc` does: `None` when no block
+    /// starts there; `Some(None)` when there is no room, the block kept.
+    pub(super) fn reallocate(&mut self, address: u64, size: u64) -> Option<Option<u64>> {
+        let old = *self.blocks.get(&address)?;
+        let Some(moved) = self.allocate(size) else {
+            return Some(None);
+        };
+        self.copy(address, moved, old.min(self.blocks[&moved]))?;
+        self.free(address)?;
+        Some(Some(moved))
+    }
+
     /// Frees the block at `address`: `None` when no block starts there, so
     /// freeing twice stops the run.
     pub(super) fn free(&mut self, address: u64) -> Option<()> {

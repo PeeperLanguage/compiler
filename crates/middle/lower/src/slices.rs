@@ -151,7 +151,7 @@ impl Lowering<'_> {
     /// constant: the checker took only those that fit a `usize`, and an
     /// index into an array only one inside it.
     pub(super) fn known_position(&self, position: Id<thir::Expr>) -> Option<u64> {
-        let thir::ExprKind::Constant(Value::Integer(ref value)) = self.thir.exprs[position].kind
+        let thir::ExprKind::Constant(Value::Integer(value)) = &self.thir.exprs[position].kind
         else {
             return None;
         };

@@ -279,7 +279,7 @@ impl ThirBuilder<'_, '_> {
                 };
             }
             (_, Type::Slice { .. }) => self.body.add(reference, span),
-            (_, Type::Reference { .. }) => {
+            (_, Type::Reference { .. } | Type::InterfaceReference { .. }) => {
                 let held = self.body.add(reference, span);
                 self.through_pointer(held, span)
             }

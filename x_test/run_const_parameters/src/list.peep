@@ -1,0 +1,21 @@
+// Functions with `const T: type` parameters, called from two modules: each
+// type's copy is made once, by the first module to call it.
+
+// The sum of the sizes of `count` values of `T`, through a private function.
+fn Bytes(const T: type, count: usize) -> usize {
+    return times(size_of(T), count);
+}
+
+fn times(size: usize, count: usize) -> usize {
+    return size * count;
+}
+
+// The element at `index` of `list`, which the result borrows.
+fn At(const T: type, list: &[]T, index: usize) -> &T in list {
+    return &list[index];
+}
+
+// The last of `list`, through a copy of `At` for the same type.
+fn Last(const T: type, list: &[]T) -> &T in list {
+    return At(T, list, list.len - 1);
+}

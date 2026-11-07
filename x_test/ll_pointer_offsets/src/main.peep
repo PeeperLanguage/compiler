@@ -1,0 +1,9 @@
+// An offset is a `getelementptr` of bytes, not `inbounds`: a raw pointer
+// may point anywhere.
+fn Next(at: rawptr, bytes: usize) -> rawptr {
+    return at + bytes;
+}
+
+fn main() {
+    println(Next(none, 8) == none);
+}

@@ -1,0 +1,22 @@
+// Only `rawptr + usize` moves an address; an address is not known when
+// compiling.
+const Moved: rawptr = none + 8;
+const Ran = Offset();
+
+fn Offset() -> i32 {
+    let at: rawptr = none;
+    let moved = at + 8;
+    return 1;
+}
+
+fn main() {
+    let raw: rawptr = none;
+    let typed: *i32 = none;
+    let count: usize = 1;
+    let small: i32 = 1;
+    let a = typed + count;
+    let b = count + raw;
+    let c = raw - count;
+    let d = raw + raw;
+    let e = raw + small;
+}

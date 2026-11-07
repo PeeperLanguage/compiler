@@ -22,6 +22,7 @@ use std::rc::Rc;
 
 use arena::Id;
 use model::DefId;
+use model::FunctionCopy;
 use model::constant::Value;
 use model::layout::layout;
 use model::machine::Machine;
@@ -103,7 +104,7 @@ pub fn run_function<'b>(
     arguments: &[Value],
     types: &'b Types,
     target: &'b Machine,
-    mir_of: &dyn Fn(DefId) -> Option<&'b mir::Body>,
+    mir_of: &dyn Fn(FunctionCopy) -> Option<&'b mir::Body>,
 ) -> Result<Option<Value>, Failure> {
     let mut machine = Interpreter::new(types, target, mir_of, STEP_LIMIT, None);
     for (index, argument) in arguments.iter().enumerate() {
@@ -115,12 +116,14 @@ pub fn run_function<'b>(
 }
 
 /// A value being used. A pointer, a reference and a `&cstr` are addresses; a
-/// value `in_memory` is the address it is kept at.
+/// value `in_memory` is the address it is kept at. An interface reference's
+/// `table` is its `ImplementationId`'s index.
 #[derive(Clone, Debug)]
 enum Register {
     Scalar(Value),
     Address(u64),
     Slice { address: u64, length: u64 },
+    Interface { address: u64, table: u64 },
 }
 
 /// Where one body keeps its values, from the start of its frame.
@@ -147,7 +150,7 @@ struct Frame<'b> {
 struct Interpreter<'b, 'f> {
     types: &'b Types,
     target: &'b Machine,
-    mir_of: &'f dyn Fn(DefId) -> Option<&'b mir::Body>,
+    mir_of: &'f dyn Fn(FunctionCopy) -> Option<&'b mir::Body>,
     steps: u32, // run so far, by every call
     step_limit: u32,
     host: Option<Host<'f>>, // a whole program's; a constant's call has none
@@ -167,7 +170,7 @@ impl<'b, 'f> Interpreter<'b, 'f> {
     fn new(
         types: &'b Types,
         target: &'b Machine,
-        mir_of: &'f dyn Fn(DefId) -> Option<&'b mir::Body>,
+        mir_of: &'f dyn Fn(FunctionCopy) -> Option<&'b mir::Body>,
         step_limit: u32,
         host: Option<Host<'f>>,
     ) -> Self {

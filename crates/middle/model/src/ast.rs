@@ -237,6 +237,8 @@ pub struct TypeDecl {
 /// parameter written `_: Type` has no name.
 #[derive(Clone, Copy, Debug)]
 pub struct Param {
+    /// `const name: type`: the call gives a type, known when compiling.
+    pub constant: bool,
     pub mutable: bool,
     pub name: Option<Ident>,
     pub ty: Id<Type>,
@@ -295,6 +297,8 @@ pub enum Type {
     /// The type the function belongs to, `Point` in `fn Point::sum(&self)`;
     /// in an interface, the type that meets it. Only `self` has it.
     Owner,
+    /// `type`, written as a parameter's type: the parameter takes a type
+    Type,
     /// a type that could not be parsed
     Invalid,
 }
@@ -433,8 +437,6 @@ pub enum Expr {
     Reference { mutable: bool, value: Id<Expr> },
     /// `@x`
     RawAddress(Id<Expr>),
-    /// `free(x)`; the value is missing when the `(` is
-    Free(Option<Id<Expr>>),
     /// `print(values)`, or `println(values)` when `newline`
     Print { newline: bool, values: List<Expr> },
     /// `f(arguments)`
@@ -480,6 +482,10 @@ pub enum Expr {
     Pipe { value: Id<Expr>, call: Id<Expr> },
     /// `( expression )`
     Parentheses(Id<Expr>),
+    /// a type where a value could go, written so it can only be a type
+    /// (`*T`, `rawptr`, `[N]T` with no `{` after it, `&[]T`): only an
+    /// argument that takes a type accepts it
+    Type(Id<Type>),
     /// an expression that could not be parsed
     Invalid,
 }
@@ -508,7 +514,6 @@ impl Expr {
             | Expr::Char { .. }
             | Expr::Bool(_)
             | Expr::None
-            | Expr::Free(_)
             | Expr::Print { .. }
             | Expr::Call { .. }
             | Expr::Selector { .. }
@@ -519,6 +524,7 @@ impl Expr {
             | Expr::Spread(_)
             | Expr::Block(_)
             | Expr::Parentheses(_)
+            | Expr::Type(_)
             | Expr::Invalid => Precedence::Call,
         }
     }

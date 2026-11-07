@@ -1,0 +1,60 @@
+// Structs used through a borrowed interface: each call goes through the
+// table of the struct's methods.
+import "run_interfaces:shapes";
+
+struct Square { side: f64 }
+fn Square::Area(&self) -> f64 { return self.side * self.side; }
+fn Square::Name(&self) -> &str { return "square"; }
+fn Square::Grow(&mut self, by: f64) { self.side = self.side + by; }
+fn Square::Side(&mut self) -> &mut f64 { return &mut self.side; }
+fn Square::Parts(self) -> f64 { return self.side; }
+
+struct Circle { radius: f64, grown: i32 }
+fn Circle::Area(&self) -> f64 { return 3.0 * self.radius * self.radius; }
+fn Circle::Name(&self) -> &str { return "circle"; }
+fn Circle::Grow(&mut self, by: f64) {
+    self.radius = self.radius + by;
+    self.grown = self.grown + 1;
+}
+fn Circle::Side(&mut self) -> &mut f64 { return &mut self.radius; }
+fn Circle::Parts(self) -> f64 { return self.radius; }
+
+struct Labeled { shape: &shapes::Shape, label: &str }
+
+// A `&mut` interface reference is lent again to each call, so it stays usable.
+fn twice(shape: &mut shapes::Shape) {
+    shape.Grow(1.0);
+    shape.Grow(1.0);
+}
+
+fn bigger(a: &shapes::Shape, b: &shapes::Shape) -> &shapes::Shape {
+    if a.Area() > b.Area() {
+        return a;
+    }
+    return b;
+}
+
+fn main() {
+    let mut square = Square.{ side = 2.0 };
+    let mut circle = Circle.{ radius = 1.0, grown = 0 };
+    shapes::Show(&square);
+    shapes::Show(&circle);
+    twice(&mut square);
+    shapes::Show(&mut square);
+    println("big", bigger(&square, &circle).Area());
+    let small: &shapes::Shape = &circle;
+    println("picked", small.Area());
+    let labeled = Labeled.{ shape = &square, label = "sq" };
+    println("label", labeled.shape.Area(), labeled.label);
+    let edited: &mut shapes::Shape = &mut square;
+    edited.Side().* = 5.0;
+    println("side", edited.Side().*);
+    println("scaled", edited.Area());
+    let again = &mut square;
+    twice(again);
+    shapes::Show(again);
+    // A `&mut` made `&Shape` twice in one call is lent as `&` both times.
+    println("both", bigger(again, again).Area());
+    twice(&mut circle);
+    println("count", circle.grown);
+}

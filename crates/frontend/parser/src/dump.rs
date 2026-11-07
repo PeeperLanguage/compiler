@@ -215,6 +215,8 @@ impl<'t> Dumper<'t> {
                 (
                     if p.variadic {
                         "variadic parameter"
+                    } else if p.constant {
+                        "const parameter"
                     } else {
                         "parameter"
                     },
@@ -320,6 +322,7 @@ impl<'t> Dumper<'t> {
             Type::Optional(inner) => ("optional type", None, one(inner)),
             Type::RawPointer => ("raw pointer type", None, vec![]),
             Type::Owner => ("self type", None, vec![]),
+            Type::Type => ("type of a type", None, vec![]),
             Type::FixedArray { length, element } => {
                 let length = match length {
                     Length::Number(span) => Item::Leaf("number literal", span),
@@ -483,11 +486,6 @@ impl<'t> Dumper<'t> {
                 ("reference expression", mutable(m), one(value))
             }
             Expr::RawAddress(value) => ("raw address expression", None, one(value)),
-            Expr::Free(value) => (
-                "free expression",
-                None,
-                value.map(Item::Expr).into_iter().collect(),
-            ),
             Expr::Print { newline, values } => (
                 "print expression",
                 Some(if newline {
@@ -553,6 +551,7 @@ impl<'t> Dumper<'t> {
             }
             Expr::Pipe { value, call } => ("pipe expression", None, two(value, Item::Expr(call))),
             Expr::Parentheses(inner) => ("parentheses", None, one(inner)),
+            Expr::Type(ty) => ("type expression", None, vec![Item::Type(ty)]),
             Expr::Invalid => ("invalid expression", None, vec![]),
             Expr::Path(_) | Expr::Block(_) => unreachable!("written as their type or block"),
         };

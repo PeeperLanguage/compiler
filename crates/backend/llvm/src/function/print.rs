@@ -215,10 +215,8 @@ impl Function<'_, '_, '_> {
             .as_bytes()
             .to_vec();
         let Type::Struct {
-            ref fields,
-            ref internals,
-            ..
-        } = types[ty]
+            fields, internals, ..
+        } = &types[ty]
         else {
             unreachable!("only a struct type has a struct printer")
         };

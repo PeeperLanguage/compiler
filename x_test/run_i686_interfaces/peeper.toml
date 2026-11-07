@@ -1,0 +1,8 @@
+name = "run_i686_interfaces"
+build = "program"
+
+[test]
+mode = "run"
+target = "i686-linux"
+outcome = "success"
+stdout_contains = ["square 4.0\ncircle 3.0\nsquare 16.0\nbig 16.0\npicked 3.0\nlabel 16.0 sq\nside 5.0\nscaled 25.0\nsquare 49.0\nboth 49.0\ncount 2\n"]

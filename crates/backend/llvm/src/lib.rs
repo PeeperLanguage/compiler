@@ -13,13 +13,14 @@ pub mod write;
 use std::collections::BTreeMap;
 use std::collections::HashSet;
 use std::fmt::Write;
-use std::path::Path;
 
 use model::DefId;
 use model::ModuleId;
 use model::machine::Machine;
+use model::semantic_types::ImplementationId;
 use model::semantic_types::TypeId;
 use rustc_hash::FxHashMap;
+use rustc_hash::FxHashSet;
 use source::SourceFile;
 
 use crate::debug_info::Metadata;
@@ -45,7 +46,7 @@ pub struct Module<'p> {
     program: &'p project::Program,
     module: ModuleId,
     functions: String, // each `define`
-    strings: String,   // each string constant's global
+    strings: String,   // each string and method table constant's global
     /// The `define` of each printer (`Function::printer`) and
     /// range filler (`Function::range_filler`).
     private_functions: String,
@@ -61,6 +62,7 @@ pub struct Module<'p> {
 #[derive(Default)]
 struct Written {
     strings: FxHashMap<Vec<u8>, usize>,      // each string's number
+    tables: FxHashSet<ImplementationId>,     // each method table written
     printers: FxHashMap<TypeId, usize>,      // each struct and array type's printer number
     range_fillers: FxHashMap<TypeId, usize>, // each element type's filler number
     functions: HashSet<String>,              // each `define`'s symbol
@@ -76,10 +78,9 @@ impl<'p> Module<'p> {
         mode: BuildMode,
     ) -> Module<'p> {
         let metadata = match mode {
-            BuildMode::Debug => {
-                let path = Path::new(&program.modules[module.index()].ast.file.path);
-                Some(Metadata::new(path))
-            }
+            BuildMode::Debug => Some(Metadata::new(
+                &program.modules[module.index()].ast.file.path,
+            )),
             BuildMode::Release => None,
         };
         Module {

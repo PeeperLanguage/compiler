@@ -1,0 +1,19 @@
+// `rawptr + usize` is the address that many bytes further on, so a block
+// from the heap holds values one after another.
+import "core:memory";
+
+fn main() {
+    let mut heap = memory::Heap.{};
+    let block = heap.Allocate(64, 4);
+    let count: usize = 3;
+    let mut at = block;
+    for i in 0..count {
+        let slot = at as *i32;
+        slot.* = 10 + i as i32;
+        at = at + 4;
+    }
+    let first = block as *i32;
+    let third = (block + 8) as *i32;
+    println(first.*, third.*, block + 0 == block, block + 4 == block);
+    heap.Free(block);
+}

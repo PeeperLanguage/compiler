@@ -14,6 +14,7 @@ use abi::STDOUT;
 
 unsafe extern "C" {
     fn malloc(size: usize) -> *mut c_void;
+    fn realloc(pointer: *mut c_void, size: usize) -> *mut c_void;
     fn free(pointer: *mut c_void);
     fn exit(code: i32) -> !;
     fn abort() -> !;
@@ -101,6 +102,13 @@ fn flush() {
 #[unsafe(no_mangle)]
 extern "C" fn peeper_rt_v1_alloc(size: usize) -> *mut c_void {
     unsafe { malloc(size) }
+}
+
+#[unsafe(no_mangle)]
+unsafe extern "C" fn peeper_rt_v1_realloc(pointer: *mut c_void, size: usize) -> *mut c_void {
+    // C may free the block for a size of 0 and give null, which `core:memory`
+    // reads as "no room, the block kept".
+    unsafe { realloc(pointer, size.max(1)) }
 }
 
 #[unsafe(no_mangle)]

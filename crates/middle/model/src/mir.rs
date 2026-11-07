@@ -7,12 +7,14 @@
 use std::fmt::Display;
 use std::fmt::Write;
 
+use crate::Callee;
 use crate::DefId;
 use crate::constant::Constant;
 use crate::constant::Value;
 use crate::constant::integer_text;
 use crate::operators::BinaryOp;
 use crate::operators::UnaryOp;
+use crate::semantic_types::ImplementationId;
 use crate::semantic_types::TypeId;
 use crate::semantic_types::Types;
 use arena::Arena;
@@ -135,15 +137,15 @@ impl Place {
         self.projections.is_empty().then_some(self.variable)
     }
 
-    /// The slice this place is all the elements of, when it ends at them.
-    pub fn slice_of_elements(&self) -> Option<Place> {
-        let [before @ .., Projection::SliceElements] = &*self.projections else {
-            return None;
-        };
-        Some(Place {
+    /// The place before this one's last step, and that step; `None` for a
+    /// whole variable.
+    pub fn split_last(&self) -> Option<(Place, Projection)> {
+        let (&last, before) = self.projections.split_last()?;
+        let place = Place {
             variable: self.variable,
             projections: before.into(),
-        })
+        };
+        Some((place, last))
     }
 
     /// Whether the place goes through a reference, so it is not in its
@@ -185,7 +187,9 @@ pub enum InstructionKind {
     },
     /// A reference to the place, `&mut` when `mutable`, or a slice of it,
     /// as `ty` says: of an array, or of the elements a slice views, or of a
-    /// `Projection::Subslice` of them; the variable must already be set.
+    /// `Projection::Subslice` of them; or, when the place is what an
+    /// interface reference views, that interface reference again. The
+    /// variable must already be set.
     Borrow {
         place: Place,
         mutable: bool,
@@ -205,9 +209,16 @@ pub enum InstructionKind {
     /// The number or `bool` converted to the type `ty` (`Types::conversion`).
     Convert(Operand),
     Call {
-        function: DefId,
-        signature: TypeId, // the type of `function`
+        callee: Callee,
+        signature: TypeId, // the callee's type, as THIR's `Call`
         arguments: Box<[Operand]>,
+    },
+    /// The reference to a struct as the interface reference `ty`: its
+    /// address and the table of `implementation`, the struct's functions
+    /// that are the interface's methods.
+    ToInterface {
+        reference: Operand,
+        implementation: ImplementationId,
     },
     /// A struct value from its fields' values, in declaration order, or an
     /// array value from its elements' values.
@@ -369,6 +380,7 @@ impl Body {
     ) -> String {
         let mut printer = Printer {
             body: self,
+            types,
             file,
             out: String::new(),
         };
@@ -398,6 +410,7 @@ impl Body {
 /// What `Body::text` writes with.
 struct Printer<'b> {
     body: &'b Body,
+    types: &'b Types,
     file: &'b SourceFile,
     out: String,
 }
@@ -407,7 +420,7 @@ impl Printer<'_> {
     fn write_instruction<N: Display>(
         &mut self,
         kind: &InstructionKind,
-        name_of: impl Fn(DefId) -> N,
+        name_of: impl Fn(DefId) -> N + Copy,
     ) {
         match kind {
             InstructionKind::Store { place, value } => {
@@ -452,13 +465,28 @@ impl Printer<'_> {
                 self.write_operand(value);
             }
             InstructionKind::Call {
-                function,
-                arguments,
-                ..
+                callee, arguments, ..
             } => {
-                _ = write!(self.out, "call {}(", name_of(*function));
+                match callee {
+                    Callee::Function(function) => {
+                        let name = name_of(function.definition).to_string();
+                        let copy = self.types.copy_text(name, function.arguments, name_of);
+                        _ = write!(self.out, "call {copy}(");
+                    }
+                    Callee::Method(slot) => _ = write!(self.out, "call method {slot}("),
+                }
                 self.write_operands(arguments);
                 self.out.push(')');
+            }
+            InstructionKind::ToInterface {
+                reference,
+                implementation,
+            } => {
+                self.out.push_str("interface ");
+                self.write_operand(reference);
+                for &method in self.types.implementation(*implementation) {
+                    _ = write!(self.out, ", {}", name_of(method));
+                }
             }
             InstructionKind::Aggregate(fields) => {
                 self.out.push_str("aggregate(");

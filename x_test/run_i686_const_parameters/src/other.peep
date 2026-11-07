@@ -1,0 +1,7 @@
+import "run_i686_const_parameters:list";
+
+// Calls the copies `main` calls too.
+fn Bytes() -> usize {
+    let values = [_]i64{1, 2};
+    return list::Bytes(i64, 3) + list::Last(i64, &values).* as usize;
+}

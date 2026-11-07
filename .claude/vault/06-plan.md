@@ -1,20 +1,53 @@
 # Plan
 
-`main` is at `d18d5342` (2026-11-05), pushed: methods merged
-(`fn Point::name`, `self`, `p.name()`, hover; branch `feature/methods`,
-plan `methods.localplan.md`). No feature branch is open.
+`main` is at `2c498440` (2026-11-06): text views (`&str`, `&cstr`) and
+slices (`&[]T`) merged. Open branch: `feature/size-of`, holding the
+interface, allocator and type parameter work below, in PR #182. Order of work
+(owner, 2026-11-06, `allocator.localplan.md` ORDER OF WORK):
 
-## Next, in the planned order (`01-product.md`)
+1. [x] Borrowed interfaces: `&Shape`, `&mut Shape`, method tables
+   (60a3dbed, then b435b7ff for the `ref` style).
+2. [-] A free hook: dropped for now (owner, 2026-11-06). Memory taken by
+   hand with `Allocate` is freed by hand with `Free`; memory the compiler
+   takes itself, the compiler frees. `defer` or destructors come later, if
+   a real program needs them. What was kept: the `free` keyword removed,
+   `Malloc` renamed `Allocate` (9bb5d681).
+3. [x] An `Allocator` interface with `Heap`, `Arena`, `Pool` and `Stack`
+   (owner, 2026-11-06: before `String`, which takes its memory from one),
+   and `rawptr + usize` for them (d91d5b0f, 9920cf40). Named
+   `core:allocator` then, `core:memory` since 5f548a56. The Website
+   follows with item 6's.
+4. [-] `String`: skipped (owner, 2026-11-06). When it comes back: it
+   takes a `&mut Allocator` on each call that allocates or frees, since
+   structs cannot hold references yet.
+5. [ ] Owned `Shape`: explicit allocation, or moving in an existing one.
+6. [~] Type parameters (owner, 2026-11-06, `type-parameters.localplan.md`):
+   a `const T: type` parameter takes a type known when compiling, and each
+   type gets its own copy of the function; a plain `T: type` is refused for
+   now; `<T>` generics stay. Any type works as a type argument.
+   - [x] Step 1: `size_of(T)` and `align_of(T)`, `usize` constants, on
+     `feature/size-of` (stacked on `feature/allocator-interface`)
+     (8560886a).
+   - [x] Step 2: `core:allocator` renamed `core:memory`, with `Realloc`
+     (5f548a56).
+   - [x] Step 3: `const` parameters and their copies: a type
+     (`const T: type`) or a value known when compiling (`const n: i64`,
+     owner 2026-11-07), one copy per type or value; `New` and `Replace`
+     in `core:memory` (ee867ac0). A `const T: type` argument is always
+     written at the call; working it out from the arguments waits for
+     `<T>` generics (owner, 2026-11-07).
+   - [x] Step 4: bundled libraries are projects, `build = "lib"` in
+     `peeper.toml` (6f56683d; built on `feature/library-manifest`).
+   - [x] Fixes from the two reviews of the branch and its Windows CI run
+     (95c9e838, eb1b80ad; worklog, "Review fixes after the PR").
+   - [ ] The Website (`peeper.toml`'s `build`, `core:memory`, `size_of`,
+     `const` parameters, a new wasm build), once the feature is complete.
 
-1. [ ] Allocator: what strings, growing lists and freeing memory need.
-2. [ ] Lifetimes of references held in structs.
-3. [ ] Enums and `match` with `?T` (put off by the owner 2026-10-30).
-4. [ ] Strings, interfaces, generics. Methods are done; interfaces reuse
-   their (owner, name) table.
+Later: lifetimes of references held in structs; enums and `match` with
+`?T` (put off by the owner 2026-10-30); generics.
 
 Left for later from methods (`methods.localplan.md`): `Self` written as a
-type, functions of types other than structs, and the rule that an
-interface's function takes `self` first (when interfaces are checked).
+type, functions of types other than structs.
 
 ## Waiting for the owner
 
@@ -22,6 +55,14 @@ interface's function takes `self` first (when interfaces are checked).
   index checks use up its 1,000,000 steps sooner (a constant of 48,000
   passes over `a[i]` no longer fits; worklog, "Index checks in lowering").
 - The open findings below: each is left as it is until the owner decides.
+- Type parameters: whether `size_of` keeps its name, and whether a
+  function with `const` parameters gets its body checked when nothing
+  calls it (today only copies are checked, so a library's `New` or
+  `Replace` is checked only once a program calls it).
+- The `feature/library-manifest` worktree: its work is in 6f56683d; remove
+  it only when the owner says so.
+- Compile time: the `const` parameter step is about 0.9% slower on the
+  benchmark, spread over many small places (worklog).
 
 ## Open findings (from `fix/loans-memory-growth`, 2026-11-01; not rechecked since)
 

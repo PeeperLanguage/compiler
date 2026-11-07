@@ -1,0 +1,7 @@
+name = "ll_size_of"
+build = "program"
+
+[test]
+mode = "ll"
+outcome = "success"
+release = true

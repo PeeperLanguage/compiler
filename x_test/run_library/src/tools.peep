@@ -1,0 +1,2 @@
+// A library is only checked: it has no `main` to run.
+fn Tool() {}

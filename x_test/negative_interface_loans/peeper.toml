@@ -1,0 +1,14 @@
+name = "negative_interface_loans"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = [
+    "`square` is changed while a reference to it is still in use",
+    "main.peep:12:5\n",
+    "main.peep:15:5\n",
+    "cannot move out of a reference or pointer",
+    "main.peep:17:18\n",
+    "Compilation failed with 3 error(s)",
+]

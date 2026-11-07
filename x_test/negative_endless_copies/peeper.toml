@@ -1,0 +1,11 @@
+name = "negative_endless_copies"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = [
+    "`Grow` makes a new copy of itself inside each copy, without end: copies nest 64 deep here",
+    "main.peep:4:5\n",
+    "Compilation failed with 1 error(s)",
+]

@@ -423,14 +423,6 @@ tokens! {
         /// }
         /// ```
         For = "for",
-        /// Gives back memory that was allocated.
-        ///
-        /// Not supported yet.
-        ///
-        /// ```peeper
-        /// free(p);
-        /// ```
-        Free = "free",
         /// Runs its block when its condition, a `bool`, is true. Parentheses around the condition are allowed but not needed.
         ///
         /// ```peeper

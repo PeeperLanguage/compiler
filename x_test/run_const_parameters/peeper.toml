@@ -1,0 +1,7 @@
+name = "run_const_parameters"
+build = "program"
+
+[test]
+mode = "run"
+outcome = "success"
+stdout_contains = ["5 24 8 16\n2 3\n26\n9 19\n411\n60 6 8\nhello you\n5 9\n1 0 3\nold new 8\n42 true\ntrue\n3 4 -1 1\ntrue true\n"]

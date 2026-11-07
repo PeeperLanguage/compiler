@@ -71,7 +71,9 @@ impl<'b> Interpreter<'b, '_> {
                 }
                 self.read_value(address, ty, span)
             }
-            Register::Scalar(_) => unreachable!("a number has no fields"),
+            Register::Scalar(_) | Register::Interface { .. } => {
+                unreachable!("a number or an interface reference has no fields")
+            }
         }
     }
 
@@ -165,7 +167,9 @@ impl<'b> Interpreter<'b, '_> {
                 Register::Address(from) | Register::Slice { address: from, .. } => {
                     self.copy_memory(from, at, count * size, span)?;
                 }
-                Register::Scalar(_) => unreachable!("a spread part is in memory"),
+                Register::Scalar(_) | Register::Interface { .. } => {
+                    unreachable!("a spread part is in memory")
+                }
             }
             at += count * size;
         }

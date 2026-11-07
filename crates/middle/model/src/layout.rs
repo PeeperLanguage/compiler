@@ -18,7 +18,7 @@ use crate::semantic_types::range_fields;
 /// than any machine's `largest_object`: the checker rejects such a type, so
 /// no later phase lays it out.
 pub fn layout(types: &Types, ty: TypeId, target: &Machine) -> (u64, u64) {
-    match types[ty] {
+    match &types[ty] {
         Type::Bool => (1, 1),
         Type::Integer(integer) => {
             let align: u64 = match integer.bits {
@@ -37,13 +37,13 @@ pub fn layout(types: &Types, ty: TypeId, target: &Machine) -> (u64, u64) {
             let bytes = u64::from(target.pointer_bits / 8);
             (bytes, bytes)
         }
-        Type::Slice { .. } | Type::Str => {
+        Type::Slice { .. } | Type::Str | Type::InterfaceReference { .. } => {
             let bytes = u64::from(target.pointer_bits / 8);
             (2 * bytes, bytes)
         }
-        Type::Struct { ref internals, .. } => (internals.size, internals.align),
+        Type::Struct { internals, .. } => (internals.size, internals.align),
         Type::Range { element, step } => {
-            let fields = range_fields(element, step).map(|(_, ty)| ty);
+            let fields = range_fields(*element, *step).map(|(_, ty)| ty);
             let (_, size, align) = struct_layout(types, &fields, target);
             (size, align)
         }
@@ -51,7 +51,11 @@ pub fn layout(types: &Types, ty: TypeId, target: &Machine) -> (u64, u64) {
             let (size, align) = layout(types, internals.base, target);
             (size.saturating_mul(internals.count), align)
         }
-        Type::Invalid | Type::Void | Type::Function { .. } | Type::Named(_) => {
+        Type::Invalid
+        | Type::Void
+        | Type::Function { .. }
+        | Type::Named(_)
+        | Type::Interface { .. } => {
             unreachable!("no value is laid out with this type")
         }
         Type::Alias { .. } => unreachable!("indexing looks through aliases"),
@@ -73,14 +77,12 @@ pub fn in_memory(types: &Types, ty: TypeId) -> bool {
 /// value's start, in bytes, and its type. A struct's offsets are kept
 /// (`StructInternals`); a range's two or three fields are laid out here.
 pub fn field_placed(types: &Types, ty: TypeId, index: usize, target: &Machine) -> (u64, TypeId) {
-    match types[ty] {
+    match &types[ty] {
         Type::Struct {
-            ref fields,
-            ref internals,
-            ..
+            fields, internals, ..
         } => (internals.offsets[index], fields[index]),
         Type::Range { element, step } => {
-            let fields = range_fields(element, step).map(|(_, ty)| ty);
+            let fields = range_fields(*element, *step).map(|(_, ty)| ty);
             let (offsets, ..) = struct_layout(types, &fields, target);
             (offsets[index], fields[index])
         }

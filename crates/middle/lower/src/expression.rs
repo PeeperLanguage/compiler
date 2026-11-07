@@ -50,37 +50,37 @@ impl Lowering<'_> {
         // A long chain of operators, calls or parentheses is a deep recursion.
         source::grow_stack(|| {
             let span = self.thir.exprs.span(expression);
-            let thir::Expr { ty, ref kind } = self.thir.exprs[expression];
-            let kind = match *kind {
-                _ if ty == TypeId::INVALID => return None,
+            let thir::Expr { ty, kind } = &self.thir.exprs[expression];
+            let kind = match kind {
+                _ if *ty == TypeId::INVALID => return None,
                 thir::ExprKind::Invalid => return None,
-                thir::ExprKind::Constant(ref value) => {
+                thir::ExprKind::Constant(value) => {
                     let value = value.clone();
-                    return Some(self.add_constant(Constant { ty, value }));
+                    return Some(self.add_constant(Constant { ty: *ty, value }));
                 }
                 // An array's length is its type's: the array is computed for the
                 // call in it and never read, so no element moves out and no large
                 // array is copied. A slice's is in it: the slice is read, never
                 // moved, so a `&mut []` stays usable.
                 thir::ExprKind::Length(value) => {
-                    let value_type = self.thir.exprs[value].ty;
+                    let value_type = self.thir.exprs[*value].ty;
                     if !matches!(self.types[value_type], Type::Slice { .. } | Type::Str) {
-                        _ = self.place_or_field(value)?;
+                        _ = self.place_or_field(*value)?;
                         let array = self.types[value_type].pointee().unwrap_or(value_type);
                         let Type::Array { length, .. } = self.types[array] else {
                             unreachable!("`.len` is the length of an array, slice or `&str`")
                         };
-                        return Some(self.integer_constant(ty, length));
+                        return Some(self.integer_constant(*ty, length));
                     }
-                    let slice = match self.thir.exprs[value].kind {
+                    let slice = match self.thir.exprs[*value].kind {
                         thir::ExprKind::Variable(_) | thir::ExprKind::Field { .. } => {
-                            let read = match self.place_or_field(value)? {
+                            let read = match self.place_or_field(*value)? {
                                 Ok(place) => mir::InstructionKind::Load(place),
                                 Err(field) => field,
                             };
                             self.emit(read, value_type, span)
                         }
-                        _ => self.lower_expr(value)?,
+                        _ => self.lower_expr(*value)?,
                     };
                     let length = mir::InstructionKind::Field {
                         value: slice,
@@ -92,21 +92,25 @@ impl Lowering<'_> {
                     op: op @ (BinaryOp::LogicalAnd | BinaryOp::LogicalOr),
                     left,
                     right,
-                } => return self.lower_short_circuit(op, left, right, span),
+                } => return self.lower_short_circuit(*op, *left, *right, span),
                 thir::ExprKind::Binary { op, left, right } => {
-                    let left = self.lower_expr(left)?;
-                    let right = self.lower_expr(right)?;
-                    mir::InstructionKind::Binary { op, left, right }
+                    let left = self.lower_expr(*left)?;
+                    let right = self.lower_expr(*right)?;
+                    mir::InstructionKind::Binary {
+                        op: *op,
+                        left,
+                        right,
+                    }
                 }
                 thir::ExprKind::Unary { op, value } => mir::InstructionKind::Unary {
-                    op,
-                    value: self.lower_expr(value)?,
+                    op: *op,
+                    value: self.lower_expr(*value)?,
                 },
                 thir::ExprKind::Convert(value) => {
-                    mir::InstructionKind::Convert(self.lower_expr(value)?)
+                    mir::InstructionKind::Convert(self.lower_expr(*value)?)
                 }
                 thir::ExprKind::Call {
-                    function,
+                    callee,
                     signature,
                     arguments,
                 } => {
@@ -114,29 +118,36 @@ impl Lowering<'_> {
                         .thir
                         .children
                         .lists
-                        .items(arguments)
+                        .items(*arguments)
                         .map(|argument| self.lower_expr(argument))
                         .collect::<Option<_>>()?;
                     mir::InstructionKind::Call {
-                        function,
-                        signature,
+                        callee: *callee,
+                        signature: *signature,
                         arguments,
                     }
                 }
+                thir::ExprKind::ToInterface {
+                    reference,
+                    implementation,
+                } => mir::InstructionKind::ToInterface {
+                    reference: self.lower_expr(*reference)?,
+                    implementation: *implementation,
+                },
                 thir::ExprKind::Print { newline, values } => mir::InstructionKind::Print {
-                    newline,
+                    newline: *newline,
                     values: self
                         .thir
                         .children
                         .lists
-                        .items(values)
+                        .items(*values)
                         .map(|value| self.lower_expr(value))
                         .collect::<Option<_>>()?,
                 },
                 thir::ExprKind::StructLiteral(fields) => {
                     // Computed in the order written, given in declaration order.
                     let mut values = vec![None; fields.len()];
-                    for field in self.thir.children.lists.items(fields) {
+                    for field in self.thir.children.lists.items(*fields) {
                         let thir::FieldValue { index, value } =
                             self.thir.children.field_values[field];
                         values[index as usize] = Some(self.lower_expr(value)?);
@@ -146,7 +157,7 @@ impl Lowering<'_> {
                         .map(|value| value.expect("check sets each field"));
                     mir::InstructionKind::Aggregate(values.collect())
                 }
-                thir::ExprKind::ArrayLiteral(parts) => self.lower_array_literal(parts, ty)?,
+                thir::ExprKind::ArrayLiteral(parts) => self.lower_array_literal(*parts, *ty)?,
                 thir::ExprKind::Range { .. } => {
                     let RangeWalk {
                         start,
@@ -172,26 +183,28 @@ impl Lowering<'_> {
                         _ => self.place_or_field(expression)?,
                     };
                     match place {
-                        Ok(place) if self.types.is_copy(ty) => mir::InstructionKind::Load(place),
+                        Ok(place) if self.types.is_copy(*ty) => mir::InstructionKind::Load(place),
                         Ok(place) => mir::InstructionKind::Move(place),
                         Err(field) => field,
                     }
                 }
                 thir::ExprKind::Borrow(borrowed) => {
-                    let Some(mutable) = self.types[ty].borrows() else {
+                    let Some(mutable) = self.types[*ty].borrows() else {
                         unreachable!("a borrow's type is a reference or slice")
                     };
-                    let mut place = self.place(borrowed)?;
+                    let mut place = self.place(*borrowed)?;
                     // Borrowing a slice lends its elements again.
-                    if let Type::Slice { .. } = self.types[self.thir.exprs[borrowed].ty] {
+                    if let Type::Slice { .. } = self.types[self.thir.exprs[*borrowed].ty] {
                         place = slice_elements(place);
                     }
                     mir::InstructionKind::Borrow { place, mutable }
                 }
                 thir::ExprKind::Slice { .. } => return self.lower_slice(expression),
-                thir::ExprKind::Address(place) => mir::InstructionKind::Address(self.place(place)?),
+                thir::ExprKind::Address(place) => {
+                    mir::InstructionKind::Address(self.place(*place)?)
+                }
             };
-            Some(self.emit(kind, ty, span))
+            Some(self.emit(kind, *ty, span))
         })
     }
 
