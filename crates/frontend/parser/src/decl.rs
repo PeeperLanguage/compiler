@@ -50,7 +50,7 @@ pub(crate) fn starts_declaration(kind: TokenKind) -> bool {
 fn starts_parameter(kind: TokenKind) -> bool {
     matches!(
         kind,
-        TokenKind::Mut | TokenKind::Underscore | TokenKind::SelfValue
+        TokenKind::Const | TokenKind::Mut | TokenKind::Underscore | TokenKind::SelfValue
     ) || starts_type(kind)
 }
 
@@ -278,8 +278,9 @@ impl Parser {
 
     /// Reads a function's parameter: `mut name: Type = default`, where `mut`,
     /// the name and the default may be left out, and the type may be `...T`
-    /// or `...mut T`; or `self`, `mut self`, `&self` or `&mut self`, the
-    /// parameter `self` of the type the function belongs to.
+    /// or `...mut T`; `const name: type`, which takes a type; or `self`,
+    /// `mut self`, `&self` or `&mut self`, the parameter `self` of the type
+    /// the function belongs to.
     fn parameter(&mut self) -> Id<Param> {
         let start = self.tok().span.start;
         let reference = self.at(TokenKind::Ampersand);
@@ -308,6 +309,7 @@ impl Parser {
             return self.add(
                 start,
                 Param {
+                    constant: false,
                     mutable: mutable && !reference,
                     name: Some(name),
                     ty,
@@ -315,6 +317,10 @@ impl Parser {
                     default: None,
                 },
             );
+        }
+        let constant = self.at(TokenKind::Const);
+        if constant {
+            self.next();
         }
         let mut keyword = None;
         if self.at(TokenKind::Mut) {
@@ -344,6 +350,9 @@ impl Parser {
             }
             let element = self.type_expr();
             self.add(start, Type::Slice { mutable, element })
+        } else if self.at(TokenKind::Type) {
+            let start = self.next().span.start;
+            self.add(start, Type::Type)
         } else {
             self.type_expr()
         };
@@ -370,6 +379,7 @@ impl Parser {
         self.add(
             start,
             Param {
+                constant,
                 mutable: keyword.is_some(),
                 name,
                 ty,

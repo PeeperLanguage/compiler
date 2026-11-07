@@ -1,5 +1,8 @@
 use std::fmt::Write;
 
+use model::program::Import;
+use model::program::Module;
+
 use super::*;
 use crate::packages::resolve;
 
@@ -35,7 +38,7 @@ fn write(test: &str, files: &[(&str, &str)]) -> Project {
     ]);
     Project {
         packages,
-        entry: root.join("src/main.peep"),
+        entry: Some(root.join("src/main.peep")),
         root,
         name: "myapp".to_string(),
     }
@@ -126,15 +129,23 @@ fn canonical_windows_paths() {
 /// `load` gives its files' paths.
 #[test]
 fn a_single_file_has_an_absolute_root() {
-    let project = find(Path::new("src/lib.rs"), Path::new("")).unwrap();
+    let project = find(Path::new("src/lib.rs"), Path::new("no-libraries")).unwrap();
     let here = std::env::current_dir().unwrap();
     assert_eq!(project.root, here.join("src"));
-    assert_eq!(project.entry, here.join("src/lib.rs"));
+    assert_eq!(project.entry, Some(here.join("src/lib.rs")));
 }
 
 #[test]
 fn create_makes_a_project_find_reads() {
-    let root = write("create", &[("libs/core/src/global.peep", "")]).root;
+    let library = "name = \"core\"\nbuild = \"lib\"\n";
+    let root = write(
+        "create",
+        &[
+            ("libs/core/peeper.toml", library),
+            ("libs/core/src/global.peep", ""),
+        ],
+    )
+    .root;
     let create = |name| create(&root, name, &root.join("libs"));
     assert_eq!(
         create("my-app").map_err(|e| e.contains(manifest::NAME_RULE)),
@@ -145,25 +156,172 @@ fn create_makes_a_project_find_reads() {
     assert!(!root.join(manifest::FILE_NAME).exists());
     assert_eq!(create("hello"), Ok(true));
     let found = find(&root, &root.join("libs")).unwrap();
+    let main = root.join("src/main.peep");
     assert_eq!(
         (found.name.as_str(), &found.entry),
-        ("hello", &root.join("src/main.peep"))
+        ("hello", &Some(main.clone()))
     );
-    assert_eq!(
-        std::fs::read_to_string(&found.entry).unwrap(),
-        NEW_PROJECT_MAIN
-    );
+    assert_eq!(std::fs::read_to_string(&main).unwrap(), NEW_PROJECT_MAIN);
     // A second create keeps the project as it is.
     let error = create("other").unwrap_err();
     assert!(error.ends_with("peeper.toml: already exists"), "{error}");
     assert_eq!(find(&root, &root.join("libs")).unwrap().name, "hello");
     // A main.peep already there is kept.
     std::fs::remove_file(root.join(manifest::FILE_NAME)).unwrap();
-    std::fs::write(&found.entry, "fn main() {}").unwrap();
+    std::fs::write(&main, "fn main() {}").unwrap();
     assert_eq!(create("hello"), Ok(false));
+    assert_eq!(std::fs::read_to_string(&main).unwrap(), "fn main() {}");
+}
+
+/// A library has no entry: each source file of it is loaded, in folders
+/// too, imported or not.
+#[test]
+fn a_library_loads_each_of_its_files() {
+    let root = write(
+        "library",
+        &[
+            ("peeper.toml", "name = \"tools\"\nbuild = \"lib\"\n"),
+            ("src/a.peep", "fn A() {}"),
+            ("src/deep/b.peep", "import \"tools:a\";\nfn B() { a::A(); }"),
+            ("src/notes.txt", "not a module"),
+        ],
+    )
+    .root;
+    // A link back up is not followed, or each file would load again.
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&root, root.join("src/back")).unwrap();
+    let project = find(&root, &root.join("libs")).unwrap();
+    assert_eq!(project.entry, None);
+    let program = load(&project, &HashMap::<PathBuf, String>::new());
+    assert_eq!(messages(&program), Vec::<String>::new());
+    assert_eq!(order(&program), ["tools:a", "tools:deep/b"]);
+    assert_eq!(program.entry, None);
+}
+
+/// A library with no files to load is an error, not a clean check: its
+/// src folder missing or empty. Its files open in an editor or on a page
+/// need no disk.
+#[test]
+fn a_library_without_files_is_an_error() {
+    let root = write(
+        "library_without_files",
+        &[("peeper.toml", "name = \"tools\"\nbuild = \"lib\"\n")],
+    )
+    .root;
+    let project = find(&root, &root.join("libs")).unwrap();
+    let none = HashMap::<PathBuf, String>::new();
+    let missing = load(&project, &none);
+    let got = messages(&missing);
+    assert!(
+        got.len() == 1 && got[0].starts_with("program: M0001 read library: "),
+        "{got:?}"
+    );
+    assert!(!missing.checkable);
+    std::fs::create_dir(root.join("src")).unwrap();
+    let source = path_text(&root.join("src"));
+    let empty = load(&project, &none);
     assert_eq!(
-        std::fs::read_to_string(&found.entry).unwrap(),
-        "fn main() {}"
+        messages(&empty),
+        [format!("program: M0001 no source files in {source}")]
+    );
+    std::fs::remove_dir(root.join("src")).unwrap();
+    let open = HashMap::from([(root.join("src/a.peep"), "fn A() {}".to_string())]);
+    let program = load(&project, &open);
+    assert_eq!(messages(&program), Vec::<String>::new());
+    assert_eq!(order(&program), ["tools:a"]);
+}
+
+/// A bundled library is a folder whose peeper.toml says `build = "lib"`,
+/// named by that file, not by its folder. A library project of the same
+/// name takes its place, as it is that library being worked on; a program
+/// cannot have the name.
+#[test]
+fn a_bundled_library_is_named_by_its_manifest() {
+    let library = "name = \"basics\"\nbuild = \"lib\"\n";
+    let root = write(
+        "bundled",
+        &[
+            ("libs/folder/peeper.toml", library),
+            ("libs/folder/src/x.peep", ""),
+            ("libs/README.md", "a file beside the libraries\n"),
+            ("app/peeper.toml", "name = \"app\"\n"),
+            ("work/peeper.toml", library),
+            ("named/peeper.toml", "name = \"basics\"\n"),
+        ],
+    )
+    .root;
+    let libraries = root.join("libs");
+    let app = find(&root.join("app"), &libraries).unwrap();
+    let mut names: Vec<&str> = app.packages.keys().map(String::as_str).collect();
+    names.sort_unstable();
+    assert_eq!(names, ["app", "basics"]);
+    assert_eq!(app.packages["basics"], libraries.join("folder/src"));
+    let work = find(&root.join("work"), &libraries).unwrap();
+    assert_eq!(work.packages["basics"], root.join("work/src"));
+    let Err(error) = find(&root.join("named"), &libraries) else {
+        panic!("a program took a bundled library's name");
+    };
+    assert!(
+        error.ends_with("project name `basics` is taken by a bundled library"),
+        "{error}"
+    );
+}
+
+/// A folder among the bundled libraries that is no library, or a second
+/// library of a name, is an error, not left out: every program could miss
+/// it.
+#[test]
+fn a_bad_bundled_library_is_an_error() {
+    let library = "name = \"basics\"\nbuild = \"lib\"\n";
+    let root = write(
+        "bad_bundled",
+        &[
+            ("program/one/peeper.toml", "name = \"program\"\n"),
+            ("plain/one/src/y.peep", ""),
+            ("twice/one/peeper.toml", library),
+            ("twice/two/peeper.toml", library),
+            ("app/peeper.toml", "name = \"app\"\n"),
+        ],
+    )
+    .root;
+    let error = |libraries: &str| {
+        let Err(error) = find(&root.join("app"), &root.join(libraries)) else {
+            panic!("the libraries in {libraries} were taken");
+        };
+        error
+    };
+    let program = error("program");
+    assert!(
+        program.ends_with("a bundled library needs `build = \"lib\"`"),
+        "{program}"
+    );
+    let plain = error("plain");
+    assert!(plain.ends_with("no peeper.toml in this folder"), "{plain}");
+    let twice = error("twice");
+    assert!(twice.ends_with("is a library of this name too"), "{twice}");
+}
+
+/// A libraries folder may hold a link to a library's folder, as an
+/// installation that links its libraries in does.
+#[cfg(unix)]
+#[test]
+fn a_linked_bundled_library_is_found() {
+    let library = "name = \"basics\"\nbuild = \"lib\"\n";
+    let root = write(
+        "linked_bundled",
+        &[
+            ("real/basics/peeper.toml", library),
+            ("app/peeper.toml", "name = \"app\"\n"),
+        ],
+    )
+    .root;
+    std::fs::create_dir_all(root.join("libs")).unwrap();
+    std::os::unix::fs::symlink(root.join("real/basics"), root.join("libs/basics")).unwrap();
+    let project = find(&root.join("app"), &root.join("libs")).unwrap();
+    assert!(
+        project.packages.contains_key("basics"),
+        "{:?}",
+        project.packages
     );
 }
 
@@ -418,7 +576,7 @@ fn a_single_file_cannot_import() {
             ("libs/core/src/global.peep", ""),
         ],
     );
-    project.entry = project.root.join("tool.peep");
+    project.entry = Some(project.root.join("tool.peep"));
     let program = load(&project, &HashMap::<PathBuf, String>::new());
     assert_eq!(
         messages(&program),
@@ -441,7 +599,7 @@ fn unreadable_and_non_utf8_entries() {
         got.len() == 1 && got[0].starts_with("program: M0001 read module: "),
         "{got:?}"
     );
-    project.entry = project.root.join("src/bad.peep");
+    project.entry = Some(project.root.join("src/bad.peep"));
     let program = load(&project, &HashMap::<PathBuf, String>::new());
     assert_eq!(
         messages(&program),
@@ -464,7 +622,10 @@ fn orders_a_long_import_chain() {
         project.root.join(format!("src/m{DEPTH}.peep")),
         String::new(),
     );
-    open_files.insert(project.entry.clone(), "import \"myapp:m0\";".to_string());
+    open_files.insert(
+        project.root.join("src/main.peep"),
+        "import \"myapp:m0\";".to_string(),
+    );
     let program = load(&project, &open_files);
     assert_eq!(messages(&program), Vec::<String>::new());
     assert_eq!(order(&program).last(), Some(&"myapp:main"));

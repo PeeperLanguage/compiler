@@ -1,0 +1,13 @@
+name = "negative_const_value_type_reported"
+build = "program"
+
+# A `const` value parameter whose type had an error where it is declared
+# reports that error only: it names no type parameter.
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = [
+    "T0002",
+    "unknown type `Missing`",
+    "Compilation failed with 1 error(s)",
+]

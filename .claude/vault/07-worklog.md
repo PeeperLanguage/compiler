@@ -781,3 +781,494 @@ ran `check.sh` fully green.
 - Fixture `negative_text_views`; lexer test
   `a_c_literal_holds_no_zero_byte`; `mir_comptime_calls` keeps its zero
   byte in a `&str`. `scripts/check.sh` green.
+
+## Borrowed interfaces (2026-11-06, `feature/interfaces`, not committed)
+
+- Owner decisions (by questions, 2026-11-06): a struct implements an
+  interface when it has every method by name and exact type (`self` the
+  struct); nothing is declared. `&T` becomes `&Shape` by itself where a
+  `&Shape` is expected (`&mut T` also to `&mut Shape`, `&mut Shape` to
+  `&Shape`). `&Shape` calls `&self` methods, `&mut Shape` also `&mut self`
+  ones (T0007 otherwise); a `self` method may be declared, not called
+  through a reference. Generic methods: the existing "generic functions"
+  refusal.
+- Model: `Type::Interface { definition, methods }` (method function types,
+  `self` an `InterfaceReference`) made by `Types::define_interface` over
+  the `Named` id; `Type::InterfaceReference { mutable, interface }`, two
+  words, a loan holder like a reference; `Conversion::ToInterface`;
+  `Callee { Function, Method(slot) }` in THIR's and MIR's `Call`;
+  `ToInterface { reference, methods }` in both; `Place::split_last`
+  (replaces `slice_of_elements`; one borrow branch per backend reads a
+  slice or interface reference lent again whole).
+- Check: `check_interface`, `signature_type` (split from `check_function`,
+  shared), `implementation` (lookup by `Scope::get`, compare with
+  `method_type`), `value_type` refuses a bare interface ("owned interface
+  values"), `held_type` refuses interfaces and interface references held
+  in arrays, pointers and references; calls through `interface_method`.
+- Flow: `ToInterface` copies the reference's loans; a method call's result
+  borrows by the interface's origins.
+- Interpreter: `Register::Interface { address, table }`, the table being
+  the `ImplementationId`'s index. LLVM: `{ ptr, ptr }` inline (no header
+  change, so no other dump moved), `@.table.N` private constants per
+  module, call loads the slot. Compile-time runs reach table methods.
+- Module interface hash covers interface methods.
+- Fixtures: `run_interfaces`, `run_i686_interfaces` (two modules),
+  `negative_interfaces`, `negative_interface_loans`, `ll_interfaces`; test
+  `interface_references`. `scripts/check.sh`: tests and fixtures green;
+  clippy fixed after.
+- Review fixes: a `&mut T` made `&I` is lent as `&T`, so `f(r, r)` with two
+  `&I` parameters passes (it was T0037); an interface with a method
+  declared twice is invalid, so conversions to it add no second error;
+  `interface_method` lists method names only for the "did you mean" hint.
+  `run_interfaces` prints `both`, `negative_interfaces` has 15 errors.
+  `scripts/check.sh` all ok.
+- Implementations numbered: the checker finds a struct and interface
+  pair's methods once (`Checker::implementations`, successes only, so a
+  failing pair is still reported at each conversion) and stores them in
+  `Types` by `ImplementationId`. THIR and MIR `ToInterface` carry the id;
+  the interpreter's `tables`/`table_ids` are gone (the id is the table
+  word); LLVM writes `@.table.<id>`, the same number in every module, and
+  `Written::tables` is a set of ids. Reuse: MIR is never kept between
+  compiles (`compile::run` makes a new `Checker` and `Types` each time;
+  only the LSP passes `previous`, and keeps diagnostics), so ids need not
+  survive. `negative_interfaces` checks a failing pair twice (16 errors).
+  `scripts/check.sh` all ok; `ll_interfaces` unchanged.
+- Not done: export rules for methods matched from another module (a
+  private method can satisfy an interface); `&Alias` of an interface is
+  refused as an owned value; `s.*` read as a value says "cannot move out
+  of a reference" rather than naming owned interfaces.
+
+## Match borrowed values instead of `ref` (2026-11-06)
+
+- Every `ref`/`ref mut` binding (155, 31 files) is gone: the matched value
+  is borrowed (`match &x`, `let P = &x else`), or its `*` dropped when it
+  was already a reference; uses of Copy fields read `*field`.
+- `method_type` clones the matched `Type::Function` whole (the same
+  allocations as cloning its parameters and origins).
+- `clippy::ref_patterns` is on in the workspace lints, and `rust-style.md`
+  states the rule.
+- `scripts/check.sh` all ok; no fixture or dump changed.
+
+## Manual freeing stays; free hook dropped (2026-11-06, `feature/free-hook`)
+
+- Owner: memory taken by hand is freed by hand; memory the compiler takes
+  itself, the compiler frees. No free hook now; `defer` or destructors
+  later, if a real program needs them.
+- Why: a probe of a `#[free]` method on real programs (a file handle, a
+  byte buffer, a list of buffers, a consuming method) found the hook needs
+  more language first: moving a value out of raw memory, pointer offsets,
+  and ending a value without its hook (else `File::Finish(self)` closes
+  twice). None of that is needed while freeing stays manual.
+- Kept: `core:allocator`'s `Malloc` is `Allocate` now, and `Free` keeps
+  its name (owner; runtime symbols unchanged). The `free` keyword is gone (token, parser rule,
+  `ast::Expr::Free`, the checker's refusal): it existed only for freeing
+  by hand. The parser's `builtin` reads only print now and is named
+  `print`.
+- `x_test/run_allocator`: `Allocate`/`Free`, and `free` as a function
+  name (fails with `P0002` when the keyword is put back).
+
+## Browser smoke: Node's WASI fast-call crash (2026-11-06, `feature/allocator-interface`)
+
+- `smoke.mjs` segfaulted Node 22.23.1 after the deep-recursion request once
+  `allocator.peep` grew: gdb shows a full GC inside `uvwasi_fd_read`, called
+  as a V8 fast API call, failing in `IterateTurbofanOptimizedFrame`. Same
+  crash with the committed compiler and the new library; a Node bug
+  (nodejs/node#46777, #53087, both closed stale and unfixed; reports say
+  Node 24 stops crashing without fixing it).
+- `smoke.mjs` turns fast API calls off (`setFlagsFromString`) before
+  compiling the module, with a `shortcut:` comment to drop it once no
+  supported Node needs it. It covers `check.sh` and `release.yml`. The
+  Website runs the wasm with its own WASI functions in the browser, so it
+  is not affected.
+
+## Pointer offsets: `rawptr + usize` (2026-11-06, `feature/allocator-interface`)
+
+- Owner: real allocators need an address some bytes on; only `rawptr +
+  usize`, giving a `rawptr`. `*T + n`, `n + p`, `p - n`, `p + p` and
+  `p + i32` stay refused.
+- Check (`check_binary`): the right operand is checked as `usize`; an
+  offset is never folded. A raw-pointer constant that is not `none` is
+  refused as "an address is known only when the program runs".
+- LLVM: `getelementptr i8, ptr, iN` (not `inbounds`). Interpreter: the
+  address plus the offset, wrapped at the pointer's bits; refused in a
+  constant's run ("a pointer offset cannot run at compile time, ...").
+- Fixtures: `run_pointer_offsets` (+ i686), `ll_pointer_offsets`,
+  `negative_pointer_offsets` (proven to fail when `*T + n` is let
+  through).
+- Not done: messages name `usize` as `u64` (`u32` on i686): the type
+  table holds one type for both, as before.
+
+## Allocator interface (2026-11-06, `feature/allocator-interface`)
+
+- Owner: the allocator comes before `String`; `String` will take a
+  `&mut Allocator` on each call that allocates or frees, since a struct
+  cannot hold a reference yet.
+- `core:allocator` gains `iface Allocator { Allocate(&mut self, size) ->
+  rawptr, Free(&mut self, memory) }` and `struct Heap {}`, whose methods
+  call the raw `Allocate`/`Free`. No compiler change: borrowed interfaces
+  already do it.
+- Left out until a program needs it: alignment, the size on free, resize.
+  An arena cannot be written yet (no pointer offsets).
+- Fixtures `run_allocator_interface` and `run_i686_allocator_interface`:
+  the heap and a counting allocator through one `&mut Allocator`
+  function; the interpreter matches. A struct missing `Free` gets T0001
+  "`Half` does not implement `Allocator`: it has no method `Free`".
+- Owner: the raw functions are private (`allocate`, `free`); every caller
+  goes through `Heap` (fixtures `run_allocator`, `run_struct_pointers`,
+  `run_i686_struct_pointers`, `run_outside_sizes`, `examples/modules`).
+- Website: not touched until the allocator work is complete (owner);
+  `modules.mdx` still calls `allocator::Allocate`/`Free` and must move to
+  `Heap` then.
+
+## Allocators in `core:allocator` (2026-11-06, `feature/allocator-interface`)
+
+- Owner: keep `align`. `Allocate(&mut self, size, align)`; `align` must be a
+  power of two up to 16, else `none`: without `rawptr as usize` an
+  allocator can only round offsets, which is right up to the 16 its heap
+  block starts at.
+- `Heap`; `Arena` (pieces one after another, `Free` gives nothing back,
+  `Reset`, `Release`); `Pool` (chunks of one size, a free list kept in the
+  free chunks, overflow of `chunk * count` checked); `Stack` (a private
+  `mark` of the stack before each piece; `Free` of any piece but the
+  newest panics; it is an `Arena` plus the newest piece and its mark).
+  Each gets its block from a `Heap` and gives it back with `Release` (no
+  destructors).
+- Review fixes: a chunk size near the top of `usize` wrapped to 0 when
+  rounded, so a pool handed one address to every caller; now it has no
+  chunks (`run_allocators` fails without the fix). The i686 offsets test
+  checks that an offset wraps at 32 bits.
+- Fixtures: `run_allocators` (+ i686): each allocator through one
+  `&mut Allocator` function, alignment, reuse, room, wrong `align`, and the
+  out-of-order panic; every caller passes an alignment now.
+- Website: still to do when the allocator work is complete.
+
+## `size_of` and `align_of` (2026-11-06, `feature/size-of`)
+
+- Owner: a type can be an argument (step 1 of type parameters); any type
+  works. `size_of(T)` and `align_of(T)` give a `usize` the checker works
+  out from `model::layout::layout` for the target, so they are constants
+  (`const B = size_of(Node);`). They are built-in names, which no
+  declaration hides, like the built-in types.
+- Parser: a spelling that can only be a type is read as `ast::Expr::Type`
+  where a value could go: `*T`, `rawptr`, `[N]T` with no `{` after it,
+  `&[]T`, `&mut []T`. `[_]T` still needs its values. Shared spellings (a
+  name, a path, `&T`, `range[T]`, parentheses) parse as values; the
+  checker reads them as a type where the argument takes one
+  (`Checker::expression_type`). `?T`, `fn(..)` and inline `struct` types
+  are not read there: the checker does not support them yet.
+- A type used as a value: T0004 "`*Node` is a type, not a value"; for `*p`
+  of a variable `p`, help "write `p.*` to use the value `p` points to".
+- Refused: `str`, `cstr` (no fixed size), an interface (not supported), a
+  value ("`1 + 2` is a value, not a type", and "`x` is a value, not a
+  type" for a variable no type is named as), a wrong argument count. `*p =
+  5;` gets the `p.*` help too. `&[]i32{ 1, 2 }`, which used to get "`[]i32`
+  is any number of `i32`s", now gets "`&[]i32` is a slice type, so it
+  takes no values" with a fix to `&[_]i32{ 1, 2 }`.
+- Users: `Stack::Allocate` in `core:allocator` sizes its `mark` with
+  `size_of(mark)` (was a guessed 24 bytes, 12 on i686), and the struct
+  allocations in `run_allocators`, `run_allocator_interface` and
+  `run_struct_pointers` (+ i686) use `size_of(Node)`. On i686 a node is 8
+  bytes, so more fit: `run_i686_allocators` asks for more nodes (8 in the
+  arena, 20 in the stack) so running out of room is still tested (sums
+  21, 28 after reset, 55).
+- Fixtures: `run_size_of` (+ i686: `Node` 16/8 and 8/4, references,
+  slices, `&Shape`, arrays, `range[i32]`, a later struct, a constant;
+  compiled and interpreted agree), `ll_size_of` (only the number is left:
+  `mul i64 %i1, 16`), `negative_size_of` (14 errors). Parser tests
+  `type_expressions`, `slice_type_with_values`; `[_]i32;` in
+  `expression_errors` (fails without the `[_]` guard, checked).
+- Review fix: `value_type` keeps sending a struct's `self` taken whole
+  through `declared_type`, as before; `reference_to` is the one place a
+  `&T` target becomes a value's type (`resolve_type`, `expression_type`).
+- tree-sitter-peeper (`feature/size-of`): the four type spellings are
+  expressions; an array literal wins when `{` follows. Every `.peep` file
+  in the repo parses as before or better (3 more parse).
+- `scripts/check.sh` passed.
+
+## `const` parameters, `core:memory` (2026-11-07, `feature/size-of`)
+
+- Owner: allocators move to `core:memory`, which gains `Realloc` (a method
+  of `Allocator`), `Replace` and `New`; `const` parameters take types and,
+  later the same day, values known when compiling.
+- `core:allocator` is now `core:memory`. `Realloc(&mut self, memory,
+  old_size, new_size, align) -> rawptr` on `Heap` (C `realloc`, size at
+  least 1, so 0 does not free), `Arena` (the newest piece in place, else a
+  new piece and a copy), `Pool` (the same chunk, else `none`), `Stack`
+  (newest piece only, else a panic). Runtime `peeper_rt_v1_realloc`;
+  interpreter `realloc`. Fixtures `run_realloc` (+ i686).
+- `New(const T: type, allocator) -> *T` and `Replace(const T: type, place:
+  &mut T, value: T) -> T` (the bytes of `value` and `place` traded).
+- `ast::Param.constant`, `ast::Type::Type` (`type` as a parameter's type).
+- A call names a `FunctionCopy` (`DefId` and `ConstArguments`, an interned
+  list of `ConstArgument::Type` or `::Value`); a plain function is its copy
+  with `NONE`. MIR, the interpreter (`mir_of`), LLVM (`copy_symbol`:
+  `path.Name<module.Type>`, `Name<3>`), dumps and the queue (by the module
+  whose compile built it) all take copies. Debug info points a copy at its
+  own file (`Metadata::file_node`).
+- Checker: `Checking.arguments`; `resolve_global` reads a `const T: type`
+  from the innermost entry. A copy's signature is checked on its first
+  call (`copy_type`) and its body by the compile after the module
+  (`next_copy`). A `const` value is a constant of the body. Errors in a
+  copy are reported in the calling module with "in `Name<T>`, the copy
+  made for this call" at the call; the same error in two copies once. A
+  copy made in a copy's body reports where the outer one does; its
+  signature's errors go to the call's module first, so the outer copy
+  counts them.
+- A function with `const` parameters gets its own signature checked, with
+  invalid types for `T`; an error there makes it invalid. Its body is
+  checked only through copies (open QUESTION 3 default).
+- Refused: `const mut`, `const ...`, `type` on a plain parameter,
+  `const x: T` (not supported yet), `extern`, interface methods, a struct
+  method with `const` parameters as an interface's, a `main` with them, a
+  non-constant argument (the `const` statement's messages). Copies nested
+  64 deep: one error, and no more copies are built.
+- The interface hash includes the text of a function with `const`
+  parameters: an importer's copy is built from its body (test
+  `a_type_parameter_body_edit_checks_its_importers`, fails without it).
+- Fixtures: `run_const_parameters` (+ i686: two modules calling the same
+  copies, a copy calling a copy, a method, a constant running a copy,
+  values, `New`, `Replace`), `ll_const_parameters`,
+  `negative_const_parameters` (16 errors), `negative_const_parameters_main`,
+  `negative_endless_copies`. Panic lines in the allocator and realloc
+  fixtures moved down 23 lines.
+- tree-sitter-peeper (`feature/size-of`): `const` before a parameter (the
+  old `comptime` there removed), `type` as its type; corpus test.
+- Benchmark (`perf stat`, one compile = (3 runs - 1 run) / 2): 3,824.6 M
+  at the step-1 checkpoint, 3,854.6 M now, +0.8%. Removed: a per-name scan
+  in `resolve_global` (now only for entries given arguments), a per
+  variable file lookup in LLVM. The sampled profile misses about half the
+  instructions there and does not show where the rest goes; switching
+  single checks off moved the count by 10-15 M either way.
+- `scripts/check.sh`: all pass but `whitespace`, which flags the blank
+  last line the compiler writes after a module's `declare` lines in
+  `ll_size_of/expected.ll` (marked `git add -N`); committed `ll` fixtures
+  end the same way.
+
+### Review fixes for `const` parameters (2026-11-07)
+
+- A copy no longer checks code its constants rule out: an `if` on a
+  constant `bool` keeps only the way it takes, and when that way always
+  leaves the block (`leaves`), the rest of the block is not checked. Code
+  after a written `return`, or after an `if` decided at run time, is still
+  checked, as in a plain function. `Count(const n: u64)` recursing to
+  `Count(n - 1)` stops at 0 instead of nesting 64 deep or failing on
+  `0 - 1`.
+- LLVM names a float argument by its bits (`copy_symbol`): `Same(NAN)` and
+  `Same(-NAN)` printed alike and made one name twice, which clang refused.
+- `copy_called`: a missing `const` argument hands back the function's own
+  type, so `check_call` reports the one argument count (counting the
+  `const` parameters); a failed argument sets a `failed` flag instead of an
+  invalid-type marker in the list.
+- `record`: skips only a real copy (one in `copies`), so a function's own
+  signature records its facts; `const_value_type` turns facts off while it
+  reads a value parameter's type again for a call. Test
+  `a_function_with_const_parameters_records_its_signature_once` (fails with
+  either half undone).
+- Fixtures: `run_const_parameters` and its i686 copy gain `Count` (run and
+  in a constant), `Sign` (a decided `else`) and the NaN copies;
+  `negative_const_parameters` gains `Scaled()` and `Dead`, a type error
+  after a written `return` in a copy (18 errors; without the written-`if`
+  rule the `Dead` error is gone).
+- Speed: `scripts/bench-instructions.py`, three runs each: checkpoint
+  3,815.9 to 3,823.7 M, now 3,856.0 to 3,861.5 M, +0.9%. A profile with
+  enough samples (period 200,000, 11 compiles against 1) puts +23 M in
+  `check`, spread over about ten places of 1 to 4 M each (the new checks
+  per function and call, the `FunctionCopy` table). Tried, each within
+  noise (about 5 M): sizing the `bodies` table up front, `#[inline]` on
+  `record`, switching off the `const` scans in `check_call`,
+  `compile_module` and the interface hash. Not fixed: no single cause.
+- `scripts/check.sh`: all pass but `whitespace` (the `ll_size_of` blank
+  last line, as above).
+
+### Libraries as projects (`feature/library-manifest`, 2026-11-07)
+
+Branched from `9920cf40` in its own worktree, to merge into
+`feature/size-of` later.
+- The browser embeds every file under `_builtin_library/` through a
+  build.rs list (`LIBRARY_FILES`), not a hand-written `CORE_FILES`; its
+  libraries come from their embedded `peeper.toml`. Test
+  `every_core_module_is_built_in` (fails when the list misses a file).
+- `Manifest::build` (`Build::Program | Build::Library`): `build = "program"`,
+  `build = "lib"`, or none for a program; anything else is an error. Not
+  required, so existing projects and the website's playground manifest keep
+  working.
+- `Project::entry` is `None` for a library: `load` starts from each `.peep`
+  file of its `src/`, folders too; `Program::entry` is `None`.
+- A bundled library is a folder of `libs/` whose `peeper.toml` says
+  `build = "lib"`, named by that file, not by the folder. A library project
+  of a bundled library's name takes its place (working on `core` checks
+  that `core`); a program of that name is still refused.
+- `_builtin_library/core/peeper.toml`: `name = "core"`, `build = "lib"`, so
+  `peeper check _builtin_library/core` checks every core file, and the
+  editor checks a core file as part of `core`, not alone.
+- `peeper build`, `run` and `run -interpret` refuse a library: "`name` is a
+  library (`build = "lib"`), so it has no `main` to build or run".
+- Editor: a check is kept by the entry file, or a library's folder
+  (`checked_key`); `project_of` also finds the project of that folder. Its
+  tests wrote `build = "bin"`, which was never read; now `"program"`.
+- Tests: `reads_what_the_project_builds`, `a_library_loads_each_of_its_files`,
+  `a_bundled_library_is_named_by_its_manifest`,
+  `checks_a_library_by_its_folder` (fails with a wrong key). Fixtures:
+  `negative_library_files` (an error in a file nothing imports),
+  `run_library`; the fixture runner also checks each bundled library alone
+  (fails on a broken core file). The 13 `build = "lib"` fixtures pass as
+  libraries.
+- Review fixes: the browser's run refuses a library with the same message
+  as `peeper run` (`manifest::LIBRARY_HAS_NO_MAIN`, one text for both),
+  where it showed nothing before (test `a_library_does_not_run`); a link to
+  a folder inside a library, or a bundled library, is not followed, as one
+  back up loaded each file again on each way round (in
+  `a_library_loads_each_of_its_files`).
+- Merged into `feature/size-of` as uncommitted changes (nothing is
+  committed on either branch): a three-way merge of each file against
+  `9920cf40`; two conflicts, the browser's file list (the generated list
+  kept) and this log's end (both sections kept). The core test now looks
+  for `core:memory`. `scripts/check.sh` after the merge: all pass but
+  `whitespace` (the `ll_size_of` blank last line, as before); `core`, with
+  `New` and `Replace`, checks clean alone. Codedb rows updated. Backup of
+  the size-of state before the merge: `playground/backup-size-of-2026-11-07/`.
+- Not done: the website (its docs on `peeper.toml`), once the feature is
+  complete.
+
+### Review of the `size_of` step and the merged tree (2026-11-07)
+
+- A `const` type parameter given `&str` or `&cstr` was taken for bare
+  text: `Replace(&str, ...)` and `v: T` were refused ("`T` is text of any
+  length"), and `size_of(&T)` gave 16 for `&&str` (8 is right). The text
+  rules in `named_type_at` and `text_view` now look at the written name
+  (`Types::builtin`), not at what the name resolves to. Fixtures:
+  `run_const_parameters`, `run_i686_const_parameters` (`Referred`,
+  `Replace(&str, ...)`); each half of the fix, undone, fails them.
+- A top-level function named `size_of` or `align_of` was accepted, and a
+  call of it went to the built-in with a far-off error. `scope::collect`
+  now reports "`size_of` is a built-in function" at the declaration
+  (`negative_size_of`, 15 errors; fails without the check). This gives
+  `layout_function` a second caller, so it stays.
+- `scripts/check.sh`: all pass but `whitespace` (the `ll_size_of` blank
+  last line, gone once committed).
+- Decided: a `const T: type` argument is always written at the call, even
+  where a later argument fixes it (`Replace(i64, &mut n, 9)`); working it
+  out from the arguments is left to `<T>` generics.
+
+### Committed (2026-11-07, `feature/size-of`)
+
+The work was split into four signed commits, each passing
+`scripts/check.sh` on its own tree:
+
+- 8560886a `size_of` and `align_of`. It includes the refusal of a function
+  named `size_of`. `core:allocator`'s `Stack` uses `size_of(mark)`, and
+  the allocator fixtures use `size_of(Node)`.
+- 5f548a56 `core:memory` and `Realloc`. It also takes the browser's core
+  file list in name order and the `REALLOC` import in order, which the
+  next step had fixed: without them this commit failed its tests and
+  format.
+- ee867ac0 `const` parameters, `New` and `Replace`, with the `&str` type
+  argument fix.
+- 6f56683d Libraries as projects. This log's entries written after the
+  merge are in this commit.
+
+Each commit's tree was built in a separate index file, and the working
+files were not touched. Checking was done in a temporary worktree, removed
+after. Backups: `playground/backup-commit-2026-11-07/`.
+
+### Review fixes after the PR (2026-11-07, `feature/size-of`, 95c9e838, eb1b80ad)
+
+From PR #182's Windows CI run and two reviews of the branch:
+
+- CI (`windows-11-arm`): `run_realloc` printed `heap: 0 3` for `heap: 10 3`.
+  The fixture read `grown` after `heap.Realloc(grown, 4096, 2, 8)`, which
+  on Windows moves the piece and frees `grown`; glibc and macOS shrink in
+  place. The sum is now read before the shrink, in `run_realloc` and
+  `run_i686_realloc`. Proved by reading only: Linux cannot show it. The
+  interpreter printed 10 for the freed read: it does not notice a read of
+  memory a move freed (not changed).
+- The browser build (`build.rs`) embedded every file in `_builtin_library`;
+  a file that is not UTF-8 (`.DS_Store`, a swap file) stopped the crate
+  compiling. Now only peeper.toml and `.peep` files. Checked both ways
+  with a binary `.DS_Store` in `core`: the old script fails, the new one
+  builds.
+- A library whose `src` was missing, unreadable or empty checked clean.
+  `load` now gives M0001 "read library: {folder}: {error}" or "no source
+  files in {folder}" when no file of the library is open in an editor or on
+  a page (the browser's library files are never on disk), and the program
+  is not checked. Test: `a_library_without_files_is_an_error`.
+- `bundled_libraries` dropped a folder with no or a bad peeper.toml, or a
+  program, and let two libraries of one name replace each other: losing
+  `core` lost the prelude with no word. Each is now an error from `find`
+  and `create`; a file beside the folders (a README) is skipped; no
+  libraries folder still means none. The editor logs the error and shows
+  nothing for the file. Test: `a_bad_bundled_library_is_an_error`; the old
+  test no longer has bad folders in its libraries. The browser still
+  reads its embedded manifests on its own (it panics on a bad one).
+- The editor kept a project's last check by its entry, or a library's
+  folder; when `build` changed, the old entry and its diagnostics stayed.
+  `Server::check` now takes over the files the check under the other key
+  published, so they are cleared (`project::entry` made public for it).
+  Test: `checks_a_library_by_its_folder` switches the library to a
+  program; it fails without the fix.
+- The browser's `run` loaded a library before refusing it; `load` is split
+  into `project_of` and `load`, and `run` refuses in between, as
+  `peeper run` does.
+- Vault: the 01-product declaration-check line (copies), its "Not done"
+  and "Planned order" lines (allocator done, interfaces borrowed only),
+  the "Since then" dates; 06-plan's header and item 3; 0.9% for the
+  slowdown; 03-vocabulary fixture counts (check 91, run 89, mir 19, ll
+  13).
+- `scripts/check.sh`: all pass. The new library error first failed
+  `checks_a_project`, whose `libs/core` had no peeper.toml; it has one now.
+
+### Untangling the codebase (2026-11-07, `refactor/untangle`, 0e1edf53)
+
+A pass for hidden links (copies that must change together), needless links
+and special cases, in ten fixes and one recheck round by three subagents.
+The decision log, with every item kept and why, is
+`playground/untangle-log.md`; the whole diff is
+`playground/untangle-final.patch` (119 files, +2256 −1427).
+
+- Loading and projects: `project::library_packages` is the one owner of
+  "folders and manifests to bundled libraries" (the CLI, the editor and the
+  browser use it); `LIBRARIES_FOLDER`; a loader worker's panic is caught
+  and raised again on the main thread; `installation_dir` is a `Result`;
+  a link to a library folder counts; a path that cannot be made canonical
+  is an error. A missing core stays "no libraries", on purpose (eb1b80ad).
+  The editor keys a project's last check by its folder (or lone file).
+- `compile::run` decides "may start": `entry_point` needs no loading or
+  checking error and `require_main`; `run` gives nothing for an
+  uncheckable program. `CheckedFunction::into_mir` is the one way to the
+  cleaned MIR. `peeper` has a library target, `write_program`, that the
+  binary and the bench share.
+- Check: `Symbol::TypeArgument` (a `const T: type` parameter is no
+  built-in); `Types::builtin` reads its own `usize`; `checking_in`,
+  `in_copy`, `records_facts`; T0043 only when a type parameter is named;
+  built-in function names refused for every top-level name.
+- MIR users: `Place::lent_again`, `slice_field`, `Type::is_slice_shaped`,
+  `thir::Stmt::Let { keeps_temporaries }`; loans and `traps` list every
+  MIR kind.
+- Interpreter and backend: `binary_instruction`, `write_unary`,
+  `cast_instruction`, `saturating_conversion` in `llvm::function::
+  arithmetic`, used by the backend and `eval`'s `llvm_parity` test, which
+  `scripts/check.sh` now runs on Linux (about 30 s). `constant_refusal`
+  refuses any type that lends mutably.
+- Smaller: `source::MAX_FILE_BYTES` (loader refuses longer files; span and
+  list casts keep a debug assert, a checked cast measured +4.5%);
+  `machine::Os`; `Limbs` storage private; `TOOLCHAIN_FOLDER`; runtime
+  source path spelled once; `fix::write` keeps the path; arena dependency
+  dropped from `peeper` and `compile`; `peeper init` writes
+  `println("Hello from Peeper!");`.
+- Tests: new fixtures `negative_const_value_type_reported`,
+  `negative_const_copy_error_in_constant`,
+  `negative_interface_reference_move`,
+  `negative_const_mutable_interface_reference`,
+  `run_const_parameter_hides_builtin`; `negative_size_of` gains `const
+  align_of` (16 errors). Rust tests: `a_loading_error_leaves_no_entry_point`,
+  `a_linked_bundled_library_is_found`, `core_streams_are_the_runtimes`;
+  the browser test reads every error count. Each new test was seen to fail
+  without its fix.
+- Behavior: the old (472a9e5c) and new compilers give the same `check`
+  output, `-dump mir` and `-dump ll` on every fixture and example except
+  the six fixtures above. `peeper check` on the 10×2000-function program:
+  1.35–1.37e9 instructions, as before.
+- `scripts/check.sh`: all pass.
+- Open for the owner: L0003 used by check; the lexer ends a line at a bare
+  `\r` while line numbers count `\n` only; whether to delete the fixtures'
+  unused `program_args` support.

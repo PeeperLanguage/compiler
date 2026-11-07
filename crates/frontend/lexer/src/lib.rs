@@ -4,9 +4,11 @@ use std::sync::Arc;
 
 use diagnostics::Code;
 use diagnostics::Diagnostic;
-use diagnostics::quote;
+use diagnostics::printer::Highlight;
 use literal::escape;
 use literal::next_char_width;
+use literal::numeric;
+use literal::quote;
 use source::SourceFile;
 use source::Span;
 use token::KEYWORDS;
@@ -16,6 +18,30 @@ use token::Token;
 use token::TokenKind;
 use unicode_general_category::GeneralCategory;
 use unicode_general_category::get_general_category;
+
+/// Each token of `file` with how a diagnostic's source line highlights
+/// it (`printer::HighlightsOf`). Comments make no token, so the printer
+/// takes the text between tokens for one.
+pub fn highlights(file: &Arc<SourceFile>) -> Vec<(Span, Option<Highlight>)> {
+    let tokens = scan(file).0;
+    (tokens.into_iter())
+        .filter(|t| t.kind != TokenKind::Eof)
+        .map(|t| {
+            let highlight = match t.kind {
+                TokenKind::String | TokenKind::CString => Some(Highlight::Text),
+                TokenKind::Number | TokenKind::Char | TokenKind::ByteChar => {
+                    Some(Highlight::Number)
+                }
+                TokenKind::DocComment => Some(Highlight::Comment),
+                kind if KEYWORDS.contains(&kind) || NAMES.contains(&kind) => {
+                    Some(Highlight::Keyword)
+                }
+                _ => None,
+            };
+            (t.span, highlight)
+        })
+        .collect()
+}
 
 /// Returns the tokens of `file`, ending with an end-of-file token, and the
 /// lexical errors in it. An illegal character is reported and produces no
@@ -162,19 +188,14 @@ impl Scanner<'_> {
     fn number(&mut self) {
         let start = self.pos;
         if self.bytes[start] == b'0'
-            && b"xXoObB".contains(&self.at(1))
+            && let Some((_, base)) = numeric::prefixed_base(self.at(1))
             && self.at(2).is_ascii_alphanumeric()
         {
             self.pos += 2;
             self.digits(u8::is_ascii_alphanumeric);
             self.emit(TokenKind::Number, start);
-            let literal = literal::numeric::split(&self.file.text[start..self.pos]);
+            let literal = numeric::split(&self.file.text[start..self.pos]);
             if !literal.has_digits_in_base() {
-                let base = match literal.base {
-                    16 => "hexadecimal",
-                    8 => "octal",
-                    _ => "binary",
-                };
                 let prefixed = &self.file.text[start..start + 2 + literal.digits.len()]; // without the suffix
                 let message = format!("invalid {base} literal {prefixed}");
                 self.report(
@@ -191,14 +212,14 @@ impl Scanner<'_> {
             self.pos += 1;
             self.digits(u8::is_ascii_digit);
         }
-        if matches!(self.at(0), b'e' | b'E') {
+        if numeric::is_exponent_mark(self.at(0)) {
             let sign = usize::from(matches!(self.at(1), b'+' | b'-'));
             if self.at(1 + sign).is_ascii_digit() {
                 self.pos += 1 + sign;
                 self.digits(u8::is_ascii_digit);
             }
         }
-        if matches!(self.at(0), b'i' | b'u' | b'f') {
+        if numeric::starts_suffix(self.at(0), 10) {
             self.pos += 1;
             while self.at(0).is_ascii_digit() || self.at(0) == b'_' {
                 self.pos += 1;

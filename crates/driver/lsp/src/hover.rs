@@ -96,7 +96,7 @@ fn write_functions(tree: &ast::Tree, owner: ast::Ident, exported_only: bool, fac
         let owned = function
             .owner
             .is_some_and(|written| written.text(&tree.file) == owner);
-        if !owned || (exported_only && !project::is_exported(name)) {
+        if !owned || (exported_only && !model::program::is_exported(name)) {
             continue;
         }
         let span = tree.decls.span(declaration);

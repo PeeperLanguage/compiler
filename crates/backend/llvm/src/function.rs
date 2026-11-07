@@ -3,7 +3,7 @@
 //! and continues in a new block (`bb3.1`), so a `phi` names the block where
 //! its incoming MIR block ends.
 
-mod arithmetic;
+pub mod arithmetic;
 mod arrays;
 mod calls;
 mod debug_info;
@@ -16,50 +16,46 @@ use std::fmt::Write;
 use std::iter::Peekable;
 
 use arena::Id;
-use model::DefId;
+use model::FunctionCopy;
 use model::constant::Value;
 use model::mir;
 use model::mir::InstructionKind;
 use model::mir::Operand;
 use model::mir::Terminator;
-use model::operators::UnaryOp;
-use model::semantic_types::Float;
-use model::semantic_types::Integer;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
 use model::semantic_types::Types;
 use model::semantic_types::range_field;
+use model::semantic_types::slice_field;
 use rustc_hash::FxHashMap;
+use source::SourceFile;
 
 use crate::Module;
+use crate::function::arithmetic::cast_instruction;
+use crate::function::arithmetic::saturating_conversion;
+use crate::function::arithmetic::write_unary;
 use crate::function::debug_info::DebugLocation;
 use crate::text::alloca_text;
 use crate::text::constant_text;
+use crate::text::copy_symbol;
 use crate::text::quoted;
-use crate::text::symbol;
 use crate::text::type_text;
 use model::layout::field_placed;
 use model::layout::in_memory;
 use model::layout::layout;
 
-/// The runtime functions `print` calls, with their LLVM parameters.
-const PRINT_TEXT: (&str, &str) = ("peeper_rt_v1_print_text", "ptr");
-/// Its length parameter is a `usize`, as wide as the target's pointers.
-const PRINT_BYTES: &str = "peeper_rt_v1_print_bytes";
-const PRINT_INT: (&str, &str) = ("peeper_rt_v2_print_int", "i32, i32, ptr");
-const PRINT_FLOAT: (&str, &str) = ("peeper_rt_v1_print_float", "double, i32");
-const PRINT_POINTER: (&str, &str) = ("peeper_rt_v1_print_pointer", "ptr");
-const FLUSH: (&str, &str) = ("peeper_rt_v1_flush", "");
 /// The intrinsic that copies a value kept in memory (`in_memory`).
 const MEMCPY: &str = "llvm.memcpy.p0.p0.i64";
 
 impl Module<'_> {
-    /// Adds the function `definition` of this module, whose MIR is `body`.
-    pub(crate) fn add_function(&mut self, definition: DefId, body: &mir::Body, types: &Types) {
+    /// Adds the function `copy`, whose MIR is `body`: one of this module, or
+    /// a copy of another module's function this module called first.
+    pub(crate) fn add_function(&mut self, copy: FunctionCopy, body: &mir::Body, types: &Types) {
         let program = self.program;
-        let symbol = symbol(program, definition);
+        let symbol = copy_symbol(program, types, copy);
+        let file = &program.modules[copy.definition.module.index()].ast.file;
         let (subprogram, scope_metadata) = self
-            .add_debug_info(definition, &symbol, body, types)
+            .add_debug_info(copy, file, &symbol, body, types)
             .unzip();
         // Each string constant as an operand: a `&cstr`'s global, a `&str`'s
         // global and length.
@@ -77,6 +73,7 @@ impl Module<'_> {
             .collect();
         let mut function = Function {
             module: self,
+            file,
             strings,
             body,
             types,
@@ -148,18 +145,18 @@ impl Module<'_> {
 // costing a compile about 10 M instructions.
 #[inline(always)]
 fn traps(body: &mir::Body, types: &Types, id: Id<mir::Instruction>) -> bool {
-    match body.instructions[id].kind {
+    match &body.instructions[id].kind {
         InstructionKind::Binary { op, left, right } => {
             op.can_trap()
                 && !matches!(right, Operand::Constant(_))
-                && matches!(types[body.operand_type(left)], Type::Integer(_))
+                && matches!(types[body.operand_type(*left)], Type::Integer(_))
         }
         InstructionKind::Check { .. } => true,
         // Any part but an element or an array is counted when the program
         // runs, as is a range unless it is written here with constant
         // `left`, `step` and `inclusive`; a new kind of part is checked
         // until it is listed here.
-        InstructionKind::ArrayParts(ref parts) => {
+        InstructionKind::ArrayParts(parts) => {
             let Type::Array { element, .. } = types[body.instructions[id].ty] else {
                 unreachable!("array parts make an array")
             };
@@ -182,7 +179,23 @@ fn traps(body: &mir::Body, types: &Types, id: Id<mir::Instruction>) -> bool {
                 }
             })
         }
-        _ => false,
+        // Listed one by one: a phi names the block a check ends in by this
+        // count (`end_label`), so a new kind decides here whether it checks.
+        InstructionKind::Load(_)
+        | InstructionKind::Length(_)
+        | InstructionKind::Move(_)
+        | InstructionKind::Store { .. }
+        | InstructionKind::Borrow { .. }
+        | InstructionKind::Address(_)
+        | InstructionKind::Unary { .. }
+        | InstructionKind::Convert(_)
+        | InstructionKind::Call { .. }
+        | InstructionKind::ToInterface { .. }
+        | InstructionKind::Aggregate(_)
+        | InstructionKind::Print { .. }
+        | InstructionKind::Field { .. }
+        | InstructionKind::Phi(_)
+        | InstructionKind::ScopeEnd(_) => false,
     }
 }
 
@@ -191,7 +204,7 @@ fn traps(body: &mir::Body, types: &Types, id: Id<mir::Instruction>) -> bool {
 /// (`a = [4]i32{0, s...}` of `s = &a[0..3]`) or `%result` (`a = f(&a)`), so
 /// that array is built in its own memory and then copied (`value_address`).
 fn spreads_slice(body: &mir::Body, types: &Types, id: Id<mir::Instruction>) -> bool {
-    let InstructionKind::ArrayParts(ref parts) = body.instructions[id].kind else {
+    let InstructionKind::ArrayParts(parts) = &body.instructions[id].kind else {
         return false;
     };
     (parts.iter()).any(|&part| matches!(types[body.operand_type(part)], Type::Slice { .. }))
@@ -207,8 +220,8 @@ fn written_range_field(body: &mir::Body, range: Operand, field: usize) -> Option
     let Operand::Value(id) = range else {
         return None;
     };
-    match body.instructions[id].kind {
-        InstructionKind::Aggregate(ref fields) => Some(fields[field]),
+    match &body.instructions[id].kind {
+        InstructionKind::Aggregate(fields) => Some(fields[field]),
         _ => None,
     }
 }
@@ -241,6 +254,7 @@ pub(crate) fn global(symbol: &str) -> String {
 /// given.
 struct Function<'m, 'p, 'b> {
     module: &'m mut Module<'p>,
+    file: &'p SourceFile, // the function's own, which a copy's module may not be
     strings: Vec<Option<String>>, // by constant: each string as an operand
     body: &'b mir::Body,
     types: &'b Types,
@@ -275,7 +289,9 @@ impl Function<'_, '_, '_> {
     /// (`add_function`) and, in a debug build, the debug declaration of
     /// each one with a name.
     fn variables(&mut self, out: &mut String) {
-        let file = self.module.file();
+        let file = self.file;
+        let file_metadata =
+            (self.module.metadata.as_mut()).map(|metadata| metadata.file_node(&file.path));
         for variable in self.body.variables.ids() {
             let index = variable.index();
             let mir::Variable {
@@ -288,7 +304,8 @@ impl Function<'_, '_, '_> {
                 let text = alloca_text(self.types, ty, self.module.target);
                 _ = writeln!(out, "  %v{index} = alloca {text}");
             }
-            let Some(metadata) = &mut self.module.metadata else {
+            let (Some(metadata), Some(file_metadata)) = (&mut self.module.metadata, file_metadata)
+            else {
                 continue;
             };
             if hidden {
@@ -305,7 +322,6 @@ impl Function<'_, '_, '_> {
             } else {
                 String::new()
             };
-            let file_metadata = metadata.file;
             let declared = metadata.add(format_args!(
                 "!DILocalVariable(name: {}, {argument}scope: !{}, file: !{file_metadata}, line: {line}, type: !{debug_type})",
                 quoted(file.slice(span).as_bytes()),
@@ -433,7 +449,7 @@ impl Function<'_, '_, '_> {
                 Some(span)
             }
             Terminator::Panic { message, span } => {
-                let Value::Bytes(ref text) = body.constants[message.index()].value else {
+                let Value::Bytes(text) = &body.constants[message.index()].value else {
                     unreachable!("a panic's message is bytes")
                 };
                 self.write_panic(out, text, span, mir.debug_scope);
@@ -465,54 +481,55 @@ impl Function<'_, '_, '_> {
     ) {
         let mir::Instruction {
             ty,
-            ref kind,
+            kind,
             debug_scope,
-        } = self.body.instructions[id];
+        } = &self.body.instructions[id];
         let span = self.body.instructions.span(id);
-        let location = self.location(span, debug_scope);
+        let location = self.location(span, *debug_scope);
         let name = value_name(id);
         let types = self.types;
-        _ = match *kind {
+        _ = match kind {
             // A whole variable's value, the most read and written, skips
             // `write_address` (measured: 35 M instructions a compile of the
             // benchmark, with the store's).
-            InstructionKind::Load(ref place) | InstructionKind::Move(ref place)
-                if !in_memory(types, ty)
+            InstructionKind::Load(place) | InstructionKind::Move(place)
+                if !in_memory(types, *ty)
                     && let Some(variable) = place.whole_variable() =>
             {
                 write!(
                     out,
                     "  {name} = load {}, ptr %v{}",
-                    type_text(types, ty),
+                    type_text(types, *ty),
                     variable.index()
                 )
             }
-            InstructionKind::Load(ref place) | InstructionKind::Move(ref place) => {
+            InstructionKind::Load(place) | InstructionKind::Move(place) => {
                 let address = self.write_address(out, place, &location, id);
-                if in_memory(types, ty) {
-                    let to = self.value_address(out, id, ty, rest);
-                    self.write_copy(out, &to, &address, ty, &location);
+                if in_memory(types, *ty) {
+                    let to = self.value_address(out, id, *ty, rest);
+                    self.write_copy(out, &to, &address, *ty, &location);
                     return;
                 }
                 write!(
                     out,
                     "  {name} = load {}, ptr {address}",
-                    type_text(types, ty)
+                    type_text(types, *ty)
                 )
             }
-            InstructionKind::Length(ref place) => {
+            InstructionKind::Length(place) => {
                 let address = self.write_address(out, place, &location, id);
                 _ = writeln!(out, "  {name}.s = load %slice, ptr {address}{location}");
-                write!(out, "  {name} = extractvalue %slice {name}.s, 1")
+                let length = slice_field::LENGTH;
+                write!(out, "  {name} = extractvalue %slice {name}.s, {length}")
             }
-            InstructionKind::Store { ref place, value }
-                if !in_memory(types, self.body.operand_type(value))
+            InstructionKind::Store { place, value }
+                if !in_memory(types, self.body.operand_type(*value))
                     && let Some(variable) = place.whole_variable() =>
             {
                 write!(
                     out,
                     "  store {}, ptr %v{}",
-                    self.typed(value),
+                    self.typed(*value),
                     variable.index()
                 )
             }
@@ -520,22 +537,22 @@ impl Function<'_, '_, '_> {
             InstructionKind::Store {
                 value: value @ Operand::Argument(_),
                 ..
-            } if in_memory(types, self.body.operand_type(value)) => return,
-            InstructionKind::Store { ref place, value } => {
+            } if in_memory(types, self.body.operand_type(*value)) => return,
+            InstructionKind::Store { place, value } => {
                 let address = self.write_address(out, place, &location, id);
-                self.write_store(out, &address, value, &location);
+                self.write_store(out, &address, *value, &location);
                 return;
             }
-            InstructionKind::Borrow { ref place, .. } | InstructionKind::Address(ref place) => {
-                if !matches!(types[ty], Type::Slice { .. }) {
+            InstructionKind::Borrow { place, .. } | InstructionKind::Address(place) => {
+                if let Some(own) = place.lent_again(&types[*ty]) {
+                    let address = self.write_address(out, &own, &location, id);
+                    let text = type_text(types, *ty);
+                    _ = writeln!(out, "  {name} = load {text}, ptr {address}{location}");
+                    return;
+                }
+                if !matches!(types[*ty], Type::Slice { .. }) {
                     self.write_place_address(out, &name, place, &location);
                     return; // the address is the value
-                }
-                // All of a slice's elements are the slice's own two parts.
-                if let Some(slice) = place.slice_of_elements() {
-                    let address = self.write_address(out, &slice, &location, id);
-                    _ = writeln!(out, "  {name} = load %slice, ptr {address}{location}");
-                    return;
                 }
                 // A slice: the elements' address, then their count.
                 let address = format!("{name}.p");
@@ -559,43 +576,21 @@ impl Function<'_, '_, '_> {
                 )
             }
             InstructionKind::Binary { op, left, right } => {
-                self.write_binary(out, id, op, left, right);
+                self.write_binary(out, id, *op, *left, *right);
                 Ok(())
             }
             InstructionKind::Unary { op, value } => {
-                let text = type_text(types, ty);
-                let value = self.operand(value);
-                match (op, &types[ty]) {
-                    (UnaryOp::Negate, Type::Float(_)) => {
-                        write!(out, "  {name} = fneg {text} {value}")
-                    }
-                    (UnaryOp::Negate, _) => write!(out, "  {name} = sub {text} 0, {value}"),
-                    (UnaryOp::LogicalNot, _) => write!(out, "  {name} = xor {text} {value}, true"),
-                    (UnaryOp::BitNot, _) => write!(out, "  {name} = xor {text} {value}, -1"),
-                }
+                let text = type_text(types, *ty);
+                write!(out, "  {name} = ")
+                    .and_then(|()| write_unary(out, *op, &types[*ty], text, self.operand(*value)))
             }
             InstructionKind::Convert(value) => {
-                let from = self.body.operand_type(value);
-                // `bool` is LLVM's `i1`: a 1-bit unsigned integer.
-                let integer = |ty: TypeId| match types[ty] {
-                    Type::Integer(integer) => Some(integer),
-                    Type::Bool => Some(Integer {
-                        signed: false,
-                        bits: 1,
-                    }),
-                    _ => None,
-                };
-                let to_text = type_text(types, ty);
-                match (integer(from), integer(ty), &types[from]) {
-                    (None, Some(to), &Type::Float(float)) => {
-                        // Saturating, as check folds it: cut toward zero, the
-                        // nearest end of the integer's range outside it, 0 for NaN.
-                        let sign = if to.signed { 's' } else { 'u' };
-                        let suffix = match float {
-                            Float::F32 => "f32",
-                            Float::F64 => "f64",
-                        };
-                        let intrinsic = format!("llvm.fpto{sign}i.sat.{to_text}.{suffix}");
+                let from = self.body.operand_type(*value);
+                let to_text = type_text(types, *ty);
+                match (&types[from], &types[*ty]) {
+                    (&Type::Float(float), to @ (Type::Integer(_) | Type::Bool)) => {
+                        let signed = matches!(to, Type::Integer(integer) if integer.signed);
+                        let intrinsic = saturating_conversion(float, signed, &to_text);
                         let from_text = type_text(types, from);
                         self.module.declare(&intrinsic, || {
                             format!("declare {to_text} @{intrinsic}({from_text})\n\n")
@@ -603,66 +598,57 @@ impl Function<'_, '_, '_> {
                         write!(
                             out,
                             "  {name} = call {to_text} @{intrinsic}({})",
-                            self.typed(value)
+                            self.typed(*value)
                         )
                     }
-                    pair => {
-                        let conversion = match pair {
-                            (Some(from), Some(to), _) if to.bits > from.bits && from.signed => {
-                                "sext"
-                            }
-                            (Some(from), Some(to), _) if to.bits > from.bits => "zext",
-                            (Some(from), Some(to), _) if to.bits < from.bits => "trunc",
-                            // The same bits, read with the other sign.
-                            (Some(_), Some(_), _) => "bitcast",
-                            (Some(from), None, _) if from.signed => "sitofp",
-                            (Some(_), None, _) => "uitofp",
-                            // A pointer cast keeps the address.
-                            (None, None, Type::RawPointer { .. }) => "bitcast",
-                            (None, None, Type::Float(Float::F32)) => "fpext",
-                            (None, None, _) => "fptrunc",
-                            (None, Some(_), _) => {
-                                unreachable!("check converts only numbers, `bool` and pointers")
-                            }
-                        };
-                        write!(
-                            out,
-                            "  {name} = {conversion} {} to {to_text}",
-                            self.typed(value)
-                        )
-                    }
+                    (from, to) => write!(
+                        out,
+                        "  {name} = {} {} to {to_text}",
+                        cast_instruction(from, to),
+                        self.typed(*value)
+                    ),
                 }
             }
             InstructionKind::Call {
-                function,
-                ref arguments,
-                ..
+                callee, arguments, ..
             } => {
-                self.write_call(out, id, function, arguments, rest, &location);
+                self.write_call(out, id, *callee, arguments, rest, &location);
                 Ok(())
             }
-            InstructionKind::Print {
-                newline,
-                ref values,
+            InstructionKind::ToInterface {
+                reference,
+                implementation,
             } => {
-                self.write_print(out, id, newline, values, &location);
+                let table = self.method_table(*implementation, *ty);
+                let reference = self.operand(*reference);
+                _ = writeln!(
+                    out,
+                    "  {name}.a = insertvalue {{ ptr, ptr }} poison, ptr {reference}, 0{location}"
+                );
+                write!(
+                    out,
+                    "  {name} = insertvalue {{ ptr, ptr }} {name}.a, ptr {table}, 1"
+                )
+            }
+            InstructionKind::Print { newline, values } => {
+                self.write_print(out, id, *newline, values, &location);
                 return; // each line has its location
             }
-            InstructionKind::ArrayParts(ref parts) => {
+            InstructionKind::ArrayParts(parts) => {
                 self.write_array_parts(out, id, parts, rest, &location);
                 return;
             }
             // Each part written where it goes in the value's memory.
-            InstructionKind::Aggregate(ref parts) => {
-                let memory = self.value_address(out, id, ty, rest);
+            InstructionKind::Aggregate(parts) => {
+                let memory = self.value_address(out, id, *ty, rest);
                 let target = self.module.target;
-                let offsets: Vec<u64> = match types[ty] {
+                let offsets: Vec<u64> = match types[*ty] {
                     Type::Array { element, .. } => {
                         let (size, _) = layout(types, element, target);
                         (0..parts.len() as u64).map(|index| index * size).collect()
                     }
                     _ => (0..parts.len())
-                        .map(|index| field_placed(types, ty, index, target).0)
+                        .map(|index| field_placed(types, *ty, index, target).0)
                         .collect(),
                 };
                 for (index, (&part, offset)) in parts.iter().zip(offsets).enumerate() {
@@ -679,14 +665,14 @@ impl Function<'_, '_, '_> {
             // A slice's or `&str`'s length is in its value. Another field is in the memory
             // of the value it is part of, which no one changes: its address
             // when it is kept in memory, else loaded from there.
-            InstructionKind::Field { value, ref fields } => {
-                let value_type = self.body.operand_type(value);
-                if let Type::Slice { .. } | Type::Str = types[value_type] {
-                    let value = self.operand(value);
+            InstructionKind::Field { value, fields } => {
+                let value_type = self.body.operand_type(*value);
+                if types[value_type].is_slice_shaped() {
+                    let value = self.operand(*value);
                     write!(out, "  {name} = extractvalue %slice {value}, {}", fields[0])
                 } else {
                     let field_address = fmt::from_fn(|out| {
-                        if in_memory(types, ty) {
+                        if in_memory(types, *ty) {
                             write!(out, "{name}")
                         } else {
                             write!(out, "{name}.f")
@@ -701,35 +687,32 @@ impl Function<'_, '_, '_> {
                     _ = write!(
                         out,
                         "  {field_address} = getelementptr inbounds i8, ptr {}, i64 {offset}",
-                        self.operand(value)
+                        self.operand(*value)
                     );
-                    if in_memory(types, ty) {
+                    if in_memory(types, *ty) {
                         Ok(())
                     } else {
                         _ = writeln!(out, "{location}");
                         write!(
                             out,
                             "  {name} = load {}, ptr {field_address}",
-                            type_text(types, ty)
+                            type_text(types, *ty)
                         )
                     }
                 }
             }
-            InstructionKind::Phi(ref incoming) => {
+            InstructionKind::Phi(incoming) => {
                 let function = &*self;
                 let incoming = incoming.iter().map(|&(block, value)| {
                     let (value, label) = (function.operand(value), function.end_label(block));
                     fmt::from_fn(move |out| write!(out, "[ {value}, %{label} ]"))
                 });
                 let incoming = comma_separated(incoming);
-                _ = writeln!(out, "  {name} = phi {} {incoming}", type_text(types, ty));
+                _ = writeln!(out, "  {name} = phi {} {incoming}", type_text(types, *ty));
                 return; // no location: it runs where control arrives
             }
-            InstructionKind::Check {
-                failed,
-                ref message,
-            } => {
-                let failed = self.operand(failed).to_string();
+            InstructionKind::Check { failed, message } => {
+                let failed = self.operand(*failed).to_string();
                 self.check(out, &failed, message, id);
                 return; // `check` ends the line with the next block's label
             }

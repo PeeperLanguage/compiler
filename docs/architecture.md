@@ -58,7 +58,8 @@ the form `package:path`:
 
 - `myapp:utils/file`: a file of this project (`myapp` is the name in its
   `peeper.toml`; the path is under its `src/`, without the extension);
-- `core:global`: a file of a bundled library (`core`, under `libs/core/src/`);
+- `core:global`: a file of a bundled library (`core`, under `libs/core/src/`):
+  a folder of `libs/` whose `peeper.toml` says `build = "lib"`, named by it;
 - later, downloaded packages the same way (`json:parse`), named in the dependency
   file the tool writes.
 

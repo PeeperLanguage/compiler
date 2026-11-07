@@ -6,6 +6,7 @@ use std::io::Write;
 use std::path::Path;
 
 use model::DefId;
+use model::FunctionCopy;
 use model::mir;
 use model::semantic_types::Types;
 use model::thir;
@@ -35,14 +36,14 @@ impl Dump {
 /// written once it has no errors. The LLVM text comes from the program's
 /// `llvm::Module`s, which the driver builds once for dumps and linking.
 pub struct Dumps<'p> {
-    program: &'p project::Program,
+    program: &'p model::program::Program,
     kinds: &'p [Dump],
     texts: Vec<Vec<String>>, // by module, then by kind; empty for `Ll`
 }
 
 impl<'p> Dumps<'p> {
     /// No text yet for any of the `kinds` of `program`'s modules.
-    pub fn new(program: &'p project::Program, kinds: &'p [Dump]) -> Dumps<'p> {
+    pub fn new(program: &'p model::program::Program, kinds: &'p [Dump]) -> Dumps<'p> {
         Dumps {
             program,
             kinds,
@@ -55,12 +56,20 @@ impl<'p> Dumps<'p> {
         self.kinds.iter().any(|kind| matches!(kind, Dump::Ll))
     }
 
-    /// Adds the function `definition`'s THIR and MIR to its module's dumps.
-    pub fn add(&mut self, definition: DefId, thir: &thir::Body, mir: &mir::Body, types: &Types) {
+    /// Adds the THIR and MIR of `function`, a function or a copy of one, to
+    /// the dumps of the module that declares it.
+    pub fn add(
+        &mut self,
+        function: FunctionCopy,
+        thir: &thir::Body,
+        mir: &mir::Body,
+        types: &Types,
+    ) {
         let program = self.program;
-        let name = |definition: DefId| project::declared_path(&program.modules, definition);
-        let file = &program.modules[definition.module.index()].ast.file;
-        let texts = &mut self.texts[definition.module.index()];
+        let name = |definition: DefId| model::program::declared_path(&program.modules, definition);
+        let module = function.definition.module.index();
+        let file = &program.modules[module].ast.file;
+        let texts = &mut self.texts[module];
         for (text, kind) in texts.iter_mut().zip(self.kinds) {
             let body = match kind {
                 Dump::Thir => thir.text(types, file, name),
@@ -68,7 +77,12 @@ impl<'p> Dumps<'p> {
                 Dump::Ll => continue,
             };
             text.push_str("fn ");
-            text.push_str(&name(definition));
+            let declared = |definition| model::program::declared_text(&program.modules, definition);
+            text.push_str(&types.copy_text(
+                name(function.definition),
+                function.arguments,
+                declared,
+            ));
             text.push_str(":\n");
             text.push_str(&body);
         }

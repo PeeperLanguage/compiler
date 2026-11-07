@@ -23,16 +23,19 @@ use eval::interpreter::program::ProgramFacts;
 use eval::interpreter::program::Stream;
 use eval::interpreter::program::Written;
 use model::DefId;
+use model::FunctionCopy;
 use model::ModuleId;
 use model::ast;
 use model::constant::Constant;
 use model::machine::Machine;
 use model::mir;
+use model::semantic_types::ConstArguments;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
 use model::semantic_types::Types;
 use model::thir;
 use runtime_abi::abi::PANIC_EXIT_CODE;
+use runtime_abi::messages::panic_text;
 use source::SourceFile;
 use source::Span;
 
@@ -53,7 +56,7 @@ impl Results {
 
     /// The entry module's `main` and whether it returns the program's exit
     /// code (`fn main() -> i32`), when the compile was given an entry module
-    /// and found no error.
+    /// and neither loading nor checking found an error.
     pub fn entry_point(&self) -> Option<(DefId, bool)> {
         self.entry_point
     }
@@ -73,7 +76,7 @@ struct ModuleResults {
     /// From building its scope, then checking it. Kept per module, not for
     /// the whole program, so the next compile can keep an unchanged module's
     /// and check only the others. Loading's errors are one list for the
-    /// whole program (`project::Program`), since every load is done anew.
+    /// whole program (`model::program::Program`), since every load is done anew.
     diagnostics: Vec<Diagnostic>,
     reused: bool,  // kept from the previous compile, not checked
     changed: bool, // its interface differs from the previous compile's; set when it is done
@@ -121,19 +124,34 @@ pub enum Output<'c> {
     },
 }
 
-/// A function with a body, as a compile hands it on: built, used once, and
-/// dropped after, except its MIR, which is handed over.
+/// A function with a body, or a copy of one with `const T: type`
+/// parameters, as a compile hands it on: built, used once, and dropped
+/// after, except its MIR, which is handed over (`into_mir`).
 pub struct CheckedFunction<'c> {
-    pub definition: DefId,
-    pub signature: TypeId, // its function type
+    pub function: FunctionCopy,
+    /// The module whose compile built it: its own, or, for a copy, the one
+    /// that first called it.
+    pub module: ModuleId,
     pub thir: &'c thir::Body,
     /// The facts of its module found since the last function was handed on:
     /// those of its text, and of the declarations checked meanwhile, when
     /// the compile records facts (as for an editor); otherwise none. Only
     /// this function's locals are among their names, explained by `thir`.
     pub facts: &'c [thir::Fact],
-    pub mir: Option<mir::Body>, // `None` when checking it found an error
-    pub types: &'c Types,       // the program's types so far, which `signature` and the bodies name
+    mir: Option<mir::Body>, // `None` when checking it found an error
+    pub types: &'c Types,   // the program's types so far, which the bodies name
+}
+
+impl CheckedFunction<'_> {
+    /// Its MIR, as every reader of MIR takes it: with the code no path
+    /// reaches removed (`flow::cleanup`). `None` when checking it found an
+    /// error. Only a compile that reads MIR pays for the cleanup: in
+    /// `peeper check` of a large program it is about 5% of the work.
+    pub fn into_mir(self) -> Option<mir::Body> {
+        let mut mir = self.mir?;
+        flow::cleanup::remove_unused_code(&mut mir);
+        Some(mir)
+    }
 }
 
 /// What a program did when `interpret` ran it.
@@ -148,12 +166,9 @@ pub struct Interpreted {
 /// it did. A program that cannot be checked has only loading's errors, and
 /// does not start.
 pub fn interpret(
-    program: &project::Program,
+    program: &model::program::Program,
     target: &'static Machine,
 ) -> (Results, Option<Interpreted>) {
-    let Some(entry) = program.entry.filter(|_| program.checkable) else {
-        return (Results::default(), None);
-    };
     let modules = program.modules.as_slice();
     let mut bodies = HashMap::new();
     let mut last_types = None;
@@ -161,16 +176,14 @@ pub fn interpret(
         program,
         target,
         Results::default(),
-        Some(entry),
+        true,
         false,
         |output| match output {
-            Output::Function(CheckedFunction {
-                definition,
-                mir: Some(mut mir),
-                ..
-            }) => {
-                flow::cleanup::remove_unused_code(&mut mir);
-                bodies.insert(definition, mir);
+            Output::Function(checked) => {
+                let function = checked.function;
+                if let Some(mir) = checked.into_mir() {
+                    bodies.insert(function, mir);
+                }
             }
             // Nothing here is reused, so the last module's facts come last,
             // with every type.
@@ -183,14 +196,10 @@ pub fn interpret(
     let (Some((main, _)), Some(types)) = (results.entry_point(), last_types) else {
         return (results, None);
     };
-    // A syntax error the parser read past is the loader's, and leaves a whole tree.
-    if program.diagnostics.iter().any(Diagnostic::is_error) {
-        return (results, None);
-    }
-    let extern_symbol = |function| project::extern_symbol(modules, function).ok().flatten();
-    let struct_name = |definition| project::declared_text(modules, definition).to_string();
+    let extern_symbol = |function| model::program::c_symbol(modules, function);
+    let struct_name = |definition| model::program::declared_text(modules, definition).to_string();
     let field_names = |definition| {
-        let names = project::field_names(modules, definition);
+        let names = model::program::field_names(modules, definition);
         names.map(str::to_string).collect()
     };
     let facts = ProgramFacts {
@@ -198,9 +207,13 @@ pub fn interpret(
         struct_name: &struct_name,
         field_names: &field_names,
     };
+    let main_function = FunctionCopy {
+        definition: main,
+        arguments: ConstArguments::NONE,
+    };
     let outcome = eval::interpreter::program::run(
         main,
-        &bodies[&main],
+        &bodies[&main_function],
         &types,
         target,
         &|function| bodies.get(&function),
@@ -215,7 +228,7 @@ pub fn interpret(
             span,
         }) => {
             let file = &modules[function.module.index()].ast.file;
-            let text = project::panic_text(&program.root, file, message.as_bytes(), span);
+            let text = panic_text(&program.root, file, message.as_bytes(), span);
             output.push(Written {
                 stream: Stream::Stderr,
                 text,
@@ -239,16 +252,22 @@ pub fn interpret(
 /// function's bodies at once. Each module constant goes once checked, with
 /// its type and value, and last the module's remaining facts, none unless
 /// `record_facts`. Integers as wide as a pointer (`isize`, `usize`) have
-/// `target`'s `pointer_bits` bits. With an `entry` module, a program with no
-/// other error must declare there a `main` it can start at (`entry_point`).
+/// `target`'s `pointer_bits` bits. With `require_main`, a program with an
+/// entry file and no other error must declare there a `main` it can start
+/// at (`entry_point`). A program loading found an error in
+/// (`Program::checkable`) is not checked: its errors would follow from
+/// those, so it finds nothing.
 pub fn run(
-    program: &project::Program,
+    program: &model::program::Program,
     target: &'static Machine,
     previous: Results,
-    entry: Option<ModuleId>,
+    require_main: bool,
     record_facts: bool,
     mut use_output: impl FnMut(Output),
 ) -> Results {
+    if !program.checkable {
+        return Results::default();
+    }
     let modules = program.modules.as_slice();
     let mut checker = Checker::new(modules, target, record_facts);
     let mut results: Vec<ModuleResults> = modules
@@ -329,7 +348,10 @@ pub fn run(
             .collect();
     }
     let mut entry_point = None;
-    if let Some(entry) = entry
+    // A syntax error the parser read past is the loader's, and leaves a
+    // whole tree, so the loader's errors count too.
+    if let Some(entry) = program.entry.filter(|_| require_main)
+        && !program.diagnostics.iter().any(Diagnostic::is_error)
         && !results
             .iter()
             .flat_map(|found| &found.diagnostics)
@@ -366,6 +388,8 @@ fn find_entry_point(checker: &mut Checker, entry: ModuleId) -> Result<(DefId, bo
                         index: index as u32,
                     },
                     function.name.span,
+                    // A `const T: type` parameter is not among its type's.
+                    function.signature.parameters.is_empty(),
                 ))
             }
             _ => None,
@@ -377,14 +401,12 @@ fn find_entry_point(checker: &mut Checker, entry: ModuleId) -> Result<(DefId, bo
         )
         .label(&tree.file, span, "")
     };
-    let Some((main, name)) = main else {
+    let Some((main, name, takes_nothing)) = main else {
         return Err(no_entry_point(Span::at(0)));
     };
     let signature = checker.function_type(main, name);
     let exit_code = match &checker.types[signature] {
-        Type::Function {
-            parameters, result, ..
-        } if parameters.is_empty() => match checker.types.real(*result) {
+        Type::Function { result, .. } if takes_nothing => match checker.types.real(*result) {
             TypeId::VOID => Some(false),
             TypeId::I32 => Some(true),
             _ => None,
@@ -412,21 +434,18 @@ fn compile_module(
             index: index as u32,
         };
         match tree.decls[declaration] {
-            ast::Decl::Function(function) => {
-                let span = function.name.span;
-                // No body, or an error in the signature.
-                let Some(mir) = checker.build_function(definition, span, thir, false) else {
-                    continue;
-                };
-                let facts = std::mem::take(&mut checker.module_checks[module.index()].facts);
-                use_output(Output::Function(CheckedFunction {
+            // Only its signature: a call makes a copy, built below.
+            ast::Decl::Function(function)
+                if check::declaration::const_parameter(tree, function.signature).is_some() =>
+            {
+                checker.function_type(definition, function.name.span);
+            }
+            ast::Decl::Function(_) => {
+                let function = FunctionCopy {
                     definition,
-                    signature: checker.function_type(definition, span),
-                    thir,
-                    facts: &facts,
-                    mir,
-                    types: &checker.types,
-                }));
+                    arguments: ConstArguments::NONE,
+                };
+                build_function(checker, module, function, thir, use_output);
             }
             ast::Decl::Const { name, .. } => {
                 let constant = checker.constant(definition, name.span);
@@ -439,12 +458,43 @@ fn compile_module(
             ast::Decl::Type(_) | ast::Decl::Alias(_) => {} // checked by `run`
         }
     }
+    // The copies the module's bodies made, and those their bodies made.
+    while let Some(copy) = checker.next_copy() {
+        build_function(checker, module, copy, thir, use_output);
+    }
     let facts = std::mem::take(&mut checker.module_checks[module.index()].facts);
     use_output(Output::Facts {
         module,
         facts: &facts,
         types: &checker.types,
     });
+}
+
+/// Builds `function`, in the compile of `module`, and gives it with its MIR
+/// and the facts found so far to `use_output`; nothing when it has no body
+/// or its signature has an error.
+fn build_function(
+    checker: &mut Checker,
+    module: ModuleId,
+    function: FunctionCopy,
+    thir: &mut thir::Body,
+    use_output: &mut impl FnMut(Output),
+) {
+    let span = model::program::declared_name(checker.modules, function.definition)
+        .0
+        .span;
+    let Some(mir) = checker.build_function(function, span, thir, false) else {
+        return;
+    };
+    let facts = std::mem::take(&mut checker.module_checks[module.index()].facts);
+    use_output(Output::Function(CheckedFunction {
+        function,
+        module,
+        thir,
+        facts: &facts,
+        mir,
+        types: &checker.types,
+    }));
 }
 
 /// Feeds `ty` to `hasher` by what it is, not by its id, which differs between
@@ -470,9 +520,11 @@ fn hash_type(checker: &Checker, id: TypeId, hasher: &mut DefaultHasher) {
             origins.hash(hasher);
             variadic.hash(hasher);
         }
-        Type::Named(definition) | Type::Struct { definition, .. } => {
+        Type::Named(definition)
+        | Type::Struct { definition, .. }
+        | Type::Interface { definition, .. } => {
             checker.modules[definition.module.index()].path.hash(hasher);
-            let (name, file) = project::declared_name(checker.modules, *definition);
+            let (name, file) = model::program::declared_name(checker.modules, *definition);
             name.text(file).hash(hasher);
         }
         Type::Array { internals, .. } => {
@@ -489,6 +541,10 @@ fn hash_type(checker: &Checker, id: TypeId, hasher: &mut DefaultHasher) {
         | Type::Slice {
             mutable,
             element: target,
+        }
+        | Type::InterfaceReference {
+            mutable,
+            interface: target,
         } => {
             mutable.hash(hasher);
             hash_type(checker, *target, hasher);
@@ -534,23 +590,49 @@ fn interface(checker: &Checker, module: ModuleId, done: &[ModuleResults]) -> u64
                 .owner
                 .map(|owner| owner.text(&tree.file))
                 .hash(&mut hasher);
+            // Another module's call builds a copy of its body, so the body
+            // is what that module sees.
+            if check::declaration::const_parameter(tree, function.signature).is_some() {
+                tree.file
+                    .slice(tree.decls.span(declaration))
+                    .hash(&mut hasher);
+            }
         }
         // A declaration's result is in one table; the other slots are
         // `NotStarted`.
         if let State::Done(ty) = declared_types[index] {
             hash_type(checker, ty, &mut hasher);
-            // `hash_type` stops at the name, so a struct's fields are hashed here.
-            if let (
-                ast::Decl::Type(_),
-                Type::Struct {
-                    definition, fields, ..
-                },
-            ) = (decl, &checker.types[ty])
-            {
-                for (name, &field) in project::field_names(modules, *definition).zip(fields) {
-                    name.hash(&mut hasher);
-                    hash_type(checker, field, &mut hasher);
+            // `hash_type` stops at the name, so a struct's fields and an
+            // interface's methods are hashed here.
+            match (decl, &checker.types[ty]) {
+                (
+                    ast::Decl::Type(_),
+                    Type::Struct {
+                        definition, fields, ..
+                    },
+                ) => {
+                    for (name, &field) in
+                        model::program::field_names(modules, *definition).zip(fields)
+                    {
+                        name.hash(&mut hasher);
+                        hash_type(checker, field, &mut hasher);
+                    }
                 }
+                (
+                    ast::Decl::Type(_),
+                    Type::Interface {
+                        definition,
+                        methods,
+                    },
+                ) => {
+                    let declared = model::program::interface_methods(modules, *definition)
+                        .expect("an interface is declared with its methods");
+                    for (method, &signature) in declared.zip(methods) {
+                        method.name.text(&tree.file).hash(&mut hasher);
+                        hash_type(checker, signature, &mut hasher);
+                    }
+                }
+                _ => {}
             }
         }
         if let State::Done(Some(Constant { ty, value })) = &constants[index] {

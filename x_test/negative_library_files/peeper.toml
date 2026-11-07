@@ -1,0 +1,11 @@
+name = "negative_library_files"
+build = "lib"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = [
+    "mismatched types: expected `i32`, found `bool`",
+    "parts/unused.peep:3:12\n",
+    "Compilation failed with 1 error(s)",
+]

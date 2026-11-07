@@ -9,9 +9,49 @@ use bigint::Limbs;
 use rustc_hash::FxHashMap;
 
 use crate::DefId;
+use crate::constant::Constant;
+use crate::constant::value_text;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct TypeId(u32);
+
+/// What a function's `const` parameters are given, in order, by their place
+/// in `Types`'s list of them (`Types::const_arguments`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct ConstArguments(u32);
+
+impl ConstArguments {
+    /// None: the arguments of a function without `const` parameters.
+    pub const NONE: ConstArguments = ConstArguments(0);
+}
+
+/// What one `const` parameter is given: a type for `const T: type`, else a
+/// value known when compiling.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum ConstArgument {
+    Type(TypeId),
+    Value(Constant),
+}
+
+/// A struct's functions that are an interface's methods, by its place in
+/// `Types`'s list of them: the table of an interface reference.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct ImplementationId(u32);
+
+impl ImplementationId {
+    /// Its place in `Types`'s list, which an interface reference's second
+    /// word holds.
+    pub fn index(self) -> usize {
+        self.0 as usize
+    }
+
+    /// The one at place `index`, read back from an interface reference.
+    pub fn from_index(index: usize) -> ImplementationId {
+        ImplementationId(
+            u32::try_from(index).expect("a program has fewer than 2^32 implementations"),
+        )
+    }
+}
 
 /// An integer type: `i5` is signed with 5 bits.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -214,6 +254,23 @@ pub enum Type {
         mutable: bool,
         element: TypeId,
     },
+    /// The type an interface declaration makes: the function type of each of
+    /// its methods, in declaration order, whose first parameter is `self` as
+    /// an `InterfaceReference` to this type, or this type for a `self` taken
+    /// whole. The declaration is its identity; the method names stay in it.
+    /// A value of it, an owned interface, is not supported yet.
+    Interface {
+        definition: DefId,
+        methods: Box<[TypeId]>,
+    },
+    /// `&Shape`, or `&mut Shape` when `mutable`: a view of a value of any
+    /// struct type with the methods of the `interface`: its address and the
+    /// table of those methods, in the interface's order. The loan rules hold
+    /// for it as for a reference (`Type::borrows`).
+    InterfaceReference {
+        mutable: bool,
+        interface: TypeId,
+    },
     /// `*T`, or `rawptr` without a `target`: an address that nothing
     /// checks, `none` when null; what it points to can always be written.
     RawPointer {
@@ -222,18 +279,28 @@ pub enum Type {
 }
 
 impl Type {
-    /// The type a `.*` of this type reads: a reference's target, or a typed
-    /// raw pointer's.
+    /// The type a `.*` of this type reads: a reference's target, an
+    /// interface reference's interface, or a typed raw pointer's target.
     pub fn pointee(&self) -> Option<TypeId> {
         match *self {
-            Type::Reference { target, .. } => Some(target),
+            Type::Reference { target, .. }
+            | Type::InterfaceReference {
+                interface: target, ..
+            } => Some(target),
             Type::RawPointer { target } => target,
             _ => None,
         }
     }
 
+    /// Whether a value of this type is laid out as a slice, its fields in
+    /// `slice_field`: a slice, or a `&str`, which views bytes.
+    pub fn is_slice_shaped(&self) -> bool {
+        matches!(self, Type::Slice { .. } | Type::Str)
+    }
+
     /// `Some(mutable)` for a type whose values borrow what they view, a
-    /// reference or a slice: the loan rules hold for both.
+    /// reference, a slice or an interface reference: the loan rules hold for
+    /// each.
     pub fn borrows(&self) -> Option<bool> {
         // shortcut: `&str` and `&cstr` hold no loan, as each is a literal's
         // (which borrows nothing) or C's (which Peeper cannot see); make them
@@ -241,7 +308,9 @@ impl Type {
         // literal's to be returned and kept in arrays, which a loan holder's
         // cannot today.
         match *self {
-            Type::Reference { mutable, .. } | Type::Slice { mutable, .. } => Some(mutable),
+            Type::Reference { mutable, .. }
+            | Type::Slice { mutable, .. }
+            | Type::InterfaceReference { mutable, .. } => Some(mutable),
             _ => None,
         }
     }
@@ -275,9 +344,14 @@ pub enum Conversion {
     /// to a wider signed integer, and from `f32` to `f64`.
     Implicit,
     /// A `&mut T` used as a `&T`, a reference to an array used as a slice
-    /// of it, or a `&mut []T` used as a `&[]T`: lent again, so the reference
-    /// or slice itself is not moved.
+    /// of it, a `&mut []T` used as a `&[]T`, or a `&mut Shape` used as a
+    /// `&Shape`: lent again, so the reference or slice itself is not moved.
     Reborrow,
+    /// A `&T` or `&mut T` of a struct `T` used as an interface reference,
+    /// `&Shape` (`&mut Shape` from a `&mut T` only): its address with the
+    /// table of `T`'s methods, when `T` has every method of the interface,
+    /// which the checker finds.
+    ToInterface,
     /// Converts only when written with `as`: between integers that lose
     /// values, between floats and integers, from `f64` to `f32`, from
     /// `bool` to an integer, and between raw pointers of other types (the
@@ -396,6 +470,13 @@ pub fn range_fields(element: TypeId, step: TypeId) -> [(&'static str, TypeId); 5
     ]
 }
 
+/// Where each of the two fields of a slice value is, and of a `&str`, which
+/// is laid out as a slice of its bytes (`Type::is_slice_shaped`).
+pub mod slice_field {
+    pub const ADDRESS: u32 = 0; // of its first element
+    pub const LENGTH: u32 = 1;
+}
+
 /// Where each field of a range value is in `range_fields`.
 pub mod range_field {
     pub const START: usize = 0;
@@ -481,6 +562,14 @@ pub struct Types {
     pub usize: TypeId, // as wide as a pointer of the target
     types: Vec<Type>,
     ids: FxHashMap<Type, TypeId>,
+    /// Each implementation's functions, in its interface's order, by
+    /// `ImplementationId`; the checker adds one at the first conversion of
+    /// a reference to its struct to a reference to its interface.
+    implementations: Vec<Box<[DefId]>>,
+    /// Each list of `const` arguments, by `ConstArguments`, the empty one
+    /// first.
+    argument_lists: Vec<Box<[ConstArgument]>>,
+    argument_ids: FxHashMap<Box<[ConstArgument]>, ConstArguments>,
 }
 
 impl Types {
@@ -491,7 +580,11 @@ impl Types {
             usize: TypeId::INVALID,
             types: Vec::new(),
             ids: FxHashMap::default(),
+            implementations: Vec::new(),
+            argument_lists: Vec::new(),
+            argument_ids: FxHashMap::default(),
         };
+        types.const_arguments(&[]);
         for ty in FIXED {
             types.intern(ty.clone());
         }
@@ -515,13 +608,72 @@ impl Types {
         for ty in &other.types[self.types.len()..] {
             self.intern(ty.clone());
         }
+        // Only added to, like the types.
+        let added = &other.implementations[self.implementations.len()..];
+        self.implementations.extend_from_slice(added);
+        for list in &other.argument_lists[self.argument_lists.len()..] {
+            self.const_arguments(list);
+        }
+    }
+
+    /// The id of the list of `const` arguments `list`, made the first time
+    /// it is seen.
+    pub fn const_arguments(&mut self, list: &[ConstArgument]) -> ConstArguments {
+        if let Some(&id) = self.argument_ids.get(list) {
+            return id;
+        }
+        let id = ConstArguments(
+            u32::try_from(self.argument_lists.len()).expect("fewer than 2^32 lists"),
+        );
+        self.argument_lists.push(list.into());
+        self.argument_ids.insert(list.into(), id);
+        id
+    }
+
+    /// What the list `arguments` holds.
+    pub fn arguments(&self, arguments: ConstArguments) -> &[ConstArgument] {
+        &self.argument_lists[arguments.0 as usize]
+    }
+
+    /// `name<T, 3>`: the function `name` of the copy made for `arguments`,
+    /// each type as `name_of` names its declaration, each value as Peeper
+    /// text; `name` alone without `const` arguments.
+    pub fn copy_text<N: fmt::Display>(
+        &self,
+        name: String,
+        arguments: ConstArguments,
+        name_of: impl Fn(DefId) -> N + Copy,
+    ) -> String {
+        let given = self.arguments(arguments);
+        if given.is_empty() {
+            return name;
+        }
+        let texts: Vec<String> = (given.iter())
+            .map(|argument| self.argument_text(argument, name_of))
+            .collect();
+        format!("{name}<{}>", texts.join(", "))
+    }
+
+    /// `argument` as `copy_text` writes it: a type as `name_of` names its
+    /// declaration, a value as Peeper text.
+    pub fn argument_text<N: fmt::Display>(
+        &self,
+        argument: &ConstArgument,
+        name_of: impl Fn(DefId) -> N + Copy,
+    ) -> String {
+        match argument {
+            ConstArgument::Type(ty) => self.text(*ty, name_of),
+            ConstArgument::Value(Constant { ty, value }) => {
+                value_text(value, &self[*ty]).to_string()
+            }
+        }
     }
 
     /// The parameters a reference returned by a function of type `signature`
     /// may point into.
     pub fn origins(&self, signature: TypeId) -> &[u32] {
-        match self[signature] {
-            Type::Function { ref origins, .. } => origins,
+        match &self[signature] {
+            Type::Function { origins, .. } => origins,
             // No origins would let a returned reference dangle unseen.
             _ => unreachable!("a call to a function with a signature error is not lowered"),
         }
@@ -597,15 +749,45 @@ impl Types {
         };
     }
 
+    /// Makes the declared name `named` the interface whose methods have the
+    /// function types `methods`, under its id, so an `&Shape` written before
+    /// the interface was checked, as its own methods' `&self` is, is the
+    /// `&Shape` of after.
+    pub fn define_interface(&mut self, named: TypeId, methods: Box<[TypeId]>) {
+        let slot = &mut self.types[named.0 as usize];
+        let Type::Named(definition) = *slot else {
+            unreachable!("only a declared name becomes an interface");
+        };
+        *slot = Type::Interface {
+            definition,
+            methods,
+        };
+    }
+
+    /// Adds the implementation whose functions are `methods`, in its
+    /// interface's order.
+    pub fn add_implementation(&mut self, methods: Box<[DefId]>) -> ImplementationId {
+        self.implementations.push(methods);
+        ImplementationId::from_index(self.implementations.len() - 1)
+    }
+
+    /// The functions of the implementation `id`, in its interface's order.
+    pub fn implementation(&self, id: ImplementationId) -> &[DefId] {
+        &self.implementations[id.index()]
+    }
+
     /// The built-in type `name` stands for: one in `NAMED`, `isize` and `usize`
-    /// (as wide as a pointer, `pointer_bits`), or `iN` and `uN` for N from 1 to
+    /// (as wide as a pointer: the `usize` this table was made with), or `iN` and `uN` for N from 1 to
     /// `Integer::MAX_BITS`, written without leading zeros. A number literal's
     /// suffix (`5u24`) is one of these names too.
-    pub fn builtin(&mut self, name: &str, pointer_bits: u32) -> Option<TypeId> {
+    pub fn builtin(&mut self, name: &str) -> Option<TypeId> {
         if let Some(&(_, id)) = NAMED.iter().find(|(text, _)| *text == name) {
             return Some(id);
         }
-        Some(self.intern(Type::Integer(integer_named(name, pointer_bits)?)))
+        let Type::Integer(pointer) = self[self.usize] else {
+            unreachable!("`usize` is an integer")
+        };
+        Some(self.intern(Type::Integer(integer_named(name, pointer.bits)?)))
     }
 
     /// `range[element]`, of the integer type `element` (an alias looked
@@ -676,6 +858,25 @@ impl Types {
                     element: to,
                 },
             ) if self.same(from, to) => Conversion::Reborrow,
+            (
+                &Type::InterfaceReference {
+                    mutable: true,
+                    interface: from,
+                },
+                &Type::InterfaceReference {
+                    mutable: false,
+                    interface: to,
+                },
+            ) if from == to => Conversion::Reborrow,
+            (
+                &Type::Reference {
+                    mutable: from_mutable,
+                    target,
+                },
+                &Type::InterfaceReference { mutable, .. },
+            ) if (from_mutable || !mutable) && matches!(self[target], Type::Struct { .. }) => {
+                Conversion::ToInterface
+            }
             (Type::RawPointer { target: Some(_) }, Type::RawPointer { target: None }) => {
                 Conversion::Same
             }
@@ -687,20 +888,21 @@ impl Types {
     /// `Some(whether one is mutable)` for a type whose values hold loans: a
     /// reference, a slice, or a struct with one in a field, however deep.
     pub fn holds_loans(&self, id: TypeId) -> Option<bool> {
-        match self[id] {
-            Type::Struct { ref internals, .. } => {
+        match &self[id] {
+            Type::Struct { internals, .. } => {
                 (internals.holders > 0).then_some(internals.mutable_holder)
             }
-            ref other => other.borrows(),
+            other => other.borrows(),
         }
     }
 
-    /// How many references and slices a value of the type `id` is: one for
-    /// either, its fields' for a struct, as no other type holds one.
+    /// How many references, slices and interface references a value of the
+    /// type `id` is: one for each, its fields' for a struct, as no other type
+    /// holds one.
     pub fn holders_in(&self, id: TypeId) -> usize {
-        match self[id] {
-            Type::Struct { ref internals, .. } => internals.holders,
-            ref other => usize::from(other.borrows().is_some()),
+        match &self[id] {
+            Type::Struct { internals, .. } => internals.holders,
+            other => usize::from(other.borrows().is_some()),
         }
     }
 
@@ -724,9 +926,11 @@ impl Types {
             | Type::Str
             | Type::RawPointer { .. }
             | Type::Range { .. } => true,
-            Type::Reference { mutable, .. } | Type::Slice { mutable, .. } => !mutable,
+            Type::Reference { mutable, .. }
+            | Type::Slice { mutable, .. }
+            | Type::InterfaceReference { mutable, .. } => !mutable,
             Type::Array { internals, .. } => self.is_copy(internals.base),
-            Type::Struct { .. } => false,
+            Type::Struct { .. } | Type::Interface { .. } => false,
             // No value of these is moved: an error, nothing, or not yet a value.
             Type::Invalid | Type::Void | Type::Function { .. } => true,
             Type::Alias { .. } | Type::Named(_) => {
@@ -796,9 +1000,9 @@ impl Types {
                 }
                 text
             }
-            Type::Named(definition) | Type::Struct { definition, .. } => {
-                name_of(*definition).to_string()
-            }
+            Type::Named(definition)
+            | Type::Struct { definition, .. }
+            | Type::Interface { definition, .. } => name_of(*definition).to_string(),
             Type::Array { internals, .. } => {
                 let mut text = String::new();
                 for length in self.array_lengths(id) {
@@ -809,7 +1013,11 @@ impl Types {
             Type::Range { element, .. } => {
                 format!("{RANGE}[{}]", self.real_text(*element, name_of))
             }
-            Type::Reference { mutable, target } => {
+            Type::Reference { mutable, target }
+            | Type::InterfaceReference {
+                mutable,
+                interface: target,
+            } => {
                 let target = self.real_text(*target, name_of);
                 if *mutable {
                     format!("&mut {target}")

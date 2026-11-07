@@ -11,6 +11,29 @@ pub struct Literal<'a> {
     pub suffix: &'a str, // the type suffix, such as i32 or f64, or ""
 }
 
+/// The base that `prefix`, the byte after a number's leading `0`, names
+/// (`0x`, `0o` or `0b`, in either case), and the base's name.
+pub fn prefixed_base(prefix: u8) -> Option<(u32, &'static str)> {
+    // Setting bit 0x20 turns an ASCII upper-case letter into lower case.
+    match prefix | 0x20 {
+        b'x' => Some((16, "hexadecimal")),
+        b'o' => Some((8, "octal")),
+        b'b' => Some((2, "binary")),
+        _ => None,
+    }
+}
+
+/// Whether `c` starts the type suffix of a number in `base`: its letter
+/// `i`, `u` or `f`, unless that is a digit of the base (`f` in hexadecimal).
+pub fn starts_suffix(c: u8, base: u32) -> bool {
+    matches!(c, b'i' | b'u' | b'f') && !char::from(c).is_digit(base)
+}
+
+/// Whether `c` starts the exponent of a decimal number.
+pub fn is_exponent_mark(c: u8) -> bool {
+    matches!(c, b'e' | b'E')
+}
+
 /// Splits a number token's text into its parts. The suffix of a 0x, 0o or 0b
 /// number starts at its first `i` or `u` (`f` is a hex digit); that of a decimal
 /// number at its first `i`, `u` or `f`, letters a decimal number holds nowhere
@@ -18,21 +41,11 @@ pub struct Literal<'a> {
 pub fn split(text: &str) -> Literal<'_> {
     let bytes = text.as_bytes();
     let base = match bytes {
-        // Setting bit 0x20 turns an ASCII upper-case letter into lower case.
-        [b'0', prefix, _, ..] => match prefix | 0x20 {
-            b'x' => 16,
-            b'o' => 8,
-            b'b' => 2,
-            _ => 10,
-        },
+        [b'0', prefix, _, ..] => prefixed_base(*prefix).map_or(10, |(base, _)| base),
         _ => 10,
     };
-    let (digits, letters): (&str, &[char]) = if base == 10 {
-        (text, &['i', 'u', 'f'])
-    } else {
-        (&text[2..], &['i', 'u'])
-    };
-    match digits.find(letters) {
+    let digits = if base == 10 { text } else { &text[2..] };
+    match digits.bytes().position(|c| starts_suffix(c, base)) {
         Some(i) => Literal {
             base,
             digits: &digits[..i],
@@ -47,13 +60,13 @@ pub fn split(text: &str) -> Literal<'_> {
 }
 
 impl Literal<'_> {
-    /// Whether the digits hold at least one digit and only digits of the base,
-    /// besides `_` separators and, in a decimal number, the marks of a fraction
-    /// and an exponent (`. e E + -`).
+    /// Whether the digits of a 0x, 0o or 0b number hold at least one digit
+    /// and only digits of the base, besides `_` separators. A decimal
+    /// number's digits are the lexer's to read.
     pub fn has_digits_in_base(&self) -> bool {
         let mut count = 0;
         for c in self.digits.bytes() {
-            if c == b'_' || self.base == 10 && b".eE+-".contains(&c) {
+            if c == b'_' {
                 continue;
             }
             match (c as char).to_digit(36) {
@@ -67,7 +80,7 @@ impl Literal<'_> {
     /// Whether the digits are written as a float: a decimal number with a
     /// fraction or an exponent.
     pub fn is_float(&self) -> bool {
-        self.base == 10 && self.digits.contains(['.', 'e', 'E'])
+        self.base == 10 && (self.digits.bytes()).any(|c| c == b'.' || is_exponent_mark(c))
     }
 
     /// Whether the suffix, if there is one, is its letter followed by a size
@@ -148,15 +161,15 @@ mod tests {
     #[test]
     fn questions() {
         for (text, in_base, float, well_formed, integer) in [
-            ("42", true, false, true, false),
+            ("0x42", true, false, true, false),
             ("0xFG", false, false, true, false),
             ("0o8", false, false, true, false),
             ("0b102u8", false, false, true, true),
             ("0xu8", false, false, true, true),
             ("0x1f_u8", true, false, true, true),
-            ("1.5", true, true, true, false),
-            ("1e3u8", true, true, true, true),
-            ("1.5f32", true, true, true, false),
+            ("1.5", false, true, true, false),
+            ("1e3u8", false, true, true, true),
+            ("1.5f32", false, true, true, false),
             ("1i", true, false, false, true),
             ("1i_32", true, false, false, true),
             ("1f", true, false, false, false),

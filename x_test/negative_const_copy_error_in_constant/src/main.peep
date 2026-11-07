@@ -1,0 +1,12 @@
+fn g(const T: type, const n: i32) -> i32 {
+    if n == 1 {
+        let small: T = 300;
+        return 0;
+    }
+    const C: i32 = g(u8, 1);
+    return C;
+}
+
+fn main() {
+    let r = g(i32, 0);
+}

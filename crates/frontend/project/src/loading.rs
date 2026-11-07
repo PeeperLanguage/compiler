@@ -12,19 +12,33 @@ use diagnostics::fix::Fix;
 use diagnostics::suggest::nearest_name;
 use model::ModuleId;
 use model::ast::Tree;
+use model::program::Import;
+use model::program::ImportKind;
+use model::program::Module;
+use model::program::default_alias;
 use source::SourceFile;
 use source::Span;
 
-use crate::Import;
-use crate::ImportKind;
-use crate::Job;
-use crate::Loaded;
-use crate::Module;
 use crate::PRELUDE_PATH;
-use crate::default_alias;
 use crate::packages::SOURCE_EXTENSION;
 use crate::packages::resolve;
 use crate::path_text;
+
+/// A module being loaded: its imports are known by path until every module
+/// has its place in the program's order.
+pub(crate) struct Loaded {
+    pub(crate) path: String,
+    pub(crate) ast: Tree,
+    pub(crate) imports: Vec<(ImportKind, String)>, // with the imported module's path
+    pub(crate) imports_complete: bool, // every written import names a module it brings in
+    pub(crate) diagnostics: Vec<Diagnostic>,
+}
+
+pub(crate) struct Job {
+    pub(crate) path: String,
+    pub(crate) file: PathBuf,
+    pub(crate) standalone: bool, // a file in no package, checked on its own: it cannot import
+}
 
 /// Reads, parses and resolves the imports of one module, taking its text from
 /// `open_files` when it is open there. A file that cannot be read, or is not
@@ -38,10 +52,16 @@ pub(crate) fn load_module(
     let path = path_text(&job.file);
     let text = match open_files.get(&job.file) {
         // Copied: every worker shares the map, and a source file owns its text.
-        Some(text) => Ok(Ok(text.as_ref().to_string())),
-        None => std::fs::read(&job.file).map(String::from_utf8),
+        Some(text) => Ok(text.as_ref().as_bytes().to_vec()),
+        None => std::fs::read(&job.file),
     };
-    let (ast, diagnostics) = match text {
+    let text = match text {
+        Ok(bytes) if bytes.len() > source::MAX_FILE_BYTES => {
+            Err(std::io::Error::other("a source file holds at most 4 GiB"))
+        }
+        text => text,
+    };
+    let (ast, diagnostics) = match text.map(String::from_utf8) {
         Ok(Ok(text)) => parser::parse(&Arc::new(SourceFile::new(path, text))),
         Ok(Err(error)) => {
             // The text up to the bad byte is kept as is, so the error points at it.

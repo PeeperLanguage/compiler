@@ -132,6 +132,40 @@ impl ThirBuilder<'_, '_> {
                 _ => ExprKind::Convert(self.body.add(expr, span)),
             },
             Conversion::Reborrow => return Some(self.reborrow(expr, span, to)),
+            Conversion::ToInterface => {
+                let types = &self.checker.types;
+                let (
+                    &Type::Reference {
+                        mutable: from_mutable,
+                        target,
+                    },
+                    &Type::InterfaceReference { mutable, interface },
+                ) = (&types[expr.ty], &types[to])
+                else {
+                    unreachable!("a reference converts to an interface reference")
+                };
+                let Some(implementation) = self.checker.implementation(target, interface, span)
+                else {
+                    return Some(Expr::INVALID); // reported
+                };
+                // A `&mut T` made a `&I` is lent as `&T`, so it can be lent twice.
+                let reference = if from_mutable && !mutable {
+                    let shared = self.checker.types.intern(Type::Reference {
+                        mutable: false,
+                        target,
+                    });
+                    let expr = self.reborrow(expr, span, shared);
+                    self.body.add(expr, span)
+                } else {
+                    let reference = self.body.add(expr, span);
+                    self.reborrow_in_place(reference);
+                    reference
+                };
+                ExprKind::ToInterface {
+                    reference,
+                    implementation,
+                }
+            }
             Conversion::Never => return None,
         };
         Some(Expr { ty: to, kind })
@@ -175,6 +209,24 @@ impl ThirBuilder<'_, '_> {
                     self.check_binary(op, left, right, span, expected)
                 }
                 ast::Expr::Invalid => Expr::INVALID, // the parser reported it
+                // Only an argument that takes a type reads one.
+                ast::Expr::Type(ty) => {
+                    let message = format!("`{}` is a type, not a value", tree.file.slice(span));
+                    let mut diagnostic = Diagnostic::new(diagnostics::INVALID_OPERATION, message)
+                        .label(&tree.file, span, "");
+                    // `*p` of a variable `p` reads as C's dereference, which
+                    // is written `p.*`.
+                    if let ast::Type::Pointer(target) = tree.types[ty]
+                        && let ast::Type::Name = tree.types[target]
+                        && let name = tree.file.slice(tree.types.span(target))
+                        && self.innermost.contains_key(name)
+                    {
+                        let help = format!("write `{name}.*` to use the value `{name}` points to");
+                        diagnostic = diagnostic.help(help, Vec::new());
+                    }
+                    self.checker.report(diagnostic);
+                    Expr::INVALID
+                }
                 ast::Expr::Path(path) => {
                     let symbol = self.checker.resolve_path(path);
                     self.check_symbol_value(symbol, span)
@@ -208,7 +260,6 @@ impl ThirBuilder<'_, '_> {
                 }
                 ast::Expr::Print { newline, values } => self.check_print(newline, values),
                 ast::Expr::Char { .. } => self.unsupported_expr(span, "character literals"),
-                ast::Expr::Free(_) => self.unsupported_expr(span, "`free` calls"),
                 ast::Expr::VariantLiteral { .. } => self.unsupported_expr(span, "variant literals"),
                 ast::Expr::Is { .. } => self.unsupported_expr(span, "`is` tests"),
                 ast::Expr::OrElse { .. } => self.unsupported_expr(span, "`orelse` fallbacks"),

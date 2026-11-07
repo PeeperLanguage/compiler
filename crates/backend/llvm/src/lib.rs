@@ -4,7 +4,7 @@
 //! and `Exit`.
 
 mod debug_info;
-mod function;
+pub mod function;
 pub mod link;
 pub mod runtime;
 mod text;
@@ -13,13 +13,14 @@ pub mod write;
 use std::collections::BTreeMap;
 use std::collections::HashSet;
 use std::fmt::Write;
-use std::path::Path;
 
 use model::DefId;
 use model::ModuleId;
 use model::machine::Machine;
+use model::semantic_types::ImplementationId;
 use model::semantic_types::TypeId;
 use rustc_hash::FxHashMap;
+use rustc_hash::FxHashSet;
 use source::SourceFile;
 
 use crate::debug_info::Metadata;
@@ -42,10 +43,10 @@ fn clang_flag(target: &Machine) -> Option<String> {
 
 /// The LLVM text of one module, built a function at a time.
 pub struct Module<'p> {
-    program: &'p project::Program,
+    program: &'p model::program::Program,
     module: ModuleId,
     functions: String, // each `define`
-    strings: String,   // each string constant's global
+    strings: String,   // each string and method table constant's global
     /// The `define` of each printer (`Function::printer`) and
     /// range filler (`Function::range_filler`).
     private_functions: String,
@@ -61,6 +62,7 @@ pub struct Module<'p> {
 #[derive(Default)]
 struct Written {
     strings: FxHashMap<Vec<u8>, usize>,      // each string's number
+    tables: FxHashSet<ImplementationId>,     // each method table written
     printers: FxHashMap<TypeId, usize>,      // each struct and array type's printer number
     range_fillers: FxHashMap<TypeId, usize>, // each element type's filler number
     functions: HashSet<String>,              // each `define`'s symbol
@@ -70,16 +72,15 @@ impl<'p> Module<'p> {
     /// The module `module` of `program`, with no functions yet, built in
     /// `mode`, for `target`.
     fn new(
-        program: &'p project::Program,
+        program: &'p model::program::Program,
         module: ModuleId,
         target: &'static Machine,
         mode: BuildMode,
     ) -> Module<'p> {
         let metadata = match mode {
-            BuildMode::Debug => {
-                let path = Path::new(&program.modules[module.index()].ast.file.path);
-                Some(Metadata::new(path))
-            }
+            BuildMode::Debug => Some(Metadata::new(
+                &program.modules[module.index()].ast.file.path,
+            )),
             BuildMode::Release => None,
         };
         Module {

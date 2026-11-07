@@ -6,7 +6,6 @@ use std::collections::HashMap;
 use std::io::Write;
 use std::path::Path;
 use std::path::PathBuf;
-use std::sync::Arc;
 
 use diagnostics::Diagnostic;
 use diagnostics::fix;
@@ -14,7 +13,6 @@ use diagnostics::printer;
 use eval::interpreter::program::Stream;
 use llvm::BuildMode;
 use model::machine::Machine;
-use source::SourceFile;
 
 use crate::dump::Dump;
 use crate::dump::Dumps;
@@ -59,18 +57,26 @@ pub struct Command<W: Write> {
 impl<W: Write> Command<W> {
     /// Loads the program at `path` and does what `goal` asks. The result is
     /// the exit code: 1 when there are errors, else 0, or the program's own
-    /// when it ran. A folder must hold peeper.toml; its project starts at
-    /// src/main.peep. A file is checked on its own, with no project and no
-    /// imports.
+    /// when it ran. A folder must hold peeper.toml; its program starts at
+    /// src/main.peep, and a library, which only `check` takes, is each file
+    /// of src. A file is checked on its own, with no project and no imports.
     pub fn execute(&mut self, goal: &Goal) -> u8 {
         // Find the project: a folder's peeper.toml, or a single file.
-        let project = match project::find(&self.path, &self.installation.join("libs")) {
+        let project = match project::find(
+            &self.path,
+            &self.installation.join(project::LIBRARIES_FOLDER),
+        ) {
             Ok(project) => project,
             Err(error) => {
                 _ = writeln!(self.out, "{error}");
                 return 1;
             }
         };
+        if project.entry.is_none() && !matches!(goal, Goal::Check { .. }) {
+            let message = project::manifest::library_has_no_main(&project.name);
+            _ = writeln!(self.out, "peeper: {message}");
+            return 1;
+        }
         // Read and parse every module, following imports. No editor has
         // unsaved text here, so every file is read from disk.
         let program = project::load(&project, &HashMap::<PathBuf, String>::new());
@@ -94,7 +100,7 @@ impl<W: Write> Command<W> {
     fn execute_check(
         &mut self,
         project: &project::Project,
-        program: &project::Program,
+        program: &model::program::Program,
         dumps: &[Dump],
         apply_fixes: bool,
         mode: BuildMode,
@@ -131,7 +137,7 @@ impl<W: Write> Command<W> {
     fn execute_build(
         &mut self,
         project: &project::Project,
-        program: &project::Program,
+        program: &model::program::Program,
         output: Option<&Path>,
         mode: BuildMode,
     ) -> u8 {
@@ -160,7 +166,7 @@ impl<W: Write> Command<W> {
     /// it with `arguments` and removes it; gives the program's exit code.
     fn execute_run(
         &mut self,
-        program: &project::Program,
+        program: &model::program::Program,
         arguments: &[String],
         mode: BuildMode,
     ) -> u8 {
@@ -190,7 +196,7 @@ impl<W: Write> Command<W> {
 
     /// `run -interpret`: runs the program on the interpreter, then prints what
     /// it wrote; gives the program's exit code.
-    fn execute_interpret(&mut self, program: &project::Program) -> u8 {
+    fn execute_interpret(&mut self, program: &model::program::Program) -> u8 {
         let (results, ran) = compile::interpret(program, self.target);
         let found = program.diagnostics.iter().chain(results.diagnostics());
         let diagnostics: Vec<Diagnostic> = found.cloned().collect();
@@ -215,8 +221,11 @@ impl<W: Write> Command<W> {
     /// by its tokens. Gives whether the command can go on: they were printed
     /// and none is an error.
     fn print(&mut self, diagnostics: &[Diagnostic]) -> bool {
-        let scan = |file: &Arc<SourceFile>| lexer::scan(file).0;
-        let highlight: Option<printer::TokensOf> = if self.colored { Some(&scan) } else { None };
+        let highlight: Option<printer::HighlightsOf> = if self.colored {
+            Some(&lexer::highlights)
+        } else {
+            None
+        };
         if let Err(error) = printer::print(&mut self.out, diagnostics, highlight) {
             eprintln!("peeper: cannot write diagnostics: {error}");
             return false;
@@ -238,70 +247,52 @@ impl<W: Write> Command<W> {
     }
 }
 
-/// Checks and lowers `program` for `target` unless loading
-/// it found an error, gathering the `dumps` of its functions. With `links`,
-/// it also needs the entry file's `main`. Gives every diagnostic, loading's
-/// first; each module's LLVM text for a build in `mode`, when linking or a
-/// dump needs it; and the dumps, to write when there is no error.
+/// Checks and lowers `program` for `target`, gathering the `dumps` of its
+/// functions. With `links`, it also needs the entry file's `main`. Gives
+/// every diagnostic, loading's first; each module's LLVM text for a build in
+/// `mode`, when linking or a dump needs it; and the dumps, to write when
+/// there is no error.
 fn compile<'p>(
-    program: &'p project::Program,
+    program: &'p model::program::Program,
     dumps: &'p [Dump],
     mode: BuildMode,
     target: &'static Machine,
     links: bool,
 ) -> (Vec<Diagnostic>, Vec<llvm::Module<'p>>, Dumps<'p>) {
-    let mut all: Vec<Diagnostic> = program.diagnostics.clone();
     let mut dumped = Dumps::new(program, dumps);
-    // A program with a parse or load error is not checked: its errors
-    // would follow from those.
-    if !program.checkable {
-        return (all, Vec::new(), dumped);
-    }
-    let writes_ll = links || dumped.wants_ll();
-    // Check and lower each function; its MIR goes to the dumps and, when
-    // LLVM text is written, to the `queue` as soon as it is built.
-    let mut check_and_lower = |mut queue: Option<&mut llvm::write::FunctionQueue>| {
-        compile::run(
+    let (ll, results) = if links || dumped.wants_ll() {
+        let dump = |function, thir: &_, mir: &_, types: &_| dumped.add(function, thir, mir, types);
+        peeper::write_program(program, target, mode, links, dump)
+    } else {
+        let results = compile::run(
             program,
             target,
             compile::Results::default(),
-            program.entry.filter(|_| links),
+            false,
             false, // names are for editors
             |output| {
-                let compile::Output::Function(compile::CheckedFunction {
-                    definition,
+                // `peeper check` reads no MIR, so it does not pay for it.
+                let compile::Output::Function(checked) = output else {
+                    return;
+                };
+                if dumps.is_empty() {
+                    return;
+                }
+                let compile::CheckedFunction {
+                    function,
                     thir,
-                    mir,
                     types,
                     ..
-                }) = output
-                else {
-                    return; // constants and names are for editors
-                };
-                let Some(mut mir) = mir else {
-                    return; // it has errors
-                };
-                // `peeper check` reads no MIR, so it does not pay for this.
-                if queue.is_some() || dumps.iter().any(|dump| matches!(dump, Dump::Mir)) {
-                    flow::cleanup::remove_unused_code(&mut mir);
-                }
-                dumped.add(definition, thir, &mir, types);
-                if let Some(queue) = queue.as_deref_mut() {
-                    queue.add(definition, mir, types);
+                } = checked;
+                if let Some(mir) = checked.into_mir() {
+                    dumped.add(function, thir, &mir, types);
                 }
             },
-        )
+        );
+        (Vec::new(), results)
     };
-    let (mut ll, results) = if writes_ll {
-        llvm::write::write_modules(program, target, mode, |queue| check_and_lower(Some(queue)))
-    } else {
-        (Vec::new(), check_and_lower(None))
-    };
-    all.extend(results.diagnostics().cloned());
-    if let (Some(entry), Some((main, exit_code))) = (program.entry, results.entry_point()) {
-        ll[entry.index()].add_entry_point(main, exit_code);
-    }
-    (all, ll, dumped)
+    let found = program.diagnostics.iter().chain(results.diagnostics());
+    (found.cloned().collect(), ll, dumped)
 }
 
 /// The exit code a program ended with; one a signal stopped is 128 plus the
@@ -317,15 +308,19 @@ fn exit_code_of(status: std::process::ExitStatus) -> u8 {
 /// The installation peeper runs from: the executable is in <root>/bin, the
 /// libraries in <root>/libs, the runtime in <root>/runtime and the LLVM
 /// toolchain in <root>/toolchains/native.
-pub fn installation_dir() -> PathBuf {
-    let Ok(exe) = std::env::current_exe() else {
-        return PathBuf::new();
-    };
-    let exe = std::fs::canonicalize(&exe).unwrap_or(exe);
-    exe.parent()
-        .and_then(Path::parent)
-        .unwrap_or(Path::new(""))
-        .to_path_buf()
+/// The error is why it cannot be found, as a full message: with no
+/// installation, no program finds its libraries.
+pub fn installation_dir() -> Result<PathBuf, String> {
+    let exe = std::env::current_exe()
+        .map_err(|error| format!("cannot find the peeper executable: {error}"))?;
+    let exe = std::fs::canonicalize(&exe).map_err(|error| format!("{}: {error}", exe.display()))?;
+    match exe.parent().and_then(Path::parent) {
+        Some(root) => Ok(root.to_path_buf()),
+        None => Err(format!(
+            "{}: not in a bin folder of an installation",
+            exe.display()
+        )),
+    }
 }
 
 #[cfg(test)]

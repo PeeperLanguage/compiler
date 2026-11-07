@@ -39,9 +39,14 @@ fn main() {
         file.display(),
         runtime.display()
     );
+    let source = runtime.join(source);
     let mut constants = String::new();
-    _ = writeln!(constants, "pub const LIBRARY: &str = {library:?};");
-    _ = writeln!(constants, "const SOURCE: &str = {source:?};");
+    _ = writeln!(constants, "const LIBRARY: &str = {library:?};");
+    _ = writeln!(
+        constants,
+        "const SOURCE: &str = {:?};",
+        source.display().to_string()
+    );
     _ = writeln!(constants, "const FLAGS: &[&str] = &{:?};", texts("flags"));
     let out = Path::new(&std::env::var("OUT_DIR").expect("cargo sets OUT_DIR")).join("runtime.rs");
     std::fs::write(&out, constants)

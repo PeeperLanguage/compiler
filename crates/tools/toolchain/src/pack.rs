@@ -18,6 +18,7 @@ use flate2::write::GzEncoder;
 use llvm::link::file_error;
 use llvm::link::run_tool;
 use model::machine::Machine;
+use model::machine::Os;
 
 use crate::SOURCES_LOCK;
 use crate::Source;
@@ -273,7 +274,7 @@ fn check(pack: &Path, folder: &Path) -> Result<(), String> {
         let mut program = Command::new(unpacked.join(&hello));
         expect(run_tool(program.env_clear())?, "the linked program")?;
     }
-    if host.os != "windows" {
+    if host.os != Os::Windows {
         write(
             "hello.ll",
             "@text = private constant [7 x i8] c\"peeper\\00\"\n\

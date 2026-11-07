@@ -67,7 +67,6 @@ impl ThirBuilder<'_, '_> {
     ) -> Expr {
         let tree = &self.checker.module().ast;
         let literal = literal::numeric::split(tree.file.slice(number));
-        let pointer_bits = self.checker.target.pointer_bits;
         let types = &mut self.checker.types;
         let ty = if literal.suffix.is_empty() {
             match expected {
@@ -75,7 +74,7 @@ impl ThirBuilder<'_, '_> {
                 _ if literal.is_float() => TypeId::F64,
                 _ => TypeId::I32,
             }
-        } else if let Some(ty) = types.builtin(literal.suffix, pointer_bits) {
+        } else if let Some(ty) = types.builtin(literal.suffix) {
             ty
         } else {
             let message = format!("unsupported numeric literal suffix `{}`", literal.suffix);
@@ -207,9 +206,12 @@ impl ThirBuilder<'_, '_> {
         let left_literal = unsuffixed_literal(tree, left_operand);
         let left = self.check_expr(left_operand, if comparison { None } else { expected });
         let left_type = self.checker.types[left.ty].clone();
+        // `rawptr + usize` is the address that many bytes further on.
+        let pointer_offset =
+            op == BinaryOp::Add && matches!(left_type, Type::RawPointer { target: None });
         let fits = |ty: &Type| match op {
-            BinaryOp::Add
-            | BinaryOp::Subtract
+            BinaryOp::Add => ty.is_number() || matches!(ty, Type::RawPointer { target: None }),
+            BinaryOp::Subtract
             | BinaryOp::Multiply
             | BinaryOp::Divide
             | BinaryOp::Remainder
@@ -243,9 +245,14 @@ impl ThirBuilder<'_, '_> {
         let right = if shift || !left_fits {
             self.check_expr(right_operand, None)
         } else {
-            let checked = self.check_expr(right_operand, Some(left.ty));
+            let right_type = if pointer_offset {
+                self.checker.types.usize
+            } else {
+                left.ty
+            };
+            let checked = self.check_expr(right_operand, Some(right_type));
             let found = checked.ty;
-            match self.coerce(checked, right_operand, left.ty) {
+            match self.coerce(checked, right_operand, right_type) {
                 Ok(right) => right,
                 Err(mut mismatch) => {
                     let checker = &self.checker;
@@ -259,7 +266,7 @@ impl ThirBuilder<'_, '_> {
                             format!("write `{literal}{found}` to give the left literal that type");
                         mismatch = mismatch.help(help, Vec::new());
                     } else {
-                        mismatch = self.help_cast(mismatch, right_operand, found, left.ty);
+                        mismatch = self.help_cast(mismatch, right_operand, found, right_type);
                     }
                     self.checker.report(mismatch);
                     Expr::INVALID
@@ -289,7 +296,7 @@ impl ThirBuilder<'_, '_> {
             self.checker.report(diagnostic);
             return Expr::INVALID;
         }
-        if let ExprKind::Constant(ref value) = right.kind
+        if let ExprKind::Constant(value) = &right.kind
             && let Some(message) = eval::operators::known_trap(op, &left_type, &right_type, value)
         {
             self.checker
@@ -300,8 +307,11 @@ impl ThirBuilder<'_, '_> {
             return left;
         }
         let ty = if comparison { TypeId::BOOL } else { left.ty };
-        if let (ExprKind::Constant(left_value), ExprKind::Constant(right_value)) =
-            (&left.kind, &right.kind)
+        // An address is not known when compiling, so an offset of `none` is
+        // left for the run, which refuses it in a constant.
+        if !pointer_offset
+            && let (ExprKind::Constant(left_value), ExprKind::Constant(right_value)) =
+                (&left.kind, &right.kind)
         {
             let folded =
                 eval::operators::binary(op, &left_type, left_value, &right_type, right_value)

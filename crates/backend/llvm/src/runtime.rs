@@ -1,5 +1,5 @@
 //! The runtime library every program links with, as runtime/runtime.toml
-//! describes it: its file name, which the driver looks for, and how `rustc`
+//! describes it: its file name, which `library` looks for, and how `rustc`
 //! builds it from the Rust file beside that file.
 
 use std::path::Path;
@@ -11,9 +11,9 @@ use model::machine::Machine;
 use crate::link::call_tool;
 use crate::link::file_error;
 
-// LIBRARY (the archive's file name, which the driver looks for), SOURCE (the
-// Rust file in the runtime folder) and FLAGS (rustc's flags), written by
-// build.rs from runtime/runtime.toml.
+// LIBRARY (the archive's file name, which `library` looks for), SOURCE (the
+// path of the runtime's root Rust file in this checkout) and FLAGS (rustc's
+// flags), written by build.rs from runtime/runtime.toml.
 include!(concat!(env!("OUT_DIR"), "/runtime.rs"));
 
 /// Builds the library for `target` from this checkout's runtime folder with
@@ -24,7 +24,6 @@ include!(concat!(env!("OUT_DIR"), "/runtime.rs"));
 pub fn build(installation: &Path, target: &Machine) -> Result<PathBuf, String> {
     let library = library(target, installation);
     let folder = library.parent().expect("a library is in a folder");
-    let sources = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../runtime");
     let staging = folder.join(format!(".build-{}", std::process::id()));
     std::fs::create_dir_all(&staging).map_err(|error| file_error("make", &staging, &error))?;
     let staged = staging.join(LIBRARY);
@@ -34,7 +33,7 @@ pub fn build(installation: &Path, target: &Machine) -> Result<PathBuf, String> {
             .args(["--crate-name", "peeper_rt", "--crate-type", "staticlib"])
             .args(["--target", target.rust_triple])
             .args(FLAGS)
-            .arg(sources.join(SOURCE))
+            .arg(SOURCE)
             .arg("-o")
             .arg(&staged);
         call_tool(rustc, "compile the runtime")?;

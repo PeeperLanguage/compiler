@@ -1,0 +1,9 @@
+name = "run_library"
+build = "lib"
+
+[test]
+mode = "run"
+outcome = "failure"
+stderr_contains = [
+    "peeper: `run_library` is a library (`build = \"lib\"`), so it has no `main` to build or run",
+]

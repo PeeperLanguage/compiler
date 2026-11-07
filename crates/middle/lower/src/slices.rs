@@ -8,6 +8,8 @@ use model::operators::BinaryOp;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
 use model::thir;
+use runtime_abi::messages::SLICE_BOUNDS_MESSAGE;
+use runtime_abi::messages::SLICE_ORDER_MESSAGE;
 use source::Span;
 
 use crate::Lowering;
@@ -121,7 +123,7 @@ impl Lowering<'_> {
                 TypeId::BOOL,
                 span,
             );
-            let message = "slice starts after it ends";
+            let message = SLICE_ORDER_MESSAGE;
             self.emit_check(failed, message, span);
         }
         let count = match (known_start, known_end) {
@@ -151,7 +153,7 @@ impl Lowering<'_> {
     /// constant: the checker took only those that fit a `usize`, and an
     /// index into an array only one inside it.
     pub(super) fn known_position(&self, position: Id<thir::Expr>) -> Option<u64> {
-        let thir::ExprKind::Constant(Value::Integer(ref value)) = self.thir.exprs[position].kind
+        let thir::ExprKind::Constant(Value::Integer(value)) = &self.thir.exprs[position].kind
         else {
             return None;
         };
@@ -173,7 +175,7 @@ impl Lowering<'_> {
     ) -> Option<mir::Operand> {
         let span = self.thir.exprs.span(end);
         let value = self.lower_expr(end)?;
-        Some(self.checked_usize(value, op, length, "slice out of bounds", span))
+        Some(self.checked_usize(value, op, length, SLICE_BOUNDS_MESSAGE, span))
     }
 
     /// `value`, an integer, as a `usize`, after stopping the program with

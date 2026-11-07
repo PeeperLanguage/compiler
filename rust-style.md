@@ -66,6 +66,10 @@ match these rules, so `cargo clippy -- -D warnings` holds them.
   `unwrap()`.
 - **Borrow by default.** Take `&str` and `&[T]` parameters, not `&String` or
   `&Vec<T>`; clone only where a value must be owned twice.
+- **Match a borrowed value, not `ref`.** Write `match &value { Kind::A(x)
+  => .. }` and `let Kind::A(x) = &value else`, so each binding is a
+  reference, not `match value { Kind::A(ref x) => .. }`
+  (`clippy::ref_patterns`).
 - **Keep the form the value comes in.** Do not convert to another type and
   back; convert once, where the value is used.
 - **`impl Default`, not a `new()` without arguments.**

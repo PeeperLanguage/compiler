@@ -5,19 +5,23 @@ use std::sync::Arc;
 
 use model::ModuleId;
 use model::machine::Machine;
+use model::program::ImportKind;
 use model::semantic_types::Types;
-use project::ImportKind;
 use source::SourceFile;
 
 use crate::Checker;
 
 /// The module `path`, written as `text`, with `imports`; its text must parse
 /// without errors.
-pub(crate) fn module(path: &str, text: &str, imports: Vec<project::Import>) -> project::Module {
+pub(crate) fn module(
+    path: &str,
+    text: &str,
+    imports: Vec<model::program::Import>,
+) -> model::program::Module {
     let file = Arc::new(SourceFile::new("main.peep", text));
     let (ast, parse) = parser::parse(&file);
     assert!(parse.is_empty(), "{parse:?}");
-    project::Module {
+    model::program::Module {
         path: path.to_string(),
         ast,
         imports,
@@ -38,7 +42,7 @@ pub(crate) fn with_checker<T>(
     work: impl FnOnce(&mut Checker, ModuleId) -> T,
 ) -> (T, Types, Vec<Reported>) {
     let (utils_id, main_id) = (ModuleId::from_index(0), ModuleId::from_index(1));
-    let imports = vec![project::Import {
+    let imports = vec![model::program::Import {
         kind: ImportKind::Declared(0),
         module: utils_id,
     }];

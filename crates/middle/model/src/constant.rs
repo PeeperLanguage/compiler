@@ -27,7 +27,7 @@ pub enum Value {
 }
 
 /// A constant's type and value.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Constant {
     pub ty: TypeId,
     pub value: Value,

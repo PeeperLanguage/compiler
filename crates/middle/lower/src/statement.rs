@@ -69,7 +69,11 @@ impl Lowering<'_> {
             // they end with it, as in Rust.
             let temporaries = self.declared.len();
             match self.thir.stmts[statement] {
-                thir::Stmt::Let { variable, value } => {
+                thir::Stmt::Let {
+                    variable,
+                    value,
+                    keeps_temporaries,
+                } => {
                     let declared = lowered_variable(variable);
                     if let Some(value) = value {
                         let value = self.lower_expr(value)?;
@@ -77,10 +81,7 @@ impl Lowering<'_> {
                         let store = mir::InstructionKind::Store { place, value };
                         self.emit(store, TypeId::VOID, span);
                     }
-                    // A hidden `let` holds a `for` loop's array: every temporary
-                    // of that code lasts through the loop, as in Rust, and ends
-                    // with the block around it.
-                    if !self.mir.variables[declared].hidden {
+                    if !keeps_temporaries {
                         self.close_scopes(temporaries, span);
                     }
                     self.declared.extend(self.kept.take());

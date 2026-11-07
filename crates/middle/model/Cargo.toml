@@ -9,6 +9,8 @@ publish.workspace = true
 [dependencies]
 arena.workspace = true
 bigint.workspace = true
+diagnostics.workspace = true
+literal.workspace = true
 rustc-hash.workspace = true
 source.workspace = true
 

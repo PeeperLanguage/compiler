@@ -13,8 +13,9 @@ fn files(entries: &[(&str, &str)]) -> HashMap<String, String> {
 const MANIFEST: &str = manifest::FILE_NAME;
 
 /// What `files` load to, when their peeper.toml gives a project.
-fn loaded(files: HashMap<String, String>) -> project::Program {
-    load(files).expect("the files are a project")
+fn loaded(files: HashMap<String, String>) -> model::program::Program {
+    let project = project_of(&files).expect("the files are a project");
+    load(&project, files)
 }
 
 #[test]
@@ -121,16 +122,54 @@ fn a_warning_stays_apart_from_what_the_program_prints() {
     );
 }
 
+/// A library has no `main`: a run says so, as `peeper run` does, rather
+/// than showing nothing.
 #[test]
-fn every_core_file_is_built_in() {
+fn a_library_does_not_run() {
+    let mut files = files(&[("tools.peep", "fn Tool() -> i32 { return true; }\n")]);
+    let manifest = "name = \"playground\"\nbuild = \"lib\"\n".to_string();
+    files.insert(MANIFEST.to_string(), manifest);
+    let message =
+        "`playground` is a library (`build = \"lib\"`), so it has no `main` to build or run";
+    assert_eq!(
+        run(files.clone()),
+        json!({ "diagnostics": message, "run": null })
+    );
+    // Checked, it shows its errors.
+    assert_eq!(check(files)[0]["code"], "T0001");
+}
+
+/// Each module of `core` on disk is built in: a program importing them all
+/// finds each one.
+#[test]
+fn every_core_module_is_built_in() {
     let core = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../_builtin_library/core/src");
-    let mut on_disk: Vec<String> = std::fs::read_dir(core)
+    let imports: String = std::fs::read_dir(core)
         .expect("the core library is there")
         .flatten()
-        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "peep")
+        })
+        .map(|path| {
+            let module = path
+                .file_stem()
+                .expect("a file has a name")
+                .to_string_lossy();
+            format!("import \"core:{module}\";\n")
+        })
         .collect();
-    on_disk.sort();
-    assert_eq!(on_disk, CORE_FILES.map(|(name, _)| name));
+    assert!(imports.contains("core:memory"), "{imports}");
+    let found = check(files(&[(
+        "main.peep",
+        &format!("{imports}fn main() {{}}\n"),
+    )]));
+    let errors: Vec<&Value> = (found.as_array().expect("a list"))
+        .iter()
+        .filter(|diagnostic| diagnostic["severity"] == "error")
+        .collect();
+    assert!(errors.is_empty(), "{errors:?}");
 }
 
 /// The files under `folder`, by their path from `root`.
@@ -185,14 +224,13 @@ fn check_fixtures_fail_here_with_the_same_number_of_errors() {
         let summary = wanted
             .into_iter()
             .flatten()
-            .filter_map(|text| {
-                text.as_str()?
-                    .strip_prefix("Compilation failed with ")?
-                    .strip_suffix(" error(s)")
-            })
+            .filter_map(|text| text.as_str()?.strip_prefix("Compilation failed with "))
             .next();
+        // The count starts the summary, which may go on with warnings or end
+        // early ("32 error").
         if let Some(summary) = summary {
-            assert_eq!(errors.to_string(), summary, "{name}: {found:#?}");
+            let count: String = summary.chars().take_while(char::is_ascii_digit).collect();
+            assert_eq!(errors.to_string(), count, "{name}: {found:#?}");
         }
         checked += 1;
     }

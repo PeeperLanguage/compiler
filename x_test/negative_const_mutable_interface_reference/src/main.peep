@@ -1,0 +1,12 @@
+// A constant holds no `&mut` interface reference, as it holds no other
+// `&mut`: all its uses would share one value.
+iface Shape {
+    fn area(&self) -> i32
+}
+
+struct Square { side: i32 }
+fn Square::area(&self) -> i32 { return self.side * self.side; }
+
+const SHAPE: &mut Shape = &mut Square.{ side = 3 };
+
+fn main() {}

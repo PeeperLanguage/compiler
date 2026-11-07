@@ -70,7 +70,9 @@ pub fn write(fixes: &[(&Fix, &str)], out: &mut impl Write) -> std::io::Result<()
         for (fix, _) in in_file {
             text.replace_range(fix.span.range(), &fix.new_text);
         }
-        replace_file(Path::new(&file.path), &text)?;
+        replace_file(Path::new(&file.path), &text).map_err(|error| {
+            std::io::Error::new(error.kind(), format!("{}: {error}", file.path))
+        })?;
         for (fix, help) in in_file.iter().rev() {
             let (line, column) = file.position(fix.span.start as usize);
             writeln!(out, "fixed {}:{line}:{column}: {help}", file.path)?;

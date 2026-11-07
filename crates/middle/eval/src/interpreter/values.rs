@@ -154,6 +154,12 @@ impl<'b> Interpreter<'b, '_> {
                     length: self.read_word(address + self.pointer_bytes(), span)?,
                 });
             }
+            Type::InterfaceReference { .. } => {
+                return Ok(Register::Interface {
+                    address: self.read_word(address, span)?,
+                    table: self.read_word(address + self.pointer_bytes(), span)?,
+                });
+            }
             Type::Struct { .. } | Type::Array { .. } | Type::Range { .. } => {
                 return Ok(Register::Address(address));
             }
@@ -182,11 +188,11 @@ impl<'b> Interpreter<'b, '_> {
         span: Span,
     ) -> Result<(), Failure> {
         let pointer = self.pointer_bytes() as usize;
-        match *value {
+        match value {
             Register::Scalar(Value::Bool(value)) => {
-                self.write_bytes(address, &[u8::from(value)], span)
+                self.write_bytes(address, &[u8::from(*value)], span)
             }
-            Register::Scalar(Value::Integer(ref limbs)) => {
+            Register::Scalar(Value::Integer(limbs)) => {
                 let size = self.size_of(ty);
                 match self.memory.bytes_mut(address, size) {
                     Some(bytes) => {
@@ -198,7 +204,7 @@ impl<'b> Interpreter<'b, '_> {
             }
             Register::Scalar(Value::Float(bits)) => match self.types[ty] {
                 Type::Float(Float::F32) => {
-                    let narrow = f64::from_bits(bits) as f32;
+                    let narrow = f64::from_bits(*bits) as f32;
                     self.write_bytes(address, &narrow.to_le_bytes(), span)
                 }
                 _ => self.write_bytes(address, &bits.to_le_bytes(), span),
@@ -206,18 +212,22 @@ impl<'b> Interpreter<'b, '_> {
             Register::Scalar(_) => unreachable!("strings and `none` are addresses here"),
             Register::Address(from) if in_memory(self.types, ty) => {
                 let size = self.size_of(ty);
-                self.copy_memory(from, address, size, span)
+                self.copy_memory(*from, address, size, span)
             }
             Register::Address(value) => {
                 self.write_bytes(address, &value.to_le_bytes()[..pointer], span)
             }
             Register::Slice {
-                address: elements,
-                length,
+                address: first,
+                length: second,
+            }
+            | Register::Interface {
+                address: first,
+                table: second,
             } => {
-                self.write_bytes(address, &elements.to_le_bytes()[..pointer], span)?;
-                let second = address + pointer as u64;
-                self.write_bytes(second, &length.to_le_bytes()[..pointer], span)
+                self.write_bytes(address, &first.to_le_bytes()[..pointer], span)?;
+                let after = address + pointer as u64;
+                self.write_bytes(after, &second.to_le_bytes()[..pointer], span)
             }
         }
     }

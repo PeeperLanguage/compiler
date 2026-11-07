@@ -109,7 +109,7 @@ pub fn report_loan_errors(
     }
     let mut loans_through = vec![Vec::new(); body.variables.len()];
     for (index, &borrow) in borrows.iter().enumerate() {
-        if let mir::InstructionKind::Borrow { ref place, .. } = body.instructions[borrow].kind
+        if let mir::InstructionKind::Borrow { place, .. } = &body.instructions[borrow].kind
             && place.is_behind_reference()
         {
             loans_through[place.variable.index()].push(Id::from_index(index));
@@ -283,13 +283,13 @@ impl Loans<'_> {
     /// The holders a `return` ending `block` hands back, used there, and
     /// the `return`'s span.
     fn returned(&self, block: Id<mir::Block>) -> Option<(Range<usize>, Span)> {
-        match self.body.blocks[block].terminator {
+        match &self.body.blocks[block].terminator {
             mir::Terminator::Return {
-                value: Some(ref value),
+                value: Some(value),
                 span,
             } => {
                 let holders = self.operand_holders(value);
-                (!holders.is_empty()).then_some((holders, span))
+                (!holders.is_empty()).then_some((holders, *span))
             }
             _ => None,
         }
@@ -310,7 +310,7 @@ impl Loans<'_> {
         ty: TypeId,
         field: u32,
     ) -> (Range<usize>, TypeId) {
-        let Type::Struct { ref fields, .. } = self.types[ty] else {
+        let Type::Struct { fields, .. } = &self.types[ty] else {
             unreachable!("only a struct's field holds a reference")
         };
         let (before, rest) = fields.split_at(field as usize);
@@ -348,44 +348,39 @@ impl Loans<'_> {
     /// place it reads or goes through, and of each operand.
     fn uses(&self, id: Id<mir::Instruction>, mut used: impl FnMut(Id<Holder>)) {
         let kind = &self.body.instructions[id].kind;
-        let (place, operands): (Option<&mir::Place>, &[mir::Operand]) = match *kind {
-            mir::InstructionKind::Load(ref place)
-            | mir::InstructionKind::Length(ref place)
-            | mir::InstructionKind::Move(ref place)
-            | mir::InstructionKind::Borrow { ref place, .. }
-            | mir::InstructionKind::Address(ref place) => (Some(place), &[]),
+        let (place, operands): (Option<&mir::Place>, &[mir::Operand]) = match kind {
+            mir::InstructionKind::Load(place)
+            | mir::InstructionKind::Length(place)
+            | mir::InstructionKind::Move(place)
+            | mir::InstructionKind::Borrow { place, .. }
+            | mir::InstructionKind::Address(place) => (Some(place), &[]),
             // Setting a whole variable does not read it.
-            mir::InstructionKind::Store {
-                ref place,
-                ref value,
-            } => (
+            mir::InstructionKind::Store { place, value } => (
                 place.whole_variable().is_none().then_some(place),
                 std::slice::from_ref(value),
             ),
-            mir::InstructionKind::Binary {
-                ref left,
-                ref right,
-                ..
-            } => {
+            mir::InstructionKind::Binary { left, right, .. } => {
                 for operand in [left, right] {
                     holder_ids(self.operand_holders(operand)).for_each(&mut used);
                 }
                 (None, &[])
             }
-            mir::InstructionKind::Unary { ref value, .. }
-            | mir::InstructionKind::Convert(ref value)
-            | mir::InstructionKind::Field { ref value, .. }
-            | mir::InstructionKind::Check {
-                failed: ref value, ..
-            } => (None, std::slice::from_ref(value)),
-            mir::InstructionKind::Call { ref arguments, .. }
-            | mir::InstructionKind::Aggregate(ref arguments)
-            | mir::InstructionKind::ArrayParts(ref arguments)
+            mir::InstructionKind::Unary { value, .. }
+            | mir::InstructionKind::Convert(value)
+            | mir::InstructionKind::Field { value, .. }
+            | mir::InstructionKind::ToInterface {
+                reference: value, ..
+            }
+            | mir::InstructionKind::Check { failed: value, .. } => {
+                (None, std::slice::from_ref(value))
+            }
+            mir::InstructionKind::Call { arguments, .. }
+            | mir::InstructionKind::Aggregate(arguments)
+            | mir::InstructionKind::ArrayParts(arguments)
             | mir::InstructionKind::Print {
-                values: ref arguments,
-                ..
+                values: arguments, ..
             } => (None, arguments),
-            mir::InstructionKind::Phi(ref incoming) => {
+            mir::InstructionKind::Phi(incoming) => {
                 for (_, operand) in incoming {
                     holder_ids(self.operand_holders(operand)).for_each(&mut used);
                 }
@@ -404,8 +399,8 @@ impl Loans<'_> {
     /// The holders the instruction `id` gives a new value: its own value,
     /// or the whole variable it stores to.
     fn defines(&self, id: Id<mir::Instruction>) -> Range<usize> {
-        match self.body.instructions[id].kind {
-            mir::InstructionKind::Store { ref place, .. } => place
+        match &self.body.instructions[id].kind {
+            mir::InstructionKind::Store { place, .. } => place
                 .whole_variable()
                 .map_or(0..0, |variable| self.variable_holders(variable)),
             _ => self.value_holders(id),
@@ -426,15 +421,15 @@ impl Loans<'_> {
         let mut use_counts = vec![0_u32; holder_count];
         let mut call_arguments = Bits::new(holder_count);
         for id in self.body.instructions.ids() {
-            let call = match self.body.instructions[id].kind {
+            let call = match &self.body.instructions[id].kind {
                 mir::InstructionKind::Call {
                     signature,
-                    ref arguments,
+                    arguments,
                     ..
                 } => {
                     // Used again through the returned reference, so its loan
                     // outlives the call.
-                    for &position in self.types.origins(signature) {
+                    for &position in self.types.origins(*signature) {
                         for holder in self.operand_holders(&arguments[position as usize]) {
                             use_counts[holder] += 1;
                         }
@@ -468,11 +463,7 @@ impl Loans<'_> {
     /// is not listed gives no value that holds a loan.
     fn step_held(&self, held: &mut Held, id: Id<mir::Instruction>) {
         let kind = &self.body.instructions[id].kind;
-        if let mir::InstructionKind::Store {
-            ref place,
-            ref value,
-        } = *kind
-        {
+        if let mir::InstructionKind::Store { place, value } = kind {
             self.step_store(held, place, value);
             return;
         }
@@ -486,13 +477,13 @@ impl Loans<'_> {
                 held.set(to, &loans);
             }
         };
-        match *kind {
+        match kind {
             mir::InstructionKind::Call {
                 signature,
-                ref arguments,
+                arguments,
                 ..
             } => {
-                let origins = self.types.origins(signature).iter();
+                let origins = self.types.origins(*signature).iter();
                 let sources = origins
                     .flat_map(|&position| self.operand_holders(&arguments[position as usize]));
                 let loans = self.loans_of(held, sources);
@@ -500,7 +491,7 @@ impl Loans<'_> {
             }
             // A value read out of a holder holds its loans; from behind it,
             // those of any it may have come from.
-            mir::InstructionKind::Load(ref place) | mir::InstructionKind::Move(ref place) => {
+            mir::InstructionKind::Load(place) | mir::InstructionKind::Move(place) => {
                 let source = self.place_holders(place);
                 if place.is_behind_reference() {
                     let loans = self.loans_of(held, source);
@@ -511,13 +502,13 @@ impl Loans<'_> {
             }
             // What the place holds, or goes through, stays borrowed while
             // the new reference is in use.
-            mir::InstructionKind::Borrow { ref place, .. } => {
+            mir::InstructionKind::Borrow { place, .. } => {
                 let loans = self.loans_of(held, self.place_holders(place));
                 let holder = Id::from_index(target.start);
                 held.set(holder, &loans);
                 held.add(holder, self.loan(id));
             }
-            mir::InstructionKind::Aggregate(ref parts) => {
+            mir::InstructionKind::Aggregate(parts) => {
                 let mut next = target.start;
                 for part in parts {
                     let count = self.types.holders_in(self.body.operand_type(*part));
@@ -525,10 +516,7 @@ impl Loans<'_> {
                     next += count;
                 }
             }
-            mir::InstructionKind::Field {
-                ref value,
-                ref fields,
-            } => {
+            mir::InstructionKind::Field { value, fields } => {
                 let mut source = self.operand_holders(value);
                 let mut ty = self.body.operand_type(*value);
                 for &field in fields {
@@ -536,7 +524,26 @@ impl Loans<'_> {
                 }
                 copy(held, target, source);
             }
-            _ => unreachable!("a value holding a loan has its step"),
+            // The interface reference holds what the reference did.
+            mir::InstructionKind::ToInterface { reference, .. } => {
+                copy(held, target, self.operand_holders(reference));
+            }
+            // These give no value that holds a loan: the checker refuses
+            // an array of references (`ArrayParts`), `&&` and `||` give a
+            // `bool` (`Phi`), and a reference converts only to an address.
+            mir::InstructionKind::Store { .. }
+            | mir::InstructionKind::Length(_)
+            | mir::InstructionKind::Address(_)
+            | mir::InstructionKind::Binary { .. }
+            | mir::InstructionKind::Unary { .. }
+            | mir::InstructionKind::Convert(_)
+            | mir::InstructionKind::ArrayParts(_)
+            | mir::InstructionKind::Print { .. }
+            | mir::InstructionKind::Phi(_)
+            | mir::InstructionKind::Check { .. }
+            | mir::InstructionKind::ScopeEnd(_) => {
+                unreachable!("a value holding a loan has its step")
+            }
         }
     }
 
@@ -761,8 +768,8 @@ impl Loans<'_> {
                 continue;
             }
             let error = if let Some(&borrow) = self.borrows.get(loan.index()) {
-                let mir::InstructionKind::Borrow { ref place, .. } =
-                    self.body.instructions[borrow].kind
+                let mir::InstructionKind::Borrow { place, .. } =
+                    &self.body.instructions[borrow].kind
                 else {
                     unreachable!("each loan is a `Borrow`")
                 };
@@ -809,17 +816,17 @@ impl Loans<'_> {
     /// `&mut` borrow only reserves its place, so it is checked as a shared
     /// borrow.
     fn access(&self, id: Id<mir::Instruction>) -> Option<Access<'_>> {
-        let (place, event, reads, own_storage) = match self.body.instructions[id].kind {
-            mir::InstructionKind::Load(ref place) => (place, "read", true, false),
-            mir::InstructionKind::Length(ref place) => (place, "read", true, true),
-            mir::InstructionKind::Move(ref place) => (place, "moved", false, false),
-            mir::InstructionKind::Store { ref place, .. } => (place, "changed", false, true),
+        let (place, event, reads, own_storage) = match &self.body.instructions[id].kind {
+            mir::InstructionKind::Load(place) => (place, "read", true, false),
+            mir::InstructionKind::Length(place) => (place, "read", true, true),
+            mir::InstructionKind::Move(place) => (place, "moved", false, false),
+            mir::InstructionKind::Store { place, .. } => (place, "changed", false, true),
             mir::InstructionKind::Borrow {
-                ref place,
+                place,
                 mutable: false,
             } => (place, "borrowed", true, false),
             mir::InstructionKind::Borrow {
-                ref place,
+                place,
                 mutable: true,
             } => {
                 let reserves = self.reserved.has(self.loan(id));
@@ -828,7 +835,7 @@ impl Loans<'_> {
             }
             // `@x` can write `x`, so no reference to it may be in use; it
             // looks like no borrow, so the message names the address.
-            mir::InstructionKind::Address(ref place) => {
+            mir::InstructionKind::Address(place) => {
                 return Some(Access {
                     variable: place.variable,
                     projections: &place.projections,
@@ -842,7 +849,7 @@ impl Loans<'_> {
             }
             mir::InstructionKind::ScopeEnd(variable) => {
                 return Some(Access {
-                    variable,
+                    variable: *variable,
                     projections: &[],
                     subject: "",
                     event: "gone",
@@ -852,7 +859,18 @@ impl Loans<'_> {
                     span: self.body.instructions.span(id),
                 });
             }
-            _ => return None,
+            // These use values only, never a place.
+            mir::InstructionKind::Binary { .. }
+            | mir::InstructionKind::Unary { .. }
+            | mir::InstructionKind::Convert(_)
+            | mir::InstructionKind::Call { .. }
+            | mir::InstructionKind::ToInterface { .. }
+            | mir::InstructionKind::Aggregate(_)
+            | mir::InstructionKind::ArrayParts(_)
+            | mir::InstructionKind::Print { .. }
+            | mir::InstructionKind::Field { .. }
+            | mir::InstructionKind::Phi(_)
+            | mir::InstructionKind::Check { .. } => return None,
         };
         Some(Access {
             variable: place.variable,
@@ -887,9 +905,9 @@ impl Loans<'_> {
         for &(holder, loan) in pairs {
             let borrow = self.borrows[loan.index()];
             let mir::InstructionKind::Borrow {
-                place: ref loaned,
+                place: loaned,
                 mutable,
-            } = self.body.instructions[borrow].kind
+            } = &self.body.instructions[borrow].kind
             else {
                 unreachable!("each loan is a `Borrow`")
             };
@@ -900,7 +918,7 @@ impl Loans<'_> {
             let past_storage = access.own_storage
                 && (loaned.projections[common..].iter()).any(|step| step.leaves_storage());
             // A reserved loan acts as a shared one until its call.
-            let exclusive = mutable && !self.reserved.has(loan);
+            let exclusive = *mutable && !self.reserved.has(loan);
             if !overlaps || past_storage || (access.reads && !exclusive) {
                 continue;
             }
@@ -908,7 +926,7 @@ impl Loans<'_> {
             let name = self.variable_name(access.variable, file);
             let words = self.words(self.body.instructions[borrow].ty);
             let (noun, to) = (words.noun, words.to);
-            let kind = if mutable {
+            let kind = if *mutable {
                 format!("a {} {noun}", words.writable)
             } else {
                 format!("a {noun}")
@@ -946,8 +964,7 @@ impl Loans<'_> {
         reported: &mut Bits<Loan>,
         file: &Arc<SourceFile>,
     ) -> Option<(Id<Holder>, Diagnostic)> {
-        let mir::InstructionKind::Call { ref arguments, .. } = self.body.instructions[id].kind
-        else {
+        let mir::InstructionKind::Call { arguments, .. } = &self.body.instructions[id].kind else {
             return None;
         };
         for &argument in arguments {

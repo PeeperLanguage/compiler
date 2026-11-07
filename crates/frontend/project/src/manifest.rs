@@ -1,4 +1,4 @@
-//! Reads peeper.toml, the file that makes a folder a project.
+//! Reads and writes peeper.toml, the file that makes a folder a project.
 
 use std::io::ErrorKind;
 use std::path::Path;
@@ -6,11 +6,48 @@ use std::path::Path;
 pub const FILE_NAME: &str = "peeper.toml";
 /// What `is_valid_name` asks of a package name, for messages.
 pub const NAME_RULE: &str = "name must start with a letter and hold only letters, digits and `_`";
+/// The line that makes a project a library.
+const LIBRARY_LINE: &str = "build = \"lib\"";
+
+/// Why the library `name` cannot be built or run.
+pub fn library_has_no_main(name: &str) -> String {
+    format!("`{name}` is a library (`{LIBRARY_LINE}`), so it has no `main` to build or run")
+}
+
+/// Why the folder `dir`, given as a project or a bundled library, is none.
+pub fn not_found(dir: &Path) -> String {
+    format!("{}: no {FILE_NAME} in this folder", dir.display())
+}
+
+/// Why the library at `file`, a bundled library's peeper.toml, is none.
+pub fn bundled_not_library(file: &Path) -> String {
+    format!(
+        "{}: a bundled library needs `{LIBRARY_LINE}`",
+        file.display()
+    )
+}
+
+/// The peeper.toml of a new program named `name`.
+pub fn new_program(name: &str) -> String {
+    format!("name = \"{name}\"\n")
+}
 
 /// What a project file says.
 #[derive(Debug, PartialEq)]
 pub struct Manifest {
     pub name: String, // the project's package name: imports of its modules start with "name:"
+    pub build: Build,
+}
+
+/// What a project makes, written `build = "program"` or `build = "lib"`; a
+/// program when left out.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Build {
+    /// A program, which starts at the `main` of src/main.peep.
+    Program,
+    /// A library: modules for programs to import, each file of src one, with
+    /// no `main`.
+    Library,
 }
 
 /// Whether `name` can be a package name: a letter, then letters, digits and
@@ -28,7 +65,7 @@ pub fn read(dir: &Path) -> Result<Manifest, String> {
     let text = match std::fs::read_to_string(&file) {
         Ok(text) => text,
         Err(error) if error.kind() == ErrorKind::NotFound => {
-            return Err(format!("{}: no {FILE_NAME} in this folder", dir.display()));
+            return Err(not_found(dir));
         }
         Err(error) => return Err(format!("{}: {error}", file.display())),
     };
@@ -41,12 +78,19 @@ pub fn parse(text: &str, file: &Path) -> Result<Manifest, String> {
     let document: toml_edit::DocumentMut = text
         .parse()
         .map_err(|error| format!("{}: {error}", file.display()))?;
-    match document.get("name").and_then(toml_edit::Item::as_str) {
-        Some(name) if is_valid_name(name) => Ok(Manifest {
-            name: name.to_string(),
-        }),
-        _ => Err(format!("{}: {NAME_RULE}", file.display())),
-    }
+    let name = match document.get("name").and_then(toml_edit::Item::as_str) {
+        Some(name) if is_valid_name(name) => name.to_string(),
+        _ => return Err(format!("{}: {NAME_RULE}", file.display())),
+    };
+    let build = match document.get("build").map(toml_edit::Item::as_str) {
+        None | Some(Some("program")) => Build::Program,
+        Some(Some("lib")) => Build::Library,
+        Some(_) => {
+            let rule = "`build` is \"program\" or \"lib\"";
+            return Err(format!("{}: {rule}", file.display()));
+        }
+    };
+    Ok(Manifest { name, build })
 }
 
 #[cfg(test)]
@@ -68,6 +112,7 @@ mod tests {
         std::fs::write(root.join(FILE_NAME), "name = \"myapp\"").unwrap();
         let want = Manifest {
             name: "myapp".to_string(),
+            build: Build::Program,
         };
         assert_eq!(read(&root), Ok(want));
         let sub = root.join("src");
@@ -82,6 +127,23 @@ mod tests {
             let root = temp_dir("bad");
             std::fs::write(root.join(FILE_NAME), format!("name = {name}")).unwrap();
             assert!(read(&root).is_err(), "name {name} was accepted");
+        }
+    }
+
+    #[test]
+    fn reads_what_the_project_builds() {
+        let file = Path::new(FILE_NAME);
+        let build = |text: &str| parse(text, file).map(|manifest| manifest.build);
+        assert_eq!(build("name = \"a\""), Ok(Build::Program));
+        assert_eq!(
+            build("name = \"a\"\nbuild = \"program\""),
+            Ok(Build::Program)
+        );
+        assert_eq!(build("name = \"a\"\nbuild = \"lib\""), Ok(Build::Library));
+        for wrong in ["\"library\"", "\"\"", "1"] {
+            let found = build(&format!("name = \"a\"\nbuild = {wrong}"));
+            let message = "peeper.toml: `build` is \"program\" or \"lib\"";
+            assert_eq!(found, Err(message.to_string()), "{wrong}");
         }
     }
 }

@@ -1,6 +1,6 @@
 // run_struct_pointers on a 32-bit target: a pointer takes 4 bytes there, and
 // a struct's layout follows.
-import "core:allocator";
+import "core:memory";
 
 fn Length(list: *Node) -> i32 {
     let mut count: i32 = 0;
@@ -13,7 +13,8 @@ fn Length(list: *Node) -> i32 {
 }
 
 fn Push(list: *Node, value: i32) -> *Node {
-    let node = allocator::Malloc(16) as *Node;
+    let mut heap = memory::Heap.{};
+    let node = heap.Allocate(size_of(Node), align_of(Node)) as *Node;
     node.*.value = value;
     node.*.next = list;
     return node;

@@ -9,6 +9,11 @@ use diagnostics::suggest::nearest_name;
 
 pub(crate) const SOURCE_EXTENSION: &str = ".peep";
 
+/// Whether `file` is a Peeper source file, by its name.
+pub(crate) fn is_source_file(file: &Path) -> bool {
+    file.to_string_lossy().ends_with(SOURCE_EXTENSION)
+}
+
 /// The import path of the source file at `file`: its package and its path in
 /// that package's folder, without the extension. A file in no package's folder
 /// has only its file name for a path, and the second value is false.

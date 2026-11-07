@@ -30,7 +30,7 @@ fn compile_growth_kb(text: String) -> u64 {
     let main = folder.join("main.peep");
     let project = project::Project {
         packages: HashMap::from([("app".to_string(), folder)]),
-        entry: main.clone(),
+        entry: Some(main.clone()),
         root: PathBuf::from("/peeper-build-test"),
         name: "app".to_string(),
     };
@@ -43,7 +43,7 @@ fn compile_growth_kb(text: String) -> u64 {
         &program,
         target,
         compile::Results::default(),
-        None,
+        false,
         false,
         |_| {},
     );

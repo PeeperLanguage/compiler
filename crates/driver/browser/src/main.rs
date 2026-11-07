@@ -13,7 +13,6 @@ use std::io::Read;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::ExitCode;
-use std::sync::Arc;
 
 use diagnostics::Diagnostic;
 use diagnostics::Label;
@@ -25,19 +24,14 @@ use model::machine::Machine;
 use project::manifest;
 use serde_json::Value;
 use serde_json::json;
-use source::SourceFile;
 
-/// The bundled library, every file of it, since there is no disk to find it on.
-const CORE_FILES: [(&str, &str); 2] = [
-    (
-        "allocator.peep",
-        include_str!("../../../../_builtin_library/core/src/allocator.peep"),
-    ),
-    (
-        "global.peep",
-        include_str!("../../../../_builtin_library/core/src/global.peep"),
-    ),
-];
+/// Every file of the bundled libraries, by its path in `_builtin_library`
+/// (`core/src/global.peep`), since there is no disk to find them on;
+/// build.rs lists them.
+const LIBRARY_FILES: &[(&str, &str)] = include!(concat!(env!("OUT_DIR"), "/library_files.rs"));
+
+/// Where the bundled libraries' files seem to be, beside the page's files.
+const LIBRARY_ROOT: &str = "/";
 
 /// The target a check assumes: what most programs are built for.
 const TARGET: &str = "x86_64-linux";
@@ -64,46 +58,60 @@ fn main() -> ExitCode {
     ExitCode::SUCCESS
 }
 
-/// The program `files` make up: `files` maps each file's path in the project
+/// The project `files` make up: `files` maps each file's path in the project
 /// to its text. The error is why peeper.toml gives no project, as a full
 /// message.
-fn load(files: HashMap<String, String>) -> Result<project::Program, String> {
-    let core = Path::new("/core/src");
+fn project_of(files: &HashMap<String, String>) -> Result<project::Project, String> {
     let Some(text) = files.get(manifest::FILE_NAME) else {
         return Err(format!("no {} in this project", manifest::FILE_NAME));
     };
     let manifest = manifest::parse(text, Path::new(manifest::FILE_NAME))?;
-    let libraries = HashMap::from([("core".to_string(), core.to_path_buf())]);
-    let project = project::project_in(PathBuf::new(), manifest, libraries)?;
+    // Each top folder of the libraries is a library, as on a disk.
+    let mut folders: Vec<&str> = (LIBRARY_FILES.iter())
+        .filter_map(|&(path, _)| path.split_once('/').map(|(folder, _)| folder))
+        .collect();
+    folders.sort();
+    folders.dedup();
+    let libraries = project::library_packages(folders.into_iter().map(|name| {
+        let folder = Path::new(LIBRARY_ROOT).join(name);
+        let file = format!("{name}/{}", manifest::FILE_NAME);
+        let manifest = match LIBRARY_FILES.iter().find(|&&(path, _)| path == file) {
+            Some(&(_, text)) => manifest::parse(text, &folder.join(manifest::FILE_NAME)),
+            None => Err(manifest::not_found(&folder)),
+        };
+        (folder, manifest)
+    }))?;
+    project::project_in(PathBuf::new(), manifest, libraries)
+}
+
+/// The program of `project`, whose files are `files` and the bundled
+/// libraries'.
+fn load(project: &project::Project, files: HashMap<String, String>) -> model::program::Program {
     let page_files = files
         .into_iter()
         .map(|(name, text)| (PathBuf::from(name), text));
-    let core_files = CORE_FILES.map(|(name, text)| (core.join(name), text.to_string()));
-    let open_files: HashMap<PathBuf, String> = page_files.chain(core_files).collect();
-    Ok(project::load(&project, &open_files))
+    let library_files = (LIBRARY_FILES.iter())
+        .map(|&(path, text)| (Path::new(LIBRARY_ROOT).join(path), text.to_string()));
+    let open_files: HashMap<PathBuf, String> = page_files.chain(library_files).collect();
+    project::load(project, &open_files)
 }
 
 /// The diagnostics of the program `files` make up, as `peeper check` finds
 /// them (`diagnostics_json`). `files` maps each file's path in the project to its text.
 fn check(files: HashMap<String, String>) -> Value {
-    let program = match load(files) {
-        Ok(program) => program,
+    let program = match project_of(&files) {
+        Ok(project) => load(&project, files),
         Err(message) => return json!([manifest_entry(&message)]),
     };
-    // As in `peeper check`, errors in loading would only be repeated.
-    let results = if program.checkable {
-        let target = Machine::named(TARGET).expect("the target is a machine");
-        compile::run(
-            &program,
-            target,
-            compile::Results::default(),
-            None,
-            false,
-            |_| {},
-        )
-    } else {
-        compile::Results::default()
-    };
+    let target = Machine::named(TARGET).expect("the target is a machine");
+    let results = compile::run(
+        &program,
+        target,
+        compile::Results::default(),
+        false,
+        false,
+        |_| {},
+    );
     diagnostics_json(&program, &results)
 }
 
@@ -113,10 +121,15 @@ fn check(files: HashMap<String, String>) -> Value {
 /// panic's text last), each piece a `text` and its `stream`, and its
 /// `exit_code`.
 fn run(files: HashMap<String, String>) -> Value {
-    let program = match load(files) {
-        Ok(program) => program,
+    let project = match project_of(&files) {
+        Ok(project) => project,
         Err(message) => return json!({ "diagnostics": message, "run": null }),
     };
+    if project.entry.is_none() {
+        let message = manifest::library_has_no_main(&project.name);
+        return json!({ "diagnostics": message, "run": null });
+    }
+    let program = load(&project, files);
     let target = Machine::named(TARGET).expect("the target is a machine");
     let (results, ran) = compile::interpret(&program, target);
     let ran = ran.map(|ran| {
@@ -132,14 +145,14 @@ fn run(files: HashMap<String, String>) -> Value {
     });
     let found: Vec<Diagnostic> = all_diagnostics(&program, &results).cloned().collect();
     let mut printed = Vec::new();
-    let scan = |file: &Arc<SourceFile>| lexer::scan(file).0;
-    printer::print(&mut printed, &found, Some(&scan)).expect("writing to memory cannot fail");
+    printer::print(&mut printed, &found, Some(&lexer::highlights))
+        .expect("writing to memory cannot fail");
     json!({ "diagnostics": String::from_utf8_lossy(&printed), "run": ran })
 }
 
 /// Every diagnostic of `program` and `results`, the loader's first.
 fn all_diagnostics<'a>(
-    program: &'a project::Program,
+    program: &'a model::program::Program,
     results: &'a compile::Results,
 ) -> impl Iterator<Item = &'a Diagnostic> {
     program.diagnostics.iter().chain(results.diagnostics())
@@ -149,7 +162,7 @@ fn all_diagnostics<'a>(
 /// `message`, its primary `place` (null when it has none) and the `related`
 /// places; a place has its `file`, its `start` and `end`, and its own
 /// `message`.
-fn diagnostics_json(program: &project::Program, results: &compile::Results) -> Value {
+fn diagnostics_json(program: &model::program::Program, results: &compile::Results) -> Value {
     let place = |label: &Label| {
         json!({
             "file": label.file.path,

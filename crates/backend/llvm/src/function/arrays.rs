@@ -13,6 +13,7 @@ use model::semantic_types::Type;
 use model::semantic_types::TypeId;
 use model::semantic_types::range_field;
 use model::semantic_types::range_fields;
+use model::semantic_types::slice_field;
 
 use crate::function::Function;
 use crate::function::debug_info::DebugLocation;
@@ -149,8 +150,9 @@ impl Function<'_, '_, '_> {
                 let length = if wide > pointer { "len" } else { "count" };
                 _ = writeln!(
                     out,
-                    "  {part_name}.{length} = extractvalue %slice {}, 1{location}",
-                    self.operand(part)
+                    "  {part_name}.{length} = extractvalue %slice {}, {}{location}",
+                    self.operand(part),
+                    slice_field::LENGTH
                 );
                 if wide > pointer {
                     _ = writeln!(

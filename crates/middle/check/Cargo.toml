@@ -10,7 +10,6 @@ publish.workspace = true
 source.workspace = true
 diagnostics.workspace = true
 arena.workspace = true
-project.workspace = true
 model.workspace = true
 eval.workspace = true
 lower.workspace = true

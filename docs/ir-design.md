@@ -755,7 +755,10 @@ the runtime library of each is in `<installation>/runtime/<name>`;
 another system needs that system's C library and linker, which the toolchain
 does not have. The language server checks for the host only. Not brought back
 yet: managed toolchains and sysroots for cross builds, linker response files,
-`-keep-gen` (`-dump ll` covers it), and the manifest's `build = "program"`.
+`-keep-gen` (`-dump ll` covers it). A project whose manifest says
+`build = "lib"` is a library: `check` loads each file of its `src/`, with no
+entry and no `main`, and `build`, `run` and `-interpret` refuse it;
+`build = "program"`, or none, is a program.
 
 ## Cost on the hot path
 

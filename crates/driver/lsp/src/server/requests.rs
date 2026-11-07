@@ -126,23 +126,21 @@ impl Server<'_> {
         };
         let shown = match declared {
             Some(CachedKind::Literal { ty }) => ty.clone(),
-            Some(&CachedKind::Variable { mutable, ref ty }) => {
-                binding(mutable, token.kind.text(), ty)
-            }
+            Some(CachedKind::Variable { mutable, ty }) => binding(*mutable, token.kind.text(), ty),
             _ => token.kind.text().to_string(),
         };
         Some(doc_hover(&shown, doc))
     }
 
     /// The module read from `file` in each program last checked that holds
-    /// it, by the program's entry file, with what that check keeps. A module
+    /// it, in the order of what it is kept by, with what that check keeps. A module
     /// read from other text than the editor now has, before a check or after
     /// one that could not load, is left out: its places are not the
     /// editor's.
     pub(crate) fn modules_of<'a>(
         &'a self,
         file: &Path,
-    ) -> impl Iterator<Item = (&'a Checked, &'a project::Module)> {
+    ) -> impl Iterator<Item = (&'a Checked, &'a model::program::Module)> {
         let open = self.open_files.get(file);
         let mut programs: Vec<(&PathBuf, &Checked)> = self.checked.iter().collect();
         programs.sort_unstable_by_key(|&(entry, _)| entry);
@@ -162,7 +160,7 @@ impl Server<'_> {
     pub(crate) fn name_at(
         &self,
         place: &TextDocumentPositionParams,
-    ) -> Option<(&Checked, &project::Module, CachedFact)> {
+    ) -> Option<(&Checked, &model::program::Module, CachedFact)> {
         let file = file_path(&place.text_document.uri)?;
         let holds: [fn(Span, u32) -> bool; 2] = [
             |span, offset| span.start <= offset && offset < span.end,
@@ -250,7 +248,7 @@ impl Server<'_> {
 /// and what hover shows for it. A built-in name has no declaration.
 fn declaration_of<'a>(
     checked: &'a Checked,
-    module: &'a project::Module,
+    module: &'a model::program::Module,
     fact: CachedFact,
 ) -> Option<(&'a Arc<SourceFile>, Span, String)> {
     let CachedFact { span, kind } = fact;
@@ -279,8 +277,8 @@ fn declaration_of<'a>(
             let declared = tree.decls[declaration].name().span;
             // A module constant's checked value is cached with its name.
             let mut facts = checked.facts.get(&file).into_iter().flatten();
-            let constant = facts.find_map(|fact| match fact.kind {
-                CachedKind::Constant { ref text } if fact.span == declared => text.as_ref(),
+            let constant = facts.find_map(|fact| match &fact.kind {
+                CachedKind::Constant { text } if fact.span == declared => text.as_ref(),
                 _ => None,
             });
             let elsewhere = declared_in.path != module.path;

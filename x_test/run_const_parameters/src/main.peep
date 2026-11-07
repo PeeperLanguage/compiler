@@ -1,0 +1,104 @@
+// A `const` parameter takes a type, or a value, known when compiling: each
+// type or value a function is called with makes its own copy of it.
+import "core:memory";
+import "run_const_parameters:list";
+import "run_const_parameters:other";
+
+struct Point { x: i32, y: i32 }
+
+// A function of a type takes them too, after `self`.
+fn Point::Plus(&self, const T: type) -> usize {
+    return self.x as usize + size_of(T);
+}
+
+// Two type parameters, between values.
+fn Sizes(first: usize, const A: type, const B: type) -> usize {
+    return first + size_of(A) * 10 + size_of(B) * 100;
+}
+
+// Given `&str`, `T` is the text view, so `&T` refers to the view.
+fn Referred(const T: type) -> usize {
+    return size_of(&T);
+}
+
+// A `const` value is a constant of the body.
+fn Scaled(const factor: i64, x: i64) -> i64 {
+    const TWICE: i64 = factor * 2;
+    return x * TWICE;
+}
+
+fn Three() -> i64 {
+    return 3;
+}
+
+fn Greet(const name: &str) {
+    println("hello", name);
+}
+
+// A constant runs a copy when compiling.
+const POINT_BYTES: usize = list::Bytes(Point, 2);
+
+// Each count makes a copy. Code its constant rules out is not checked, so
+// the copies stop at 0, and `n - 1` never goes below it.
+fn Count(const n: u64) -> u64 {
+    if n == 0 {
+        return 0;
+    }
+    return 1 + Count(n - 1);
+}
+
+const COUNTED: u64 = Count(4);
+
+// A decided `if` keeps one way, here the `else`.
+fn Sign(const n: i64) -> i64 {
+    if n < 0 {
+        return -1;
+    } else {
+        return 1;
+    }
+}
+
+fn Same(const x: f64) -> f64 {
+    return x;
+}
+
+const NAN: f64 = 0.0 / 0.0;
+
+fn main() {
+    println(list::Bytes(u8, 5), list::Bytes(i64, 3), list::Bytes(*Point, 1), POINT_BYTES);
+    let points = [_]Point{Point.{ x = 1, y = 2 }, Point.{ x = 3, y = 4 }};
+    println(list::At(Point, &points, 0).y, list::Last(Point, &points).x);
+    println(other::Bytes());
+    let point = Point.{ x = 7, y = 0 };
+    println(point.Plus(u16), point.Plus([3]i32));
+    println(Sizes(1, u8, u32));
+    // A call in a `const` argument runs when compiling.
+    println(Scaled(3, 10), Scaled(Three(), 1), Scaled(4, 1));
+    Greet("you");
+
+    // `memory::Replace` puts a value in a place and gives back the old one.
+    let mut number: i64 = 5;
+    let old = memory::Replace(i64, &mut number, 9);
+    println(old, number);
+    let mut pair = points;
+    let first = memory::Replace(Point, &mut pair[0], Point.{ x = 0, y = 0 });
+    println(first.x, pair[0].x, pair[1].x);
+    let mut word = "old";
+    let was = memory::Replace(&str, &mut word, "new");
+    println(was, word, Referred(&str));
+
+    // `memory::New` takes room for one value from an allocator.
+    let mut arena = memory::Arena::New(16);
+    let made = memory::New(Point, &mut arena);
+    made.x = 42;
+    println(made.x, made as rawptr != none);
+    let more = memory::New([3]Point, &mut arena);
+    println(more as rawptr == none);
+    arena.Release();
+
+    println(Count(3), COUNTED, Sign(-2), Sign(2));
+    // NaN and -NaN are two values, so two copies.
+    let nan = Same(NAN);
+    let negative = Same(-NAN);
+    println(nan != nan, negative != negative);
+}

@@ -1,6 +1,4 @@
 use super::*;
-use source::Span;
-use token::Token;
 
 use crate::Code;
 
@@ -15,7 +13,7 @@ fn render(diagnostics: &[Diagnostic]) -> String {
     String::from_utf8(out).unwrap()
 }
 
-fn no_tokens(_: &Arc<SourceFile>) -> Vec<Token> {
+fn no_tokens(_: &Arc<SourceFile>) -> Vec<(Span, Option<Highlight>)> {
     Vec::new()
 }
 
@@ -339,41 +337,31 @@ fn source_lines_are_highlighted_in_color() {
     let file = Arc::new(SourceFile::new("a.peep", text));
     let d =
         Diagnostic::new(code("P0003", Severity::Error), "bad").label(&file, span(&file, "+"), "");
-    // The lexer's tokens of `text`, comment left out as the lexer leaves it.
+    // The lexer's pieces of `text`, comment left out as the lexer leaves it.
     let tokens = |file: &Arc<SourceFile>| {
-        use token::TokenKind;
         let mut at = 0;
         let parts = [
-            ("fn", TokenKind::Fn),
-            ("main", TokenKind::Ident),
-            ("(", TokenKind::LeftParen),
-            (")", TokenKind::RightParen),
-            ("{", TokenKind::LeftBrace),
-            ("let", TokenKind::Let),
-            ("s", TokenKind::Ident),
-            ("=", TokenKind::Assign),
-            ("\"x\"", TokenKind::String),
-            ("+", TokenKind::Plus),
-            ("1", TokenKind::Number),
-            (";", TokenKind::Semicolon),
-            ("}", TokenKind::RightBrace),
+            ("fn", Some(Highlight::Keyword)),
+            ("main", None),
+            ("(", None),
+            (")", None),
+            ("{", None),
+            ("let", Some(Highlight::Keyword)),
+            ("s", None),
+            ("=", None),
+            ("\"x\"", Some(Highlight::Text)),
+            ("+", None),
+            ("1", Some(Highlight::Number)),
+            (";", None),
+            ("}", None),
         ];
-        let mut tokens: Vec<Token> = parts
-            .iter()
-            .map(|&(part, kind)| {
+        (parts.iter())
+            .map(|&(part, highlight)| {
                 let start = at + file.text[at..].find(part).unwrap();
                 at = start + part.len();
-                Token {
-                    kind,
-                    span: Span::new(start, at),
-                }
+                (Span::new(start, at), highlight)
             })
-            .collect();
-        tokens.push(Token {
-            kind: TokenKind::Eof,
-            span: Span::at(file.text.len()),
-        });
-        tokens
+            .collect::<Vec<_>>()
     };
     let mut out = Vec::new();
     print(&mut out, &[d], Some(&tokens)).unwrap();

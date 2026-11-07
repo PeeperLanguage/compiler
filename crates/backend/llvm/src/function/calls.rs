@@ -7,11 +7,12 @@ use std::fmt::Write;
 use std::iter::Peekable;
 
 use arena::Id;
-use model::DefId;
+use model::Callee;
 use model::machine::CAbi;
 use model::machine::Machine;
 use model::mir;
 use model::mir::Operand;
+use model::semantic_types::ImplementationId;
 use model::semantic_types::Integer;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
@@ -24,82 +25,130 @@ use crate::function::global;
 use crate::function::print::write_extended;
 use crate::function::print::write_limbs;
 use crate::function::value_name;
+use crate::text::copy_symbol;
 use crate::text::symbol;
 use crate::text::type_text;
 use model::layout::in_memory;
 
 impl Function<'_, '_, '_> {
-    /// Writes the line calling `function` with `arguments` for the
+    /// Writes the line calling `callee` with `arguments` for the
     /// instruction `id`, after noting the declaration the module needs for
-    /// it; a result kept in memory is built where `value_address` says,
-    /// before the `rest` of the block. A C function's call is
-    /// `write_c_call`'s.
+    /// a function; a result kept in memory is built where `value_address`
+    /// says, before the `rest` of the block. A C function's call is
+    /// `write_c_call`'s. A method is loaded from the table of the interface
+    /// reference first in `arguments`, and gets only its address.
     pub(super) fn write_call(
         &mut self,
         out: &mut String,
         id: Id<mir::Instruction>,
-        function: DefId,
+        callee: Callee,
         arguments: &[Operand],
         rest: &mut Peekable<impl Iterator<Item = Id<mir::Instruction>>>,
         location: &DebugLocation,
     ) {
         let (ty, types, body) = (self.body.instructions[id].ty, self.types, self.body);
-        let symbol = symbol(self.module.program, function);
-        if project::extern_symbol(&self.module.program.modules, function) != Ok(None) {
-            return self.write_c_call(out, id, &symbol, arguments, location);
-        }
-        let callee = global(&symbol);
+        let name = value_name(id);
+        let (callee, receiver, arguments) = match callee {
+            Callee::Function(function) => {
+                let modules = &self.module.program.modules;
+                // A C function takes no `const` arguments, so it has one copy.
+                if let Some(symbol) = model::program::c_symbol(modules, function.definition) {
+                    return self.write_c_call(out, id, &symbol, arguments, location);
+                }
+                let symbol = copy_symbol(self.module.program, types, function);
+                let callee = global(&symbol);
+                let parameters = arguments
+                    .iter()
+                    .map(|&argument| body.operand_type(argument));
+                self.module
+                    .declare(&symbol, || declaration(types, &callee, ty, parameters));
+                (callee, None, arguments)
+            }
+            Callee::Method(slot) => {
+                let view = self.operand(arguments[0]);
+                _ = writeln!(
+                    out,
+                    "  {name}.d = extractvalue {{ ptr, ptr }} {view}, 0{location}"
+                );
+                _ = writeln!(
+                    out,
+                    "  {name}.t = extractvalue {{ ptr, ptr }} {view}, 1{location}"
+                );
+                _ = writeln!(
+                    out,
+                    "  {name}.s = getelementptr inbounds ptr, ptr {name}.t, i32 {slot}{location}"
+                );
+                _ = writeln!(out, "  {name}.f = load ptr, ptr {name}.s{location}");
+                let receiver = format!("ptr {name}.d");
+                (format!("{name}.f"), Some(receiver), &arguments[1..])
+            }
+        };
         // A result kept in memory is written where a first argument points
         // (`add_function`). An argument kept in memory is always a private
         // copy (a load's or move's, a struct's or array's value, a result,
         // or a field of one), which the callee may change.
         let returned_in_memory = in_memory(types, ty);
-        let result = fmt::from_fn(|out| {
-            if returned_in_memory {
-                out.write_str("void")
-            } else {
-                type_text(types, ty).fmt(out)
-            }
-        });
-        let parameter = |argument| {
-            let ty = body.operand_type(argument);
-            fmt::from_fn(move |out| {
-                if in_memory(types, ty) {
-                    out.write_str("ptr")
-                } else {
-                    type_text(types, ty).fmt(out)
-                }
-            })
-        };
-        let separator = if arguments.is_empty() { "" } else { ", " };
-        self.module.declare(&symbol, || {
-            let parameters = comma_separated(arguments.iter().copied().map(parameter));
-            let first = if returned_in_memory {
-                ["ptr", separator].concat()
-            } else {
-                String::new()
-            };
-            format!("declare {result} {callee}({first}{parameters})\n\n")
-        });
         let result_address = returned_in_memory.then(|| self.value_address(out, id, ty, rest));
         out.push_str("  ");
         if !returned_in_memory && ty != TypeId::VOID {
-            _ = write!(out, "{} = ", value_name(id));
+            _ = write!(out, "{name} = ");
         }
-        let function = &*self;
-        let arguments = arguments.iter().map(|&argument| {
-            let (parameter, value) = (parameter(argument), function.operand(argument));
-            fmt::from_fn(move |out| write!(out, "{parameter} {value}"))
-        });
-        let arguments = comma_separated(arguments);
-        if let Some(result_address) = result_address {
-            _ = write!(
-                out,
-                "call {result} {callee}(ptr {result_address}{separator}{arguments})"
-            );
-        } else {
-            _ = write!(out, "call {result} {callee}({arguments})");
+        let mut written: Vec<String> = Vec::with_capacity(arguments.len() + 2);
+        written.extend(result_address.map(|address| format!("ptr {address}")));
+        written.extend(receiver);
+        for &argument in arguments {
+            let parameter = parameter_text(types, body.operand_type(argument));
+            written.push(format!("{parameter} {}", self.operand(argument)));
         }
+        let result = result_text(types, ty);
+        _ = write!(out, "call {result} {callee}({})", written.join(", "));
+    }
+
+    /// The global holding the table of `implementation`, which an interface
+    /// reference of the type `ty` calls, written once per module with a
+    /// `declare` of each method (the module leaves out those it defines). A
+    /// method's `self` is an address: a reference's, or a struct's kept in
+    /// memory.
+    pub(super) fn method_table(&mut self, implementation: ImplementationId, ty: TypeId) -> String {
+        let table = format!("@.table.{}", implementation.index());
+        if !self.module.written.tables.insert(implementation) {
+            return table;
+        }
+        let types = self.types;
+        let Type::InterfaceReference { interface, .. } = types[ty] else {
+            unreachable!("a table is made for an interface reference")
+        };
+        let Type::Interface {
+            methods: signatures,
+            ..
+        } = &types[interface]
+        else {
+            unreachable!("an interface reference's interface is checked")
+        };
+        let methods = types.implementation(implementation);
+        let mut entries = Vec::with_capacity(methods.len());
+        for (&method, &signature) in methods.iter().zip(signatures) {
+            let symbol = symbol(self.module.program, method);
+            let callee = global(&symbol);
+            let Type::Function {
+                parameters, result, ..
+            } = &types[signature]
+            else {
+                unreachable!("a method's signature is a function type")
+            };
+            let receiver = std::iter::once(TypeId::RAWPTR);
+            let parameters = receiver.chain(parameters[1..].iter().copied());
+            self.module
+                .declare(&symbol, || declaration(types, &callee, *result, parameters));
+            entries.push(format!("ptr {callee}"));
+        }
+        _ = writeln!(
+            self.module.strings,
+            "{table} = private unnamed_addr constant [{} x ptr] [{}]",
+            methods.len(),
+            entries.join(", ")
+        );
+        table
     }
 
     /// Writes the lines calling the C function `symbol` with `arguments`
@@ -359,4 +408,44 @@ fn integer(types: &Types, ty: TypeId) -> Integer {
         unreachable!("only an integer passes to C in memory or as limbs")
     };
     integer
+}
+
+/// How a Peeper function takes a value of the type `ty`: by its address when
+/// it is kept in memory.
+fn parameter_text(types: &Types, ty: TypeId) -> impl Display {
+    fmt::from_fn(move |out| {
+        if in_memory(types, ty) {
+            out.write_str("ptr")
+        } else {
+            type_text(types, ty).fmt(out)
+        }
+    })
+}
+
+/// What a Peeper function giving a value of the type `ty` returns: nothing
+/// when it is kept in memory, which it writes where its first parameter
+/// points (`add_function`).
+fn result_text(types: &Types, ty: TypeId) -> impl Display {
+    fmt::from_fn(move |out| {
+        if in_memory(types, ty) {
+            out.write_str("void")
+        } else {
+            type_text(types, ty).fmt(out)
+        }
+    })
+}
+
+/// The `declare` of the Peeper function `callee`, a global, that gives a
+/// `result` and takes `parameters`.
+pub(super) fn declaration(
+    types: &Types,
+    callee: &str,
+    result: TypeId,
+    parameters: impl Iterator<Item = TypeId> + Clone,
+) -> String {
+    let address = in_memory(types, result).then_some("ptr");
+    let parameters = parameters.map(|ty| parameter_text(types, ty).to_string());
+    let all = comma_separated(address.map(str::to_string).into_iter().chain(parameters));
+    let result = result_text(types, result);
+    format!("declare {result} {callee}({all})\n\n")
 }

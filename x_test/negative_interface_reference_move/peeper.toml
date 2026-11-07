@@ -1,0 +1,12 @@
+name = "negative_interface_reference_move"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = [
+    "T0035",
+    "cannot move out of a reference or pointer",
+    "lend it again with `&mut h.shape.*`, or `&h.shape.*` to only read",
+    "Compilation failed with 1 error(s)",
+]

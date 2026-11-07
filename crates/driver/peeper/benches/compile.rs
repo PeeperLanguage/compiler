@@ -16,6 +16,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 use std::time::Instant;
 
+use llvm::link::TOOLCHAIN_FOLDER;
 use model::machine::Machine;
 
 const MODULES: usize = 10;
@@ -28,7 +29,7 @@ fn main() {
             ("app".to_string(), folder.join("src")),
             ("core".to_string(), folder.join("core")),
         ]),
-        entry: folder.join("src/main.peep"),
+        entry: Some(folder.join("src/main.peep")),
         root: folder.clone(),
         name: "app".to_string(),
     };
@@ -49,18 +50,23 @@ fn main() {
     let link = std::env::var("PEEPER_BENCH_CLANG").map_or(true, |clang| clang != "0");
     if link {
         let toolchain = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../../build/toolchains/native")
+            .join("../../../build")
+            .join(TOOLCHAIN_FOLDER)
             .canonicalize()
             .expect("scripts/setup.sh fills build/toolchains/native");
         _ = std::fs::remove_dir_all(&built); // the link of a run before, not what it names
-        std::fs::create_dir_all(built.join("toolchains")).expect("the bench folder is made");
+        let linked = built.join(TOOLCHAIN_FOLDER);
+        let parent = linked
+            .parent()
+            .expect("the toolchain folder is inside the bench folder");
+        std::fs::create_dir_all(parent).expect("the bench folder is made");
         #[cfg(unix)]
-        let linked = std::os::unix::fs::symlink(toolchain, built.join("toolchains/native"));
+        let made = std::os::unix::fs::symlink(toolchain, &linked);
         // shortcut: a folder symlink needs admin rights or Developer Mode on
         // Windows; make a junction instead once std's `junction_point` is stable.
         #[cfg(windows)]
-        let linked = std::os::windows::fs::symlink_dir(toolchain, built.join("toolchains/native"));
-        linked.expect("the toolchain is linked");
+        let made = std::os::windows::fs::symlink_dir(toolchain, &linked);
+        made.expect("the toolchain is linked");
         llvm::runtime::build(&built, target).expect("the runtime builds");
     }
     let mut load = Vec::new();
@@ -73,38 +79,14 @@ fn main() {
         let program = project::load(&project, &files);
         load.push(start.elapsed());
         assert!(program.checkable, "{:?}", program.diagnostics);
-        let entry = program.entry.expect("the program has an entry module");
         let start = Instant::now();
-        let (mut ll, results) = llvm::write::write_modules(&program, target, mode, |queue| {
-            compile::run(
-                &program,
-                target,
-                compile::Results::default(),
-                Some(entry),
-                false,
-                |output| {
-                    let compile::Output::Function(compile::CheckedFunction {
-                        definition,
-                        mir,
-                        types,
-                        ..
-                    }) = output
-                    else {
-                        return;
-                    };
-                    let mut mir = mir.expect("the program has no errors");
-                    flow::cleanup::remove_unused_code(&mut mir);
-                    queue.add(definition, mir, types);
-                },
-            )
-        });
+        let (ll, results) = peeper::write_program(&program, target, mode, true, |_, _, _, _| {});
         assert_eq!(
             results.diagnostics().count(),
             0,
             "the program has no errors"
         );
-        let (main, exit_code) = results.entry_point().expect("main.peep declares main");
-        ll[entry.index()].add_entry_point(main, exit_code);
+        assert!(results.entry_point().is_some(), "main.peep declares main");
         let text: usize = ll.iter().map(|module| module.text().len()).sum();
         compile.push(start.elapsed());
         std::hint::black_box(text);

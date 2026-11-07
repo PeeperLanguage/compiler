@@ -1,0 +1,56 @@
+// What an interface and its references refuse.
+iface Shape {
+    fn area(&self) -> f64,
+    fn grow(&mut self, by: f64),
+    fn parts(self) -> f64
+}
+
+iface Bad {
+    fn plain() -> i32,
+    fn twice(&self),
+    fn twice(&self),
+    fn generic<T>(&self, value: T)
+}
+
+struct Square { side: f64 }
+fn Square::area(&self) -> f64 { return self.side * self.side; }
+fn Square::grow(&mut self, by: f64) { self.side = self.side + by; }
+fn Square::parts(self) -> f64 { return self.side; }
+
+struct NoGrow { side: f64 }
+fn NoGrow::area(&self) -> f64 { return self.side; }
+
+struct WrongArea { side: f64 }
+fn WrongArea::area(&self) -> i32 { return 1; }
+fn WrongArea::grow(&mut self, by: f64) {}
+fn WrongArea::parts(self) -> f64 { return 1.0; }
+
+fn show(s: &Shape) {
+    s.grow(1.0);
+    println(s.aera());
+    s.parts();
+}
+
+fn owned(s: Shape) {}
+fn pointer(p: *Shape) {}
+fn array(a: [2]&Shape) {}
+fn nested(n: &&Shape) {}
+
+fn main() {
+    let sq = Square.{ side = 2.0 };
+    show(&NoGrow.{ side = 1.0 });
+    show(&WrongArea.{ side = 1.0 });
+    let m: &mut Shape = &sq;
+    let x: &Shape = &5;
+}
+
+// Declared twice: reported once, not again where `Square` becomes `&Again`.
+iface Again {
+    fn area(&self) -> f64,
+    fn area(&self, by: i32) -> f64
+}
+
+fn again(sq: &Square) -> &Again { return sq; }
+
+// A pair that does not implement is reported at each conversion.
+fn again_no_grow(n: &NoGrow) { show(n); }

@@ -12,11 +12,13 @@ use diagnostics::suggest::nearest_name;
 use model::DefId;
 use model::ModuleId;
 use model::ast;
+use model::program::ImportKind;
 use model::thir::Symbol;
-use project::ImportKind;
 use rustc_hash::FxHashMap;
 use source::SourceFile;
 use source::Span;
+
+use crate::builtin::layout_function;
 
 /// A place that holds declarations, and where each name is written. A module
 /// has one for its top-level declarations, imports and type functions. A name
@@ -50,7 +52,11 @@ impl<'p> Scope<'p> {
     /// have functions (`fn Point::name`); `None` for any other name. A type
     /// here is always this module's: imports bring in modules, and the
     /// prelude is not copied in.
-    pub(crate) fn struct_named(&self, modules: &[project::Module], name: &str) -> Option<DefId> {
+    pub(crate) fn struct_named(
+        &self,
+        modules: &[model::program::Module],
+        name: &str,
+    ) -> Option<DefId> {
         match self.get(None, name) {
             Some(Symbol::Type(definition)) if has_functions(modules, definition) => {
                 Some(definition)
@@ -86,9 +92,9 @@ impl<'p> Scope<'p> {
 
 /// Whether the type declaration `definition` can have functions
 /// (`fn Point::name`): only a struct can.
-pub(crate) fn has_functions(modules: &[project::Module], definition: DefId) -> bool {
+pub(crate) fn has_functions(modules: &[model::program::Module], definition: DefId) -> bool {
     let tree = &modules[definition.module.index()].ast;
-    match project::declaration(modules, definition) {
+    match model::program::declaration(modules, definition) {
         ast::Decl::Type(declaration) => matches!(tree.types[declaration.ty], ast::Type::Struct(_)),
         _ => false,
     }
@@ -134,7 +140,7 @@ pub(crate) fn report_redeclared(
 /// everywhere.
 pub fn collect<'p>(
     id: ModuleId,
-    modules: &'p [project::Module],
+    modules: &'p [model::program::Module],
     diagnostics: &mut Vec<Diagnostic>,
 ) -> Scope<'p> {
     let module = &modules[id.index()];
@@ -144,12 +150,25 @@ pub fn collect<'p>(
         .iter()
         .find(|import| import.kind == ImportKind::Prelude);
     let mut scope = Scope::new(prelude.map(|import| import.module));
-    // The error for a name declared twice.
+    // The error for a name declared twice, or a built-in function's.
     let declare = |scope: &mut Scope<'p>, owner, name: &'p str, symbol, span| {
         if name.is_empty() {
             return None; // missing after a syntax error
         }
-        let first = scope.declare(owner, name, symbol, span).err()?;
+        let first = scope.declare(owner, name, symbol, span).err();
+        // A call by this name is the built-in's (`check_call`), whatever
+        // else the module calls it.
+        if owner.is_none() && layout_function(name).is_some() {
+            let message = format!("`{name}` is a built-in function");
+            return Some(
+                Diagnostic::new(diagnostics::ALREADY_DECLARED, message).label(
+                    file,
+                    span,
+                    "give it another name",
+                ),
+            );
+        }
+        let first = first?;
         let place = if owner.is_some() { "type" } else { "module" };
         Some(report_redeclared(file, name, place, span, first))
     };
@@ -226,8 +245,8 @@ pub fn collect<'p>(
 mod tests {
     use model::DefId;
     use model::ModuleId;
-    use project::Import;
-    use project::ImportKind;
+    use model::program::Import;
+    use model::program::ImportKind;
 
     use super::collect;
     use crate::testing::module;

@@ -1,0 +1,42 @@
+name = "negative_const_parameters"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = [
+    "`type` is the type of a `const` parameter only: `const T: type`",
+    "main.peep:7:13\n",
+    "a `const` parameter is one value known when compiling, so it takes no `mut` or `...`",
+    "main.peep:8:25\n",
+    "main.peep:9:18\n",
+    "`const` values whose type names a type parameter are not supported yet",
+    "main.peep:10:38\n",
+    "an `extern` function is one C function, so it takes no `const` parameter",
+    "main.peep:18:8\n",
+    "a call through an interface reference cannot pick a copy, so an interface method takes no `const` parameter",
+    "main.peep:22:20\n",
+    "operator `+` cannot be applied to `bool`",
+    "main.peep:32:12\n",
+    "in `Double<bool>`, the copy made for this call",
+    "`T` is a type, not a value",
+    "main.peep:36:12\n",
+    "in `Value<i32>`, the copy made for this call",
+    "`Size` takes 1 argument, but 0 were given",
+    "`5` is a value, not a type",
+    "unknown type `Missing`",
+    "`Size` takes 1 argument, but 2 were given",
+    "functions as values are not supported yet",
+    "`Box` does not implement `Named`: its `Name` takes a `const` parameter, so it is not one function an interface reference can call",
+    "the value of a constant must be known at compile time",
+    "main.peep:56:20\n",
+    "`x` gets its value only when the program runs",
+    "a constant cannot hold a struct yet",
+    "main.peep:57:13\n",
+    "`Scaled` takes 2 arguments, but 0 were given",
+    "main.peep:59:13\n",
+    "mismatched types: expected `i32`, found `bool`",
+    "main.peep:42:22\n",
+    "in `Dead<u8>`, the copy made for this call",
+    "Compilation failed with 18 error(s)",
+]

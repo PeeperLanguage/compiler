@@ -4,7 +4,9 @@
 use std::rc::Rc;
 
 use arena::Id;
+use model::Callee;
 use model::DefId;
+use model::FunctionCopy;
 use model::constant::Value;
 use model::layout::in_memory;
 use model::layout::layout;
@@ -12,6 +14,8 @@ use model::mir;
 use model::mir::InstructionKind;
 use model::mir::Operand;
 use model::mir::Terminator;
+use model::semantic_types::ConstArguments;
+use model::semantic_types::ImplementationId;
 use model::semantic_types::TypeId;
 use source::Span;
 
@@ -116,13 +120,11 @@ impl<'b> Interpreter<'b, '_> {
                 self.step(body.instructions.span(id))?;
                 let instruction = &body.instructions[id];
                 if let InstructionKind::Call {
-                    function,
-                    ref arguments,
-                    ..
-                } = instruction.kind
+                    callee, arguments, ..
+                } = &instruction.kind
                 {
                     self.frames.last_mut().expect("a run has a frame").next = index + 1;
-                    self.call(id, function, arguments)?;
+                    self.call(id, *callee, arguments)?;
                     continue 'frames;
                 }
                 let value = self.run_instruction(id)?;
@@ -136,10 +138,10 @@ impl<'b> Interpreter<'b, '_> {
                 Terminator::Goto(_) => body.blocks.span(self.frame().block),
             };
             self.step(span)?;
-            let next = match block.terminator {
+            let next = match &block.terminator {
                 Terminator::Goto(target) => target,
                 Terminator::Branch {
-                    ref condition,
+                    condition,
                     then,
                     otherwise,
                     ..
@@ -147,7 +149,7 @@ impl<'b> Interpreter<'b, '_> {
                     Register::Scalar(Value::Bool(true)) => then,
                     _ => otherwise,
                 },
-                Terminator::Return { ref value, .. } => {
+                Terminator::Return { value, .. } => {
                     let value = value.as_ref().map(|value| self.operand(value));
                     if let Some(result) = self.finish_call(value, span)? {
                         return Ok(result);
@@ -155,10 +157,10 @@ impl<'b> Interpreter<'b, '_> {
                     continue;
                 }
                 Terminator::Panic { message, span } => {
-                    let Value::Bytes(ref text) = body.constants[message.index()].value else {
+                    let Value::Bytes(text) = &body.constants[message.index()].value else {
                         unreachable!("a panic's message is bytes")
                     };
-                    return Err(self.fail(String::from_utf8_lossy(text), span));
+                    return Err(self.fail(String::from_utf8_lossy(text), *span));
                 }
                 Terminator::FallOff(_) => {
                     if let Some(result) = self.finish_call(None, span)? {
@@ -169,7 +171,7 @@ impl<'b> Interpreter<'b, '_> {
             };
             let frame = self.frames.last_mut().expect("a run has a frame");
             frame.previous = Some(frame.block);
-            frame.block = next;
+            frame.block = *next;
             frame.next = 0;
         }
     }
@@ -183,7 +185,7 @@ impl<'b> Interpreter<'b, '_> {
         let mut values = Vec::new();
         for id in phis {
             self.step(body.instructions.span(id))?;
-            let InstructionKind::Phi(ref incoming) = body.instructions[id].kind else {
+            let InstructionKind::Phi(incoming) = &body.instructions[id].kind else {
                 unreachable!("only phis are taken")
             };
             let previous = self.frame().previous;
@@ -200,28 +202,51 @@ impl<'b> Interpreter<'b, '_> {
         Ok(())
     }
 
-    /// Calls `function` for the instruction `id`, after the frame now running.
+    /// Calls `callee` for the instruction `id`, after the frame now running.
+    /// A method is the one at its place in the table of the interface
+    /// reference first in `arguments`, and gets only its address.
     fn call(
         &mut self,
         id: Id<mir::Instruction>,
-        function: DefId,
+        callee: Callee,
         arguments: &[Operand],
     ) -> Result<(), Failure> {
+        let (copy, receiver) = match callee {
+            Callee::Function(copy) => (copy, None),
+            Callee::Method(slot) => {
+                let Register::Interface { address, table } = self.operand(&arguments[0]) else {
+                    unreachable!("a method is called on an interface reference")
+                };
+                let implementation = ImplementationId::from_index(table as usize);
+                let definition = self.types.implementation(implementation)[slot as usize];
+                let copy = FunctionCopy {
+                    definition,
+                    arguments: ConstArguments::NONE,
+                };
+                (copy, Some(Register::Address(address)))
+            }
+        };
+        let function = copy.definition;
         let frame = self.frame();
         let span = frame.body.instructions.span(id);
-        let Some(body) = (self.mir_of)(function) else {
+        let Some(body) = (self.mir_of)(copy) else {
             if self.host.is_some() {
-                return self.call_outside(id, function, arguments);
+                return self.call_outside(id, copy, arguments);
             }
             return Err(Failure::NoMir {
-                callee: function,
+                callee: copy,
                 function: frame.function,
                 span,
             });
         };
         let end = frame.start + frame.slots.size;
         let first_register = self.registers.len();
-        for argument in arguments {
+        let mut rest = arguments;
+        if let Some(receiver) = receiver {
+            self.registers.push(Some(receiver));
+            rest = &arguments[1..];
+        }
+        for argument in rest {
             let register = self.operand(argument);
             self.registers.push(Some(register));
         }

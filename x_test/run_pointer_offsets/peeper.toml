@@ -1,0 +1,7 @@
+name = "run_pointer_offsets"
+build = "program"
+
+[test]
+mode = "run"
+outcome = "success"
+stdout_contains = ["10 12 true false\n"]

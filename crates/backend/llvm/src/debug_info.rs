@@ -25,37 +25,49 @@ const DEEPEST_DEBUG_TYPE: usize = 5_000;
 
 /// The module's debug info: numbered metadata nodes.
 pub(crate) struct Metadata {
-    pub(crate) text: String, // each node's line, `!N = ...`, in order
-    pub(crate) count: usize, // the nodes so far; the next one's number
-    pub(crate) file: usize,  // the DIFile of the module's source file
-    pub(crate) unit: usize,  // the DICompileUnit, the scope of every function
+    pub(crate) text: String,         // each node's line, `!N = ...`, in order
+    pub(crate) count: usize,         // the nodes so far; the next one's number
+    files: FxHashMap<String, usize>, // the DIFile of each source file, by path
+    pub(crate) unit: usize,          // the DICompileUnit, the scope of every function
     debug_types: FxHashMap<TypeId, usize>, // each type's debug type
-    depth: usize,            // what `debug_type` is inside now
+    depth: usize,                    // what `debug_type` is inside now
 }
 impl Metadata {
     /// The debug info of a module in the file `path`, with no function yet.
-    pub(crate) fn new(path: &Path) -> Metadata {
-        let name = path.file_name().unwrap_or_default().to_string_lossy();
-        let folder = path.parent().unwrap_or(Path::new("")).to_string_lossy();
+    pub(crate) fn new(path: &str) -> Metadata {
         let mut metadata = Metadata {
             text: String::new(),
             count: 0,
-            file: 0,
+            files: FxHashMap::default(),
             unit: 0,
             debug_types: FxHashMap::default(),
             depth: 0,
         };
-        metadata.file = metadata.add(format_args!(
-            "!DIFile(filename: {}, directory: {})",
-            quoted(name.as_bytes()),
-            quoted(folder.as_bytes())
-        ));
-        let file = metadata.file;
+        let file = metadata.file_node(path);
         metadata.unit = metadata.add(format_args!(
             "distinct !DICompileUnit(language: DW_LANG_C, file: !{file}, producer: \"peeper\", \
              isOptimized: false, runtimeVersion: 0, emissionKind: FullDebug)"
         ));
         metadata
+    }
+
+    /// The DIFile of the source file at `path`, added the first time: the
+    /// module's own, or that of a copy of another module's function.
+    pub(crate) fn file_node(&mut self, path: &str) -> usize {
+        if let Some(&id) = self.files.get(path) {
+            return id;
+        }
+        let key = path.to_string();
+        let path = Path::new(path);
+        let name = path.file_name().unwrap_or_default().to_string_lossy();
+        let folder = path.parent().unwrap_or(Path::new("")).to_string_lossy();
+        let id = self.add(format_args!(
+            "!DIFile(filename: {}, directory: {})",
+            quoted(name.as_bytes()),
+            quoted(folder.as_bytes())
+        ));
+        self.files.insert(key, id);
+        id
     }
 
     /// Adds the node `node` and gives its number.
@@ -82,7 +94,7 @@ impl Metadata {
     /// `None` for `void`.
     pub(crate) fn debug_type(
         &mut self,
-        program: &project::Program,
+        program: &model::program::Program,
         types: &Types,
         ty: TypeId,
         target: &Machine,
@@ -102,7 +114,7 @@ impl Metadata {
                 quoted(name.as_bytes())
             )
         };
-        let text = match types[ty] {
+        let text = match &types[ty] {
             Type::Bool => basic("bool", 8, "DW_ATE_boolean"),
             Type::Integer(integer) => {
                 let encoding = if integer.signed {
@@ -155,7 +167,7 @@ impl Metadata {
                     .map_or(TypeId::U8, |(element, _)| element);
                 let base = self.debug_type(program, types, types.real(element), target);
                 let base = base.expect("an element has a value's type");
-                let name = project::type_text(&program.modules, types, ty);
+                let name = model::program::type_text(&program.modules, types, ty);
                 // Its members name it, so its number comes first.
                 let composite = self.reserve();
                 let pointer = self.add(format_args!(
@@ -166,6 +178,22 @@ impl Metadata {
                 let members = [
                     self.add_member(composite, "ptr", pointer, 0),
                     self.add_member(composite, "len", usize, pointer_bits),
+                ];
+                self.define_struct(composite, &name, 2 * pointer_bits, &members);
+                self.debug_types.insert(ty, composite);
+                return Some(composite);
+            }
+            // Its address and its methods' table, neither of a known type.
+            Type::InterfaceReference { .. } => {
+                let name = model::program::type_text(&program.modules, types, ty);
+                let composite = self.reserve();
+                let pointer = self.add(format_args!(
+                    "!DIDerivedType(tag: DW_TAG_pointer_type, baseType: null, size: {pointer_bits})"
+                ));
+                let pointer_bits = u64::from(pointer_bits);
+                let members = [
+                    self.add_member(composite, "ptr", pointer, 0),
+                    self.add_member(composite, "table", pointer, pointer_bits),
                 ];
                 self.define_struct(composite, &name, 2 * pointer_bits, &members);
                 self.debug_types.insert(ty, composite);
@@ -189,26 +217,24 @@ impl Metadata {
                     comma_separated(ranges)
                 )
             }
-            Type::Invalid | Type::Void | Type::Function { .. } => {
+            Type::Invalid | Type::Void | Type::Function { .. } | Type::Interface { .. } => {
                 unreachable!("MIR holds no value of this type")
             }
             Type::Struct {
-                definition,
-                ref fields,
-                ..
+                definition, fields, ..
             } => {
-                let (name, file) = project::declared_name(&program.modules, definition);
-                let names = project::field_names(&program.modules, definition);
+                let (name, file) = model::program::declared_name(&program.modules, *definition);
+                let names = model::program::field_names(&program.modules, *definition);
                 let parts = (names.zip(fields.iter().copied())).collect::<Vec<_>>();
                 let shape = (ty, name.text(file), &parts[..]);
                 return Some(self.debug_struct(program, types, shape, target));
             }
             Type::Range { element, step } => {
-                let Type::Integer(integer) = types[element] else {
+                let Type::Integer(integer) = types[*element] else {
                     unreachable!("a range is of integers")
                 };
                 let name = format!("{RANGE}[{integer}]");
-                let parts = range_fields(element, step);
+                let parts = range_fields(*element, *step);
                 let shape = (ty, name.as_str(), &parts[..]);
                 return Some(self.debug_struct(program, types, shape, target));
             }
@@ -225,7 +251,7 @@ impl Metadata {
     /// range's (`range_fields`).
     pub(crate) fn debug_struct(
         &mut self,
-        program: &project::Program,
+        program: &model::program::Program,
         types: &Types,
         (ty, name, fields): (TypeId, &str, &[(&str, TypeId)]),
         target: &Machine,

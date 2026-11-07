@@ -10,13 +10,16 @@ use std::num::NonZeroU32;
 use arena::Id;
 use arena::List;
 use diagnostics::Diagnostic;
-use model::DefId;
+use model::FunctionCopy;
 use model::ast;
 use model::ast::Ident;
+use model::constant::Value;
+use model::semantic_types::ConstArgument;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
 use model::thir::Block;
 use model::thir::Body;
+use model::thir::ExprKind;
 use model::thir::FactKind;
 use model::thir::Local;
 use model::thir::Stmt;
@@ -32,7 +35,7 @@ use crate::function::function_declaration;
 use crate::scope::report_redeclared;
 
 impl Checker<'_> {
-    /// Puts in `body` the THIR of the body of the function `definition`,
+    /// Puts in `body` the THIR of the body of the function `copy`,
     /// asked for at `used_at` and built only to run at compile time when
     /// `to_run` (`Checking`), with `has_errors` set when checking it reported
     /// an error; what `body` held is dropped, its memory kept. False, with
@@ -40,16 +43,20 @@ impl Checker<'_> {
     /// an error.
     pub fn check_body(
         &mut self,
-        definition: DefId,
+        copy: FunctionCopy,
         used_at: Span,
         body: &mut Body,
         to_run: bool,
     ) -> bool {
+        let FunctionCopy {
+            definition,
+            arguments,
+        } = copy;
         let function = function_declaration(self.modules, definition);
         let Some(block) = function.body else {
             return false;
         };
-        let ty = self.function_type(definition, used_at);
+        let ty = self.copy_type(copy, used_at);
         let module = definition.module.index();
         let reported = self.module_checks[module].diagnostics.len();
         let Type::Function {
@@ -60,44 +67,61 @@ impl Checker<'_> {
         };
         let (parameters, result) = (parameters.clone(), *result);
         let tree = &self.modules[module].ast;
-        self.checking.push(Checking {
+        let checking = Checking {
             definition,
+            arguments,
             used_at,
-            to_run,
-        });
-        body.clear();
-        let mut builder = ThirBuilder::new(self, body, result);
-        let outermost = builder.body.add(
-            Block {
-                parent: None,
-                statements: List::EMPTY,
-            },
-            tree.blocks.span(block),
-        );
-        for (parameter, &ty) in tree
-            .children
-            .lists
-            .items(function.signature.parameters)
-            .zip(&parameters)
-        {
-            let parameter = tree.children.params[parameter];
-            let name = parameter.name.unwrap_or_default();
-            let variable = builder.body.add(
-                Variable {
-                    ty,
-                    mutable: parameter.mutable,
-                    initialized: true,
-                    scope: outermost,
-                    hidden: false,
+            records_facts: !to_run,
+        };
+        self.checking_in(checking, |checker| {
+            body.clear();
+            let mut builder = ThirBuilder::new(checker, body, result);
+            let outermost = builder.body.add(
+                Block {
+                    parent: None,
+                    statements: List::EMPTY,
                 },
-                name.span,
+                tree.blocks.span(block),
             );
-            builder.declare(name, Local::Variable(variable));
-        }
-        let statements = builder.check_statements(None, tree.blocks[block].statements);
-        builder.body.blocks[outermost].statements = statements;
+            // Empty, so nothing is allocated, for a function without `const` parameters.
+            let mut given = builder
+                .checker
+                .types
+                .arguments(arguments)
+                .to_vec()
+                .into_iter();
+            let mut types = parameters.iter();
+            for parameter in tree.children.lists.items(function.signature.parameters) {
+                let parameter = tree.children.params[parameter];
+                let name = parameter.name.unwrap_or_default();
+                // A `const` value is a constant of the body; a `const T: type`
+                // is a type (`resolve_global`).
+                if parameter.constant {
+                    if let Some(ConstArgument::Value(constant)) = given.next() {
+                        let constant = builder.body.constants.push(Some(constant), name.span);
+                        builder.declare(name, Local::Constant(constant));
+                    }
+                    continue;
+                }
+                let ty = *types
+                    .next()
+                    .expect("the signature has each parameter that is not `const`");
+                let variable = builder.body.add(
+                    Variable {
+                        ty,
+                        mutable: parameter.mutable,
+                        initialized: true,
+                        scope: outermost,
+                        hidden: false,
+                    },
+                    name.span,
+                );
+                builder.declare(name, Local::Variable(variable));
+            }
+            let statements = builder.check_statements(None, tree.blocks[block].statements);
+            builder.body.blocks[outermost].statements = statements;
+        });
         // A part of the signature that failed was reported with the signature.
-        self.checking.pop();
         body.has_errors = parameters.contains(&TypeId::INVALID)
             || result == TypeId::INVALID
             || self.module_checks[module].diagnostics[reported..]
@@ -109,7 +133,10 @@ impl Checker<'_> {
 
 impl<'a, 'p> ThirBuilder<'a, 'p> {
     /// The THIR of `statements`, in the current block, after `first`, a
-    /// statement the checker made for the block.
+    /// statement the checker made for the block. In a copy, the statements
+    /// after an `if` its constants decided that always leaves the block are
+    /// not checked: they may be wrong for those constants, as `n - 1` past
+    /// `if n == 0 { return 0; }` for an unsigned `n` of 0.
     fn check_statements(
         &mut self,
         first: Option<Id<Stmt>>,
@@ -117,12 +144,44 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
     ) -> List<Stmt> {
         let mut checked: Vec<NonZeroU32> = Vec::with_capacity(statements.len() + 1);
         checked.extend(first.map(NonZeroU32::from));
-        for statement in self.checker.module().ast.children.lists.items(statements) {
-            if let Some(statement) = self.check_statement(statement) {
+        // A copy's constants may rule out code.
+        let in_copy = self.checker.in_copy();
+        for written in self.checker.module().ast.children.lists.items(statements) {
+            if let Some(statement) = self.check_statement(written) {
                 checked.push(statement.into());
+                // A decided `if` is checked as the one way it takes; code
+                // after a written `return` is checked, as in any function.
+                let decided = matches!(
+                    self.checker.module().ast.stmts[written],
+                    ast::Stmt::If { .. }
+                ) && !matches!(self.body.stmts[statement], Stmt::If { .. });
+                if in_copy && decided && self.leaves(statement) {
+                    break;
+                }
             }
         }
         self.body.children.lists.add(&checked)
+    }
+
+    /// Whether the checked `statement` always leaves its block: by
+    /// `return`, `panic`, `break` or `continue`, or by a block or `if`
+    /// whose every way through does.
+    fn leaves(&self, statement: Id<Stmt>) -> bool {
+        let block_leaves = |block: Id<Block>| {
+            let statements = self.body.blocks[block].statements;
+            let last = self.body.children.lists.items(statements).last();
+            last.is_some_and(|last| self.leaves(last))
+        };
+        match self.body.stmts[statement] {
+            Stmt::Return(_) | Stmt::Panic(_) | Stmt::Break | Stmt::Continue => true,
+            Stmt::Block(block) => block_leaves(block),
+            Stmt::If {
+                then,
+                otherwise: Some(otherwise),
+                ..
+            } => block_leaves(then) && self.leaves(otherwise),
+            _ => false,
+        }
     }
 
     /// The THIR of `block`; the names it declares end with it. It is added
@@ -215,7 +274,7 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
         }
         // No local holds a type's name, so only top-level names can clash.
         let ty = match self.checker.resolve_global(text) {
-            Some(Symbol::Builtin(_)) => None,
+            Some(Symbol::Builtin(_) | Symbol::TypeArgument(_)) => None,
             Some(Symbol::Type(definition)) => Some(definition),
             _ => {
                 self.checker
@@ -237,7 +296,8 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
             "declared here",
         );
         if let Some(definition) = ty {
-            let (declared, declared_in) = project::declared_name(self.checker.modules, definition);
+            let (declared, declared_in) =
+                model::program::declared_name(self.checker.modules, definition);
             diagnostic = diagnostic.label(declared_in, declared.span, "the type is declared here");
         }
         self.checker.report(diagnostic);
@@ -312,12 +372,28 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
                     otherwise,
                 } => {
                     let condition = self.add_required(condition, TypeId::BOOL);
-                    let then = self.check_block(then?); // missing after a syntax error
-                    let otherwise = otherwise.and_then(|otherwise| self.check_statement(otherwise));
-                    Stmt::If {
-                        condition,
-                        then,
-                        otherwise,
+                    // A copy holds only the branch its constants choose.
+                    let chosen = match self.body.exprs[condition].kind {
+                        ExprKind::Constant(Value::Bool(taken)) if self.checker.in_copy() => {
+                            Some(taken)
+                        }
+                        _ => None,
+                    };
+                    match chosen {
+                        Some(true) => Stmt::Block(self.check_block(then?)),
+                        Some(false) => {
+                            return otherwise.and_then(|otherwise| self.check_statement(otherwise));
+                        }
+                        None => {
+                            let then = self.check_block(then?); // missing after a syntax error
+                            let otherwise =
+                                otherwise.and_then(|otherwise| self.check_statement(otherwise));
+                            Stmt::If {
+                                condition,
+                                then,
+                                otherwise,
+                            }
+                        }
                     }
                 }
                 ast::Stmt::Destructure { pattern, .. } => {

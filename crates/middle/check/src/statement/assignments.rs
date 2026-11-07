@@ -152,6 +152,11 @@ impl ThirBuilder<'_, '_> {
         let symbol = match tree.exprs[target] {
             ast::Expr::Name => self.resolve(span)?,
             ast::Expr::Path(path) => self.checker.resolve_path(path)?,
+            // `*p = x;`: reported as a type, with the `p.*` help.
+            ast::Expr::Type(_) => {
+                self.add_expr(target, None);
+                return None;
+            }
             _ => {
                 self.checker
                     .not_supported(span, "assignments to targets other than names");
@@ -165,7 +170,8 @@ impl ThirBuilder<'_, '_> {
                 (&tree.file, self.body.constants.span(constant))
             }
             Symbol::Constant(definition) => {
-                let (declared, file) = project::declared_name(self.checker.modules, definition);
+                let (declared, file) =
+                    model::program::declared_name(self.checker.modules, definition);
                 (file, declared.span)
             }
             _ => {

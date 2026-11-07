@@ -87,8 +87,8 @@ impl Server<'_> {
         }
         // Other pending files of its programs are still checked once more.
         self.pending.remove(&file);
-        for project in self.projects_holding(&file) {
-            self.check(project, &file)?;
+        for (key, project) in self.projects_holding(&file) {
+            self.check(key, project, &file)?;
         }
         Ok(())
     }
@@ -98,47 +98,46 @@ impl Server<'_> {
         self.deadline = None;
         let mut programs = HashMap::new();
         for file in std::mem::take(&mut self.pending) {
-            for project in self.projects_holding(&file) {
-                programs
-                    .entry(project.entry.clone())
-                    .or_insert((project, file.clone()));
+            for (key, project) in self.projects_holding(&file) {
+                programs.entry(key).or_insert((project, file.clone()));
             }
         }
-        for (project, file) in programs.into_values() {
-            self.check(project, &file)?;
+        for (key, (project, file)) in programs {
+            self.check(key, project, &file)?;
         }
         Ok(())
     }
 
     /// The projects to check after `file` changed: its own (`project_of`),
     /// and each one whose program last checked holds it, as every program
-    /// holds a bundled library's module; by entry file, once each.
-    fn projects_holding(&self, file: &Path) -> Vec<project::Project> {
+    /// holds a bundled library's module; once each, with its key.
+    fn projects_holding(&self, file: &Path) -> Vec<(PathBuf, project::Project)> {
         let holding = (self.checked.iter())
             .filter(|(_, checked)| {
                 let program = checked.program.as_ref();
                 program.is_some_and(|program| program.module_of(file).is_some())
             })
-            .map(|(entry, _)| entry.as_path());
-        let mut projects: Vec<project::Project> = std::iter::once(file)
+            .map(|(key, _)| key.as_path());
+        let mut projects: Vec<(PathBuf, project::Project)> = std::iter::once(file)
             .chain(holding)
             .filter_map(|file| self.project_of(file))
             .collect();
-        projects.sort_unstable_by(|one, other| one.entry.cmp(&other.entry));
-        projects.dedup_by(|one, other| one.entry == other.entry);
+        projects.sort_unstable_by(|(key, _), (other, _)| key.cmp(other));
+        projects.dedup_by(|(key, _), (other, _)| key == other);
         projects
     }
 
-    /// The project `file` belongs to: the one of the nearest folder above it
-    /// holding peeper.toml, or else the file alone. `None`, after logging why,
-    /// when it cannot be read.
-    pub(crate) fn project_of(&self, file: &Path) -> Option<project::Project> {
+    /// The project `file` belongs to, with the key its last check is kept
+    /// by: the nearest folder above `file` holding peeper.toml, or else the
+    /// file alone. The key stays when `build` changes, and `file` may be a
+    /// key. `None`, after logging why, when it cannot be read.
+    fn project_of(&self, file: &Path) -> Option<(PathBuf, project::Project)> {
         let folder = file
             .ancestors()
-            .skip(1)
             .find(|folder| folder.join(project::manifest::FILE_NAME).is_file());
-        match project::find(folder.unwrap_or(file), self.libraries) {
-            Ok(project) => Some(project),
+        let key = folder.unwrap_or(file);
+        match project::find(key, self.libraries) {
+            Ok(project) => Some((key.to_path_buf(), project)),
             Err(message) => {
                 eprintln!("peeper lsp: {message}"); // the editor's server log
                 None
@@ -148,10 +147,16 @@ impl Server<'_> {
 
     /// Checks the program of `project`, after a change to `file`, and
     /// publishes the diagnostics of its files, and an empty list for each file
-    /// that had some last time and has none now.
-    pub(crate) fn check(&mut self, project: project::Project, file: &Path) -> Result<(), BoxError> {
+    /// that had some last time and has none now. The check is kept by `key`
+    /// (`project_of`).
+    fn check(
+        &mut self,
+        key: PathBuf,
+        project: project::Project,
+        file: &Path,
+    ) -> Result<(), BoxError> {
         let program = project::load(&project, &self.open_files);
-        let mut checked = self.checked.remove(&project.entry).unwrap_or_default();
+        let mut checked = self.checked.remove(&key).unwrap_or_default();
         let mut all: Vec<&diagnostics::Diagnostic> = program.diagnostics.iter().collect();
         // A program that cannot be checked keeps the last compile for the next.
         if program.checkable {
@@ -164,7 +169,7 @@ impl Server<'_> {
         if program.checkable {
             checked.program = Some(program);
         }
-        self.checked.insert(project.entry, checked);
+        self.checked.insert(key, checked);
         Ok(())
     }
 

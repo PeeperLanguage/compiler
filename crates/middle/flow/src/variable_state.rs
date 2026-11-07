@@ -66,14 +66,14 @@ pub fn report_variable_state_errors(
         for (position, instruction) in instructions(block).enumerate() {
             let span = body.instructions.span(instruction);
             let kind = &body.instructions[instruction].kind;
-            let error = match *kind {
-                mir::InstructionKind::Move(ref place) if place.whole_variable().is_none() => {
+            let error = match kind {
+                mir::InstructionKind::Move(place) if place.whole_variable().is_none() => {
                     let error =
                         partial_move(file, span, place, &types[body.instructions[instruction].ty]);
                     errors.push((span.start, error));
                     None
                 }
-                mir::InstructionKind::Store { ref place, .. }
+                mir::InstructionKind::Store { place, .. }
                     if let Some(variable) = place.whole_variable()
                         && let Some(followed) = tracked(variable) =>
                 {
@@ -87,12 +87,12 @@ pub fn report_variable_state_errors(
                         (variable, second_assignment(body, file, variable, span, set))
                     })
                 }
-                mir::InstructionKind::Load(ref place)
-                | mir::InstructionKind::Length(ref place)
-                | mir::InstructionKind::Move(ref place)
-                | mir::InstructionKind::Store { ref place, .. }
-                | mir::InstructionKind::Borrow { ref place, .. }
-                | mir::InstructionKind::Address(ref place)
+                mir::InstructionKind::Load(place)
+                | mir::InstructionKind::Length(place)
+                | mir::InstructionKind::Move(place)
+                | mir::InstructionKind::Store { place, .. }
+                | mir::InstructionKind::Borrow { place, .. }
+                | mir::InstructionKind::Address(place)
                     if let Some(followed) = tracked(place.variable)
                         && !facts.always.has(followed) =>
                 {
@@ -132,7 +132,7 @@ pub fn report_variable_state_errors(
 fn tracked_variables(body: &mir::Body) -> (Vec<Option<Id<Tracked>>>, usize) {
     let mut moved = vec![false; body.variables.len()];
     for id in body.instructions.ids() {
-        if let mir::InstructionKind::Move(ref place) = body.instructions[id].kind
+        if let mir::InstructionKind::Move(place) = &body.instructions[id].kind
             && let Some(variable) = place.whole_variable()
         {
             moved[variable.index()] = true;
@@ -179,21 +179,21 @@ impl Facts {
         kind: &mir::InstructionKind,
         tracked: impl Fn(Id<mir::Variable>) -> Option<Id<Tracked>>,
     ) {
-        match *kind {
-            mir::InstructionKind::Store { ref place, .. }
+        match kind {
+            mir::InstructionKind::Store { place, .. }
                 if let Some(followed) = place.whole_variable().and_then(&tracked) =>
             {
                 self.always.set(followed);
                 self.maybe.set(followed);
                 self.moved.clear(followed);
             }
-            mir::InstructionKind::Move(ref place)
+            mir::InstructionKind::Move(place)
                 if let Some(followed) = place.whole_variable().and_then(&tracked) =>
             {
                 self.always.clear(followed);
                 self.moved.set(followed);
             }
-            mir::InstructionKind::ScopeEnd(variable) if let Some(followed) = tracked(variable) => {
+            mir::InstructionKind::ScopeEnd(variable) if let Some(followed) = tracked(*variable) => {
                 self.always.clear(followed);
                 self.maybe.clear(followed);
                 self.moved.clear(followed);
@@ -229,13 +229,11 @@ fn move_sites(
         // The last move or store of `variable` before `end`: the move is a site;
         // a store ends the path.
         let last = before.iter().rev().find_map(|&instruction| {
-            match body.instructions[instruction].kind {
-                mir::InstructionKind::Move(ref moved)
-                    if moved.whole_variable() == Some(variable) =>
-                {
+            match &body.instructions[instruction].kind {
+                mir::InstructionKind::Move(moved) if moved.whole_variable() == Some(variable) => {
                     Some(Some(body.instructions.span(instruction)))
                 }
-                mir::InstructionKind::Store { ref place, .. }
+                mir::InstructionKind::Store { place, .. }
                     if place.whole_variable() == Some(variable) =>
                 {
                     Some(None)
@@ -342,8 +340,11 @@ fn partial_move(
             format!("move the whole {whole}, or read only parts that copy"),
         )
     };
+    // As the checker lends one again (`ThirBuilder::reborrow`).
     let lent_through = match *moved {
-        Type::Reference { mutable: true, .. } => Some(".*"),
+        Type::Reference { mutable: true, .. } | Type::InterfaceReference { mutable: true, .. } => {
+            Some(".*")
+        }
         Type::Slice { mutable: true, .. } => Some("[..]"),
         _ => None,
     };

@@ -118,7 +118,8 @@ pub(crate) fn anonymous_struct_literal(p: &mut Parser) -> Id<Expr> {
 
 /// Reads `[N]T{ entries }` or `[_]T{ entries }` (the length is the number of
 /// values they give); an entry is a value, or `values...`, which spreads an
-/// array or a range: `(0..3)...` or `0..3...`.
+/// array or a range: `(0..3)...` or `0..3...`. Without `{` after it, `[N]T`
+/// is the type alone.
 pub(crate) fn array_literal(p: &mut Parser) -> Id<Expr> {
     let start = p.tok().span.start;
     let after = p.ahead(1);
@@ -131,6 +132,11 @@ pub(crate) fn array_literal(p: &mut Parser) -> Id<Expr> {
     } else {
         p.array_type()
     };
+    // Without entries `[N]T` is the type alone, as an argument that takes
+    // one; `[_]T` needs its entries to have a length.
+    if after.kind != TokenKind::Underscore && !p.at(TokenKind::LeftBrace) {
+        return p.add(start, Expr::Type(ty));
+    }
     let entries = p.delimited(
         TokenKind::LeftBrace,
         TokenKind::RightBrace,

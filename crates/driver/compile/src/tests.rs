@@ -2,10 +2,11 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use super::CheckedFunction;
+use super::ModuleResults;
 use super::Output;
 use super::Results;
 use super::run;
-use model::ModuleId;
+use diagnostics::Diagnostic;
 use model::machine::Machine;
 
 /// The machine the tests check for, but where they test another.
@@ -16,7 +17,7 @@ fn x86_64() -> &'static Machine {
 /// The program of `modules`, each an import path and its text, loaded as
 /// `peeper check` loads it from `app:main`, with every file given as open
 /// editor text so nothing is read from disk. Loading must find no error.
-fn load(modules: &[(&str, &str)]) -> project::Program {
+fn load(modules: &[(&str, &str)]) -> model::program::Program {
     let folder = |package: &str| match package {
         "core" => PathBuf::from("/peeper-build-test/libs/core/src"),
         _ => PathBuf::from("/peeper-build-test/src"),
@@ -37,7 +38,7 @@ fn load(modules: &[(&str, &str)]) -> project::Program {
         .collect();
     let project = project::Project {
         packages,
-        entry: folder("app").join("main.peep"),
+        entry: Some(folder("app").join("main.peep")),
         root: PathBuf::from("/peeper-build-test"),
         name: "app".to_string(),
     };
@@ -58,7 +59,7 @@ fn diagnostics(modules: &[(&str, &str)]) -> Vec<(&'static str, String, String)> 
         &load(modules),
         x86_64(),
         Results::default(),
-        None,
+        false,
         false,
         |_| {},
     );
@@ -368,7 +369,7 @@ fn slice_ends_fit_the_target_usize() {
         &program,
         Machine::named("i686-linux").unwrap(),
         Results::default(),
-        None,
+        false,
         false,
         |_| {},
     );
@@ -381,19 +382,14 @@ fn slice_ends_fit_the_target_usize() {
     );
 }
 
-/// With an entry module, a program with no other error needs there a
+/// Asked for `main`, a program with no other error needs in its entry file a
 /// `fn main()` or `fn main() -> i32` with a body, and says whether it gives
 /// the exit code; an error elsewhere is reported alone.
 #[test]
 fn the_entry_module_needs_a_main_to_start() {
     let entry_point = |text: &str| {
         let program = load(&[("app:main", text)]);
-        let entry = program
-            .modules
-            .iter()
-            .position(|module| module.ast.file.path.ends_with("main.peep"))
-            .map(ModuleId::from_index);
-        let found = run(&program, x86_64(), Results::default(), entry, false, |_| {});
+        let found = run(&program, x86_64(), Results::default(), true, false, |_| {});
         let codes: Vec<&str> = found.diagnostics().map(|d| d.code.id).collect();
         (found.entry_point().map(|(_, exit_code)| exit_code), codes)
     };
@@ -413,6 +409,17 @@ fn the_entry_module_needs_a_main_to_start() {
     }
     let (found, codes) = entry_point("fn helper() { let x: i32 = true; }");
     assert!(found.is_none() && !codes.is_empty() && !codes.contains(&"M0006"));
+}
+
+/// A syntax error the parser read past is the loader's, not the checker's,
+/// and still leaves the program with no entry point.
+#[test]
+fn a_loading_error_leaves_no_entry_point() {
+    let program = load(&[("app:main", "fn main() {\n    let x: i32 = 1\n}")]);
+    assert!(program.diagnostics.iter().any(Diagnostic::is_error));
+    let found = run(&program, x86_64(), Results::default(), true, false, |_| {});
+    assert_eq!(found.diagnostics().count(), 0, "the checker found nothing");
+    assert!(found.entry_point().is_none());
 }
 
 /// The MIR `run` gives is what the path checks read, with the `scope end`s a
@@ -446,17 +453,17 @@ fn each_way_out_of_a_block_ends_its_variables_newest_first() {
         &program,
         x86_64(),
         Results::default(),
-        None,
+        false,
         false,
         |output| {
             if let Output::Function(CheckedFunction {
-                definition,
+                function,
                 mir: Some(mir),
                 types,
                 ..
             }) = output
             {
-                let file = &program.modules[definition.module.index()].ast.file;
+                let file = &program.modules[function.definition.module.index()].ast.file;
                 text.push_str(&mir.text(types, file, |_| ""));
             }
         },
@@ -497,7 +504,7 @@ fn a_cycle_is_reported_once_with_its_path() {
             fn Point::E() -> i32 { return E; }
             fn main() { let x = A + B + E; }",
     )]);
-    let found = run(&program, x86_64(), Results::default(), None, false, |_| {});
+    let found = run(&program, x86_64(), Results::default(), false, false, |_| {});
     let errors: Vec<(String, Vec<(String, String)>)> = found
         .diagnostics()
         .map(|diagnostic| {
@@ -570,7 +577,7 @@ fn module_constants_cannot_be_assigned() {
         &load(&modules),
         x86_64(),
         Results::default(),
-        None,
+        false,
         false,
         |_| {},
     );
@@ -671,7 +678,7 @@ fn an_invalid_declaration_lowers_nothing_using_it() {
         &program,
         x86_64(),
         Results::default(),
-        None,
+        false,
         false,
         |output| {
             if let Output::Function(CheckedFunction { mir: Some(_), .. }) = output {
@@ -690,11 +697,11 @@ fn an_invalid_declaration_lowers_nothing_using_it() {
 fn recompile(modules: &[(&str, &str)], previous: Results) -> (Results, Vec<String>) {
     let loaded = load(modules);
     let mut checked: Vec<String> = Vec::new();
-    let results = run(&loaded, x86_64(), previous, None, false, |output| {
-        let Output::Function(CheckedFunction { definition, .. }) = output else {
+    let results = run(&loaded, x86_64(), previous, false, false, |output| {
+        let Output::Function(CheckedFunction { module, .. }) = output else {
             return;
         };
-        let path = &loaded.modules[definition.module.index()].path;
+        let path = &loaded.modules[module.index()].path;
         if !checked.contains(path) {
             checked.push(path.clone());
         }
@@ -959,14 +966,14 @@ fn a_function_run_at_compile_time_records_its_facts_once() {
         &program,
         x86_64(),
         Results::default(),
-        None,
+        false,
         true,
         |output| {
             let (owner, facts) = match output {
                 Output::Function(CheckedFunction {
-                    definition, facts, ..
+                    function, facts, ..
                 }) => {
-                    let declaration = &tree.decls[tree.declaration(definition.index)];
+                    let declaration = &tree.decls[tree.declaration(function.definition.index)];
                     (declaration.name().text(&tree.file), facts)
                 }
                 Output::Facts { facts, .. } => ("module", facts),
@@ -1013,7 +1020,7 @@ fn array_lengths_fit_the_target_usize() {
             &program,
             target,
             Results::default(),
-            None,
+            false,
             false,
             |_| {},
         ))
@@ -1040,7 +1047,7 @@ fn values_fit_the_target() {
             &program,
             target,
             Results::default(),
-            None,
+            false,
             false,
             |_| {},
         ))
@@ -1069,7 +1076,7 @@ fn extern_integers_are_ones_c_has() {
             &program,
             target,
             Results::default(),
-            None,
+            false,
             false,
             |_| {},
         ))
@@ -1120,4 +1127,111 @@ fn a_prelude_edit_checks_what_it_changes() {
     );
     let (_, checked) = recompile(&[value, main], second);
     assert_eq!(checked, ["core:global", "app:main"]);
+}
+
+/// What a copy's check finds goes to the module that called for it, with
+/// that call marked, also from a copy made inside another copy; an error
+/// every copy finds in the function's text is reported once.
+#[test]
+fn copies_report_once_to_the_calling_module() {
+    let program = load(&[
+        (
+            "app:list",
+            "fn Twice(const T: type, x: T) -> T { let wrong: i32 = true; return add(T, x); }
+            fn add(const T: type, x: T) -> T { return x + x; }",
+        ),
+        (
+            "app:main",
+            "import \"app:list\";
+            fn main() { list::Twice(i32, 1); list::Twice(bool, true); list::Twice(i64, 2); }",
+        ),
+    ]);
+    let results = run(&program, x86_64(), Results::default(), false, false, |_| {});
+    let found = |module: &ModuleResults| -> Vec<(String, Vec<String>)> {
+        let labels = |diagnostic: &Diagnostic| {
+            let label = |label: &diagnostics::Label| {
+                format!("{} {}", label.file.slice(label.span), label.message)
+            };
+            diagnostic.labels.iter().map(label).collect()
+        };
+        let diagnostics = module.diagnostics.iter();
+        diagnostics
+            .map(|diagnostic| (diagnostic.message.clone(), labels(diagnostic)))
+            .collect()
+    };
+    assert_eq!(found(&results.modules[0]), []);
+    let call = |argument: &str| format!("list::Twice({argument})");
+    assert_eq!(
+        found(&results.modules[1]),
+        [
+            (
+                "mismatched types: expected `i32`, found `bool`".to_string(),
+                vec![
+                    "true ".to_string(),
+                    // Copies are built newest first.
+                    format!(
+                        "{} in `Twice<i64>`, the copy made for this call",
+                        call("i64, 2")
+                    ),
+                ]
+            ),
+            (
+                "operator `+` cannot be applied to `bool`".to_string(),
+                vec![
+                    "x + x ".to_string(),
+                    "add(T, x) in `add<bool>`, the copy made for this call".to_string(),
+                ]
+            ),
+        ]
+    );
+}
+
+/// An importer's call builds a copy of a function with `const T: type`
+/// parameters, so an edit of its body checks the importer again.
+#[test]
+fn a_type_parameter_body_edit_checks_its_importers() {
+    let utils = |body: &str| format!("fn Size(const T: type) -> usize {{ return {body}; }}");
+    let main = (
+        "app:main",
+        "import \"app:utils\";\nfn main() { utils::Size(i32); }",
+    );
+    let before = utils("size_of(T)");
+    let (first, _) = recompile(&[("app:utils", &before), main], Results::default());
+    let after = utils("align_of(T)");
+    let (_, checked) = recompile(&[("app:utils", &after), main], first);
+    assert_eq!(checked, ["app:main"]);
+}
+
+/// A function with `const` parameters records the facts of its own
+/// signature once, though each call reads a value parameter's type again;
+/// a copy records none.
+#[test]
+fn a_function_with_const_parameters_records_its_signature_once() {
+    let program = load(&[(
+        "app:main",
+        "fn main() { let x = Pick(i32, 2, 3); let y = Pick(i32, 4, 5); }
+            fn Pick(const T: type, const n: i64, x: T) -> T { return x; }",
+    )]);
+    let tree = &program.modules[0].ast;
+    let mut found: Vec<&str> = Vec::new();
+    run(
+        &program,
+        x86_64(),
+        Results::default(),
+        false,
+        true,
+        |output| {
+            let facts = match output {
+                Output::Function(CheckedFunction { facts, .. }) | Output::Facts { facts, .. } => {
+                    facts
+                }
+                Output::Constant { .. } => return,
+            };
+            found.extend(facts.iter().map(|fact| tree.file.slice(fact.span)));
+        },
+    );
+    // Checked at the first call, before its arguments.
+    let expected = ["Pick", "i64", "T", "T", "i32", "2", "3", "x"];
+    assert_eq!(found[..expected.len()], expected);
+    assert_eq!(found.iter().filter(|&&text| text == "i64").count(), 1);
 }

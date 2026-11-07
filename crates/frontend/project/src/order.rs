@@ -4,9 +4,9 @@
 use std::collections::HashMap;
 
 use diagnostics::Diagnostic;
+use model::program::ImportKind;
 
-use crate::ImportKind;
-use crate::Loaded;
+use crate::loading::Loaded;
 
 #[derive(Clone, Copy, PartialEq)]
 enum Visit {
@@ -55,14 +55,14 @@ impl<'a> Sorter<'a> {
         // place to point at.
         imports.dedup_by(|(_, a), (_, b)| a == b);
         // A long chain of imports is a deep recursion here.
-        for &(kind, ref imported) in imports {
+        for (kind, imported) in imports {
             match self.visits.get(imported.as_str()) {
-                None => source::grow_stack(|| self.visit(imported, Some(kind))),
+                None => source::grow_stack(|| self.visit(imported, Some(*kind))),
                 Some(Visit::Started) => {
                     let start = (self.stack.iter())
                         .position(|&(visiting, _)| visiting == imported)
-                        .unwrap_or(0);
-                    self.report_cycle(start, kind);
+                        .expect("a started module is on the stack");
+                    self.report_cycle(start, *kind);
                 }
                 Some(Visit::Finished) => {}
             }
