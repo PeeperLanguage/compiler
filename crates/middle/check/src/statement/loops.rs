@@ -196,11 +196,11 @@ impl ThirBuilder<'_, '_> {
         );
         let outer = std::mem::replace(&mut self.block, holder);
         let items = self.add_hidden_variable(items_type, false, span);
+        self.body.keep_temporaries(iterable, items);
         let let_items = self.body.add(
             Stmt::Let {
                 variable: items,
                 value: Some(iterable),
-                keeps_temporaries: true, // as in Rust
             },
             span,
         );
@@ -256,7 +256,6 @@ impl ThirBuilder<'_, '_> {
             Stmt::Let {
                 variable,
                 value: Some(element_value),
-                keeps_temporaries: false,
             },
             value.span,
         );

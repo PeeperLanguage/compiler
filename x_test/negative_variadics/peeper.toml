@@ -21,10 +21,9 @@ stderr_contains = [
     "`p` is used after it was moved",
     "`points` is used after it was moved",
     "cannot move an element out of a slice",
-    "a temporary value is gone while a slice of it is still in use",
     "returns a reference into a temporary value, which is gone once the function returns",
     "`a` is changed while a slice of it is still in use",
     "cannot mutably borrow immutable `a`",
     "this value cannot be worked out at compile time yet",
-    "Compilation failed with 26 error(s)",
+    "Compilation failed with 24 error(s)",
 ]

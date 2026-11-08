@@ -58,3 +58,24 @@ fn main() {
     lent();
     through_reference();
 }
+
+// A struct lasts as long as the variable that first holds it: moved out of
+// its block, it is gone; changed while an older interface views it, that
+// one would see the new struct.
+fn moved_out() {
+    let mut keep: Shape = Square.{ side = 0 };
+    for side in 0..3 {
+        let each: Shape = Square.{ side = side };
+        keep = each;
+    }
+    println(keep.area());
+}
+
+fn overwritten() {
+    let mut keep: Shape = Square.{ side = 1 };
+    for side in 0..3 {
+        let old = keep;
+        keep = Square.{ side = side };
+        println(old.area());
+    }
+}

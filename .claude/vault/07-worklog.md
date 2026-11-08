@@ -1387,3 +1387,73 @@ data only, two words, no `Release` (its first use is step 2).
 - Not done: the benchmark was not run; the Website waits until the feature
   is complete.
 - `scripts/check.sh`: all pass.
+
+## Owned interfaces, step 2: built, then removed (2026-11-09, `feature/owned-interfaces`)
+
+Built: a function giving `Shape` with no `in` returned one struct, which
+each call moved into a `Shape` of its own. Removed by the owner before any
+commit ("what kind of nonsense design is it? ... A functional system should
+work on its own"):
+
+- The function's real result, the struct, was not in its type, so nine
+  places kept it in a side table (`Checker::returned_structs`) or a special
+  case: `Types::makes_interface`, `result_origins`, `check_call`,
+  `lower_function`, `check_interface`, the module hash, and
+  `ThirBuilder::returned_struct` and `made_struct`, which dug the struct back
+  out of a conversion it had built.
+- One struct per function gives no choice while the program runs; that
+  already works through general rules (the section below).
+- Found while testing it, now gone with it: `lower_function` reported an
+  error through `Checker::error` after the body's check had ended, which
+  crashed (no declaration being checked).
+- If hiding a struct's type from callers is wanted later, it needs a
+  general feature: a result type worked out from the body, for any type.
+
+## Temporaries kept as long as their holder (2026-11-09, `feature/owned-interfaces`)
+
+Owner: "fix the first three, better error for the loop", then: no
+type-specific code.
+
+- The value a `let` gives its variable, or an assignment gives a whole
+  variable, keeps every temporary made in computing it as long as that
+  variable (`Body::keep_temporaries`, over `Body::any_part`, as a list, not
+  recursion). THIR's `Temporary::kept_by` is that variable (it was a flag).
+  A first version followed only what the value holds a loan on (`&`, an
+  interface, an `in` argument); the untangle review found it copied the
+  loan rules and missed struct and array literals, so it was replaced.
+  Keeping one nothing holds refuses nothing: the loan check follows uses.
+- `Stmt::Let`'s `keeps_temporaries` flag is gone: the `for` loop's hidden
+  `let` of its array is a `let` like any other. The loop variable's `let`
+  needs no call: its value is made of variables only.
+- Lowering finds them before any code and puts each in `declared` just
+  before its variable (`Lowering::declare`, used by `let`s, parameters and
+  loop variables), so it ends with it on every path, a `return` before the
+  assignment too. Every other temporary ends with its statement
+  (`close_scopes`, the `let` too). The `ScopeEnd` code is unchanged.
+- Accepted now: `s = Square.{ side = 2 };`, `if c { s = Circle.{ radius =
+  1 }; }`, `for i in 0..4 { keep = Square.{ side = i }; }`, `let t =
+  back(back(Square.{ side = 3 }));`, `let r: &Shape = &back(Square.{ side
+  = 4 });`, `let late: Shape; late = ...;`. Plain references too, a change
+  from the earlier rule: `r = &num();`, `let r = id(&num());`, `let e =
+  &view(&make())[0];`, `let r = largest(7, 8);`, `let p = Pair.{ first =
+  &5, second = &6 };`, `let both = [2]&[3]i32{&make(), &make()};`.
+- Still refused: a temporary kept by a `let` in an inner block, used after
+  it; one a `for` loop keeps, used after the loop; one changed while an
+  older holder uses it (one slot each pass of a loop).
+- The loan message is the general one. Its help, "keep the value in a
+  variable with `let`", is wrong for a temporary already kept by a `let`:
+  owner to choose the words.
+- Fixtures: `run_owned_interfaces` and `run_i686_owned_interfaces` add the
+  kept forms; `negative_owned_interfaces` 9 errors (moved out of a loop,
+  changed while viewed); `run_temporaries` 15, 18, 19 (a struct and an
+  array literal) and 20 (a method's `self`) and `run_variadics` 23 show
+  plain references kept; `negative_temporaries` (13 errors),
+  `negative_variadics` (24) and `negative_struct_loans` (29, without
+  `TemporaryInField`) lose the cases now accepted; `mir_temporaries` moves
+  its `&&` into an `if` so a side's temporaries still end with it; the
+  unit test `statement::tests::temporaries` shows the new marks. Seen to
+  fail: the walk not going into parts, each of the three calls (`let`,
+  assignment, loop array) off, kept temporaries left out of `declared` (a
+  struct moved out of a loop then dangles unseen: the negative fixtures
+  catch it). The accepted forms also run in a `const`, whose run checks
+  each memory block is open (128).

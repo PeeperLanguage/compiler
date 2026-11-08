@@ -1,5 +1,5 @@
-// What a temporary cannot do, as in Rust: outlive its statement, except kept
-// by a `let` that lends it, or give up an element that moves. Writing into one
+// What a temporary cannot do: outlive its statement, except kept as long as
+// the variable a `let` or an assignment sets, or give up an element that moves. Writing into one
 // is lost and its address would outlive it, so both are errors. Through a
 // shared reference or slice that one holds, nothing is written, as through
 // one in a variable. A constant is not lent as writable: nothing would change
@@ -29,31 +29,12 @@ fn view(a: &[3]i32) -> &[]i32 in a {
     return a;
 }
 
-// Kept only by a `let` whose whole value lends it, not through a call.
-fn through_call() {
-    let r = id(&num());
-    println(r.*);
-}
-
-// A later assignment does not keep it.
-fn assigned_later() {
-    let r: &i32;
-    r = &num();
-    println(r.*);
-}
-
 fn returned(a: &i32) -> &[3]i32 in a {
     return &make();
 }
 
 fn moved() {
     let p = points()[0];
-}
-
-// The `let` keeps only what it lends itself: the slice, not the array.
-fn inner_not_kept() {
-    let e = &view(&make())[0];
-    println(e.*);
 }
 
 fn bump(n: &mut i32) {

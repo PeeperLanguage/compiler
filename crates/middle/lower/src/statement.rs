@@ -41,6 +41,14 @@ impl Lowering<'_> {
         }
     }
 
+    /// Puts `variable` in scope after the temporaries it keeps
+    /// (`Lowering::kept`), so they end just after it.
+    pub(super) fn declare(&mut self, variable: Id<mir::Variable>) {
+        let kept = std::mem::take(&mut self.kept[variable.index()]);
+        self.declared.extend(kept);
+        self.declared.push(variable);
+    }
+
     /// Ends the variables from `start` on in `declared` at the last
     /// character of `ending`, the code they end with (a block's `}`, a
     /// statement's `;`), and forgets them: the code after does not have them.
@@ -69,11 +77,7 @@ impl Lowering<'_> {
             // they end with it, as in Rust.
             let temporaries = self.declared.len();
             match self.thir.stmts[statement] {
-                thir::Stmt::Let {
-                    variable,
-                    value,
-                    keeps_temporaries,
-                } => {
+                thir::Stmt::Let { variable, value } => {
                     let declared = lowered_variable(variable);
                     if let Some(value) = value {
                         let value = self.lower_expr(value)?;
@@ -81,11 +85,8 @@ impl Lowering<'_> {
                         let store = mir::InstructionKind::Store { place, value };
                         self.emit(store, TypeId::VOID, span);
                     }
-                    if !keeps_temporaries {
-                        self.close_scopes(temporaries, span);
-                    }
-                    self.declared.extend(self.kept.take());
-                    self.declared.push(declared);
+                    self.close_scopes(temporaries, span);
+                    self.declare(declared);
                     return Some(());
                 }
                 thir::Stmt::Assign { target, value } => {

@@ -166,12 +166,6 @@ fn MovedWhileLent() {
     d.value.* = 3;
 }
 
-// A temporary in a field ends with its statement.
-fn TemporaryInField() {
-    let p = Pair.{ first = &5, second = &6 };
-    println(p.first.*);
-}
-
 // A reference to a struct in a field carries what the struct holds.
 fn ThroughWrapped() {
     let mut a = 1;

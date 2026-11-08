@@ -63,4 +63,17 @@ fn main() {
     let view: &Shape = &Circle.{ radius = 3 };
     println("view", view.area());
     println("retired", s.retire());
+    // The value a `let` or an assignment gives a variable keeps the struct
+    // it holds as long as that variable, through `&` and `in` too.
+    let mut picked: Shape = Square.{ side = 1 };
+    if AREA > 0 {
+        picked = Circle.{ radius = 1 };
+    }
+    let through = back(Square.{ side = 3 });
+    let lent: &Shape = &back(Square.{ side = 4 });
+    let mut last: Shape = Square.{ side = 0 };
+    for side in 0..3 {
+        last = Square.{ side = side };
+    }
+    println("kept", picked.area(), through.area(), lent.area(), last.area());
 }

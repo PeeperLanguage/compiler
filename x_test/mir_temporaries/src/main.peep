@@ -1,6 +1,6 @@
 // Where each temporary ends: with its statement; before the branch for an
-// `if` or a loop condition, in each pass; with its side of `&&`; and at the
-// block's end when a `let` lends it.
+// `if` or a loop condition, in each pass; with its side of `&&` there; and
+// with the variable a `let` gives a value made with it, a side of `&&` too.
 
 fn make() -> i32 {
     return 1;
@@ -18,6 +18,9 @@ fn main() {
     }
     for look(&make()) {
         break;
+    }
+    if look(&make()) && look(&make()) {
+        println(2);
     }
     let both = look(&make()) && look(&make());
 }

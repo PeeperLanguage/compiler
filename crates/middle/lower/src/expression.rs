@@ -259,7 +259,7 @@ impl Lowering<'_> {
                 thir::ExprKind::Temporary {
                     variable,
                     value,
-                    kept,
+                    kept_by,
                 } => {
                     let span = self.thir.exprs.span(outer);
                     let value = self.lower_expr(value)?;
@@ -270,9 +270,8 @@ impl Lowering<'_> {
                         TypeId::VOID,
                         span,
                     );
-                    if kept {
-                        self.kept = Some(temporary);
-                    } else {
+                    // A kept one is in `declared` with its variable (`declare`).
+                    if kept_by.is_none() {
                         self.declared.push(temporary); // until its statement ends
                     }
                     break variable;

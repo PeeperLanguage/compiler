@@ -75,13 +75,17 @@ impl ThirBuilder<'_, '_> {
     }
 
     /// `target = value;`, where the target is a mutable variable, a field of
-    /// one, or what a `&mut` reference refers to.
+    /// one, or what a `&mut` reference refers to. A whole variable keeps the
+    /// temporaries of its value, as a `let` does.
     pub(super) fn assign(&mut self, target: Id<ast::Expr>, value: Id<ast::Expr>) -> Option<Stmt> {
         let Some(target) = self.assigned_place(target) else {
             self.add_expr(value, None); // for its own errors
             return None;
         };
         let value = self.add_required(value, self.body.exprs[target].ty);
+        if let ExprKind::Variable(variable) = self.body.exprs[target].kind {
+            self.body.keep_temporaries(value, variable);
+        }
         Some(Stmt::Assign { target, value })
     }
 

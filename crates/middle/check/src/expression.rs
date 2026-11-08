@@ -176,8 +176,8 @@ impl ThirBuilder<'_, '_> {
 
     /// The struct `expr`, written at `span`, as the owned interface `to`:
     /// moved into a hidden variable, which the interface views as a `&mut`
-    /// reference would, so it lives as long as that variable (a `let`
-    /// keeps it to the end of its block).
+    /// reference would, so it lives as long as that variable (a `let` or an
+    /// assignment keeps it as long as the variable it sets).
     fn owned_interface(&mut self, expr: Expr, span: Span, to: TypeId) -> Expr {
         let target = expr.ty;
         let Some(implementation) = self.checker.implementation(target, to, span) else {
@@ -188,7 +188,7 @@ impl ThirBuilder<'_, '_> {
         let kind = ExprKind::Temporary {
             variable,
             value,
-            kept: false,
+            kept_by: None,
         };
         let stored = self.body.add(Expr { ty: target, kind }, span);
         let ty = (self.checker.types).intern(Type::Reference {

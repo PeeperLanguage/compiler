@@ -19,5 +19,9 @@ stderr_contains = [
     "main.peep:44:13\n",
     "`retire` takes `self` whole, so it cannot be called through `&Shape`",
     "main.peep:50:18\n",
-    "Compilation failed with 7 error(s)",
+    "a temporary value is gone while a `&mut` reference to it is still in use",
+    "main.peep:70:5\n",
+    "a temporary value is changed while a `&mut` reference to it is still in use",
+    "main.peep:78:16\n",
+    "Compilation failed with 9 error(s)",
 ]

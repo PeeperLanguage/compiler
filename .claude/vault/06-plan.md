@@ -22,12 +22,16 @@ interface, allocator and type parameter work below, in PR #182. Order of work
    structs cannot hold references yet.
 5. [~] Owned `Shape` (owner, 2026-11-08, `owned-interfaces.localplan.md`):
    made by a plain move, `let s: Shape = square;`; it lives as long as the
-   struct it took; heap data is freed with `memory::Release(s)` through the
-   allocator the `Shape` keeps.
+   struct it took. No heap `Shape`: like an integer, it lives on the
+   stack (owner, 2026-11-08).
    - [x] Step 1: stack data, on `feature/owned-interfaces` (stacked on PR
-     #185) (worklog, "Owned interfaces, step 1").
-   - [ ] Step 2: heap data: the allocator word, a call that makes a heap
-     `Shape`, per-value loans, `memory::Release`.
+     #185) (31eb13d3) (worklog, "Owned interfaces, step 1").
+   - [-] Functions that make a `Shape` (one struct per function): built,
+     then removed, not committed (owner, 2026-11-09; worklog, "Owned
+     interfaces, step 2").
+   - [~] Every temporary of a `let`'s or an assignment's value kept as
+     long as the variable it sets (worklog, "Temporaries kept as long as
+     their holder").
    - [ ] Step 3: structs and arrays holding a `Shape`.
    - [ ] The Website, once the feature is complete.
 6. [~] Type parameters (owner, 2026-11-06, `type-parameters.localplan.md`):

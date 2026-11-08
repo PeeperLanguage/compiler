@@ -173,4 +173,9 @@ fn main() {
     println(sum(writable...));
     writable[0] = 9;
     println(writable[0]);
+    println("23. a `let` keeps the array a result borrows from:");
+    let kept = largest(7, 8);
+    let pair = [2]i32{3, 6};
+    let copied = largest(pair...);
+    println(kept.*, copied.*);
 }

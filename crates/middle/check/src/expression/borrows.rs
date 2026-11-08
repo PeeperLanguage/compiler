@@ -109,7 +109,7 @@ impl ThirBuilder<'_, '_> {
             kind: ExprKind::Temporary {
                 variable,
                 value,
-                kept: false,
+                kept_by: None,
             },
         };
         (variable, decider)

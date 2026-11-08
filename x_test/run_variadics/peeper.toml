@@ -28,4 +28,5 @@ stdout_contains = [
     "20. in a condition:\ngreater\n",
     "21. a `for` keeps the array of its call to the loop's end:\n30\n40\n3\n4\n",
     "22. a `&mut []` read by `...T` is usable after:\n7\n9\n",
+    "23. a `let` keeps the array a result borrows from:\n8 6\n",
 ]

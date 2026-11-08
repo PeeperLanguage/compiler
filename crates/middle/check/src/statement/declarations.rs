@@ -10,7 +10,6 @@ use model::constant::Constant;
 use model::layout::in_memory;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
-use model::thir::Expr;
 use model::thir::ExprKind;
 use model::thir::Local;
 use model::thir::Stmt;
@@ -89,36 +88,12 @@ impl ThirBuilder<'_, '_> {
                 ),
             );
         }
-        if let Some(value) = value {
-            self.keep_temporary(value);
-        }
         let variable = self.body.add(declared_variable, name.span);
+        if let Some(value) = value {
+            self.body.keep_temporaries(value, variable);
+        }
         self.declare(name, Local::Variable(variable));
-        Stmt::Let {
-            variable,
-            value,
-            keeps_temporaries: false,
-        }
-    }
-
-    /// Keeps the temporary that `value`, a `let`'s value, lends itself to the
-    /// end of the block, as Rust does for `let r = &make();`, or that an
-    /// interface made from it views: `let s: Shape = square;`. Any other in
-    /// `value`, such as a call's argument, still ends with the `let`.
-    fn keep_temporary(&mut self, value: Id<Expr>) {
-        let value = match self.body.exprs[value].kind {
-            ExprKind::ToInterface { reference, .. } => reference,
-            _ => value,
-        };
-        let (ExprKind::Borrow(place) | ExprKind::Slice { array: place, .. }) =
-            self.body.exprs[value].kind
-        else {
-            return;
-        };
-        let (start, _) = self.place_root(place);
-        if let ExprKind::Temporary { kept, .. } = &mut self.body.exprs[start].kind {
-            *kept = true;
-        }
+        Stmt::Let { variable, value }
     }
 
     /// `const name: ty = value;`: a name for a value known at compile time.
