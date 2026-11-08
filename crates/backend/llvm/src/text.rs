@@ -71,11 +71,11 @@ pub(crate) fn type_text(types: &Types, ty: TypeId) -> impl Display {
         Type::CString | Type::Reference { .. } | Type::RawPointer { .. } => out.write_str("ptr"),
         Type::Slice { .. } | Type::Str => out.write_str("%slice"),
         // The address it views, then its methods' table.
-        Type::InterfaceReference { .. } => out.write_str("{ ptr, ptr }"),
+        Type::InterfaceReference { .. } | Type::Interface { .. } => out.write_str("{ ptr, ptr }"),
         Type::Struct { .. } | Type::Range { .. } | Type::Array { .. } => {
             unreachable!("a value kept in memory is bytes to LLVM (`memory_text`)")
         }
-        Type::Invalid | Type::Function { .. } | Type::Interface { .. } => {
+        Type::Invalid | Type::Function { .. } => {
             unreachable!("MIR holds no value of this type")
         }
         Type::Alias { .. } => unreachable!("indexing looks through aliases"),

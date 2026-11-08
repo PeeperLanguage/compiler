@@ -1344,3 +1344,46 @@ The decision log, with every item kept and why, is
   and run-time indexes. Breaking each of those four parts of `flow::loans`
   was seen to fail it.
 - `scripts/check.sh`: all pass.
+
+## Owned interfaces, step 1 (2026-11-08, `feature/owned-interfaces`)
+
+Design with the owner in `owned-interfaces.localplan.md`: a `Shape` is made
+by a plain move and lives as long as the struct it took; step 1 is stack
+data only, two words, no `Release` (its first use is step 2).
+
+- `Type::Interface` is the owned interface's type, laid out as an
+  `InterfaceReference` (`layout`, LLVM `{ ptr, ptr }`, debug info, the
+  interpreter's `Register::Interface`). `holds_loans` is `Some(true)` and
+  `holders_in` is 1: it holds a `&mut` loan.
+- A struct where a `Shape` is expected is `Conversion::ToInterface`;
+  `ThirBuilder::owned_interface` moves it into a hidden `Temporary` and
+  makes a `ToInterface` of a `&mut` `Borrow` of it. `keep_temporary` looks
+  through `ToInterface`, so a `let` keeps it to the end of its block; this
+  also accepts `let r: &Shape = &Square.{ ... };`, refused before.
+- Calls on a `Shape` find the method in its table; a `self` method is
+  allowed only on an owned one and moves it. `&s` and `&self` lower to a
+  `Borrow` of `s.*` (`behind`, which replaces `slice_elements`), which
+  `Place::lent_again` gives as `s`'s two words; a place a `&Shape` views
+  already ends in that step, so none is added.
+- Refused for now (T0043): a `Shape` struct field, array element, type
+  argument, `extern` parameter, raw pointer target. Escape errors name the
+  interface: T0016 "a `Shape` result needs a parameter to come from",
+  T0036 "returns an interface holding a temporary value".
+- Known limit: `let s: Shape; s = square;` and `let t = back(Square.{ ...
+  });` are refused, as only a `let` of the conversion keeps the hidden
+  variable.
+- Found for step 2: loans are decided by type, so `fn Make(..., heap: &mut
+  Heap) -> Shape` would tie every result to `heap`; the loan check must
+  decide per value (owner agreed to design it in step 2).
+- Fixtures: `run_owned_interfaces`, `run_i686_owned_interfaces` (native,
+  release and the interpreter agree), `negative_owned_interfaces` (7
+  errors). `negative_interfaces`, `negative_size_of`,
+  `negative_reference_arrays` get the new refusals. The Rust test of
+  interface conversions checks struct-to-`Shape`, its loan facts and its
+  layout on x86_64 and i686. Seen to fail: `holds_loans` of `Shape` as
+  `None`, `keep_temporary` not looking through `ToInterface`, and the extra
+  `Dereference` added to a `&Shape`'s place (a crash in
+  `run_i686_interfaces`).
+- Not done: the benchmark was not run; the Website waits until the feature
+  is complete.
+- `scripts/check.sh`: all pass.

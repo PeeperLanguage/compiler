@@ -10,6 +10,8 @@ use super::builtin_doc;
 use super::integer;
 use crate::DefId;
 use crate::ModuleId;
+use crate::layout::layout;
+use crate::machine::Machine;
 
 /// Every built-in type name has a doc; an integer's range is right at
 /// each edge of how it is worked out, and one as wide as a pointer says
@@ -206,9 +208,26 @@ fn interface_references() {
         (edit, view, Conversion::Reborrow),
         (view, edit, Conversion::Never),
         (view, to_square, Conversion::Never),
+        (square, shape, Conversion::ToInterface), // moved into an owned one
+        (TypeId::F64, shape, Conversion::Never),
+        (to_square, shape, Conversion::Never),
+        (shape, view, Conversion::Never),
     ];
     for (from, to, conversion) in cases {
         assert_eq!(types.conversion(from, to), conversion, "{from:?} to {to:?}");
+    }
+    // An owned interface holds one `&mut` loan, on the struct it took, and
+    // is laid out as an interface reference.
+    assert_eq!(
+        (types.holders_in(shape), types.holds_loans(shape)),
+        (1, Some(true))
+    );
+    for machine in ["x86_64-linux", "i686-linux"] {
+        let machine = Machine::named(machine).unwrap();
+        assert_eq!(
+            layout(&types, shape, machine),
+            layout(&types, view, machine)
+        );
     }
     let text = |ty| {
         types.text(ty, |definition| {

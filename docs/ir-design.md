@@ -533,6 +533,20 @@ itself (`Types::lends_slice_elements`, which the write check and lowering
 both ask). `s.len` loads the slice, never moving a `&mut []`, and takes
 its field 1: a read of the slice, as `s.len()` borrows it in Rust.
 
+An owned interface (`Shape`, `Type::Interface`) is laid out as an interface
+reference: the address of the struct it took and that struct's table. A
+struct where a `Shape` is expected (`Conversion::ToInterface`) is moved into
+a hidden variable, a `Temporary` that a `let` keeps to the end of its block,
+and THIR's `ToInterface` of a `&mut` `Borrow` of it views it; so the
+`Shape` holds a `&mut` loan on that variable (`Types::holds_loans`), and
+the loan check keeps it inside the struct's block and refuses it as a
+result with no parameter to borrow from (T0016). A borrow of a `Shape`
+place, `&s` or a method's `&self`, is a `Borrow` of `s.*`, which lends
+again what it views as its own two words (`Place::lent_again`); a method
+taking `self` whole moves `s` and gets the struct's address. A `Shape` is
+not yet a struct field, an array element, a type argument or behind a raw
+pointer (T0043).
+
 `&a[i..j]` (or `&mut`, or `..=`) is THIR's `Slice` of the array place `a`,
 each end left out or an integer of any type, as an index is; ends known at
 compile time are checked there. Lowering makes it one `Borrow` of the place

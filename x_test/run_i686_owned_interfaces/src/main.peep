@@ -1,0 +1,66 @@
+// Structs moved into owned interfaces: the interface views the struct it
+// took, which lives as long as the interface's block; a method taking `self`
+// whole takes the interface.
+iface Shape {
+    fn area(&self) -> i32,
+    fn grow(&mut self, by: i32),
+    fn retire(self) -> i32
+}
+
+struct Square { side: i32 }
+fn Square::area(&self) -> i32 { return self.side * self.side; }
+fn Square::grow(&mut self, by: i32) { self.side = self.side + by; }
+fn Square::retire(self) -> i32 { return self.side; }
+
+struct Circle { radius: i32 }
+fn Circle::area(&self) -> i32 { return 3 * self.radius * self.radius; }
+fn Circle::grow(&mut self, by: i32) { self.radius = self.radius + by; }
+fn Circle::retire(self) -> i32 { return -self.radius; }
+
+fn show(shape: &Shape) {
+    println("area", shape.area());
+}
+
+fn grown(shape: &mut Shape) {
+    shape.grow(2);
+}
+
+fn twice(shape: Shape) -> i32 {
+    return shape.area() * 2;
+}
+
+fn back(shape: Shape) -> Shape {
+    return shape;
+}
+
+fn area_of(side: i32) -> i32 {
+    let shape: Shape = Square.{ side = side };
+    return shape.area();
+}
+
+const AREA: i32 = area_of(6);
+
+fn main() {
+    let square = Square.{ side = 2 };
+    let mut s: Shape = square;
+    s.grow(1);
+    show(&s);
+    grown(&mut s);
+    println("grown", s.area());
+    println("twice", twice(Circle.{ radius = 1 }));
+    let c: Shape = Circle.{ radius = 2 };
+    let kept = back(back(c));
+    println("kept", kept.area(), kept.retire());
+    let mut total: i32 = 0;
+    for side in 0..3 {
+        let mut each: Shape = Square.{ side = side };
+        each.grow(1);
+        total = total + each.area();
+    }
+    println("total", total);
+    println("const", AREA);
+    // A `let` keeps a struct lent to a `&Shape` to the end of its block too.
+    let view: &Shape = &Circle.{ radius = 3 };
+    println("view", view.area());
+    println("retired", s.retire());
+}

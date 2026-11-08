@@ -9,7 +9,7 @@ stderr_contains = [
     "main.peep:12:13\n",
     "`cstr` is C text of any length, so it has no fixed size",
     "main.peep:13:13\n",
-    "owned interface values are not supported yet",
+    "owned interfaces as type arguments are not supported yet",
     "main.peep:14:13\n",
     "`x` is a value, not a type",
     "main.peep:15:13\n",

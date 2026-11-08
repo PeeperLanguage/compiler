@@ -1,0 +1,23 @@
+name = "negative_owned_interfaces"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = [
+    "a `Shape` result needs a parameter to come from: a struct the function moves into it is gone once it returns",
+    "main.peep:15:17\n",
+    "returns an interface holding a temporary value, which is gone once the function returns",
+    "main.peep:22:5\n",
+    "`square` is used after it was moved",
+    "main.peep:28:13\n",
+    "`s` is used after it was moved",
+    "main.peep:33:25\n",
+    "cannot mutably borrow immutable `s`",
+    "main.peep:38:5\n",
+    "`s` is moved while a reference to it is still in use",
+    "main.peep:44:13\n",
+    "`retire` takes `self` whole, so it cannot be called through `&Shape`",
+    "main.peep:50:18\n",
+    "Compilation failed with 7 error(s)",
+]

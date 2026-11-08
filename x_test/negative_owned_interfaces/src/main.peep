@@ -1,0 +1,60 @@
+// What the checks refuse for owned interfaces: one cannot outlive the
+// struct it took, a struct or interface moved away is gone, and a change
+// through one needs `mut` and no other loan of it in use.
+iface Shape {
+    fn area(&self) -> i32,
+    fn grow(&mut self, by: i32),
+    fn retire(self) -> i32
+}
+
+struct Square { side: i32 }
+fn Square::area(&self) -> i32 { return self.side * self.side; }
+fn Square::grow(&mut self, by: i32) { self.side = self.side + by; }
+fn Square::retire(self) -> i32 { return self.side; }
+
+fn escapes() -> Shape {
+    let s: Shape = Square.{ side = 2 };
+    return s;
+}
+
+fn replaced(given: Shape) -> Shape {
+    let made: Shape = Square.{ side = 1 };
+    return made;
+}
+
+fn taken() {
+    let square = Square.{ side = 2 };
+    let s: Shape = square;
+    println(square.side, s.area());
+}
+
+fn retired() {
+    let s: Shape = Square.{ side = 2 };
+    println(s.retire(), s.area());
+}
+
+fn fixed() {
+    let s: Shape = Square.{ side = 2 };
+    s.grow(1);
+}
+
+fn lent() {
+    let mut s: Shape = Square.{ side = 2 };
+    let view = &s;
+    println(s.retire(), view.area());
+}
+
+fn through_reference() {
+    let mut s: Shape = Square.{ side = 2 };
+    let edit = &mut s;
+    println(edit.retire());
+}
+
+fn main() {
+    replaced(Square.{ side = 3 });
+    taken();
+    retired();
+    fixed();
+    lent();
+    through_reference();
+}

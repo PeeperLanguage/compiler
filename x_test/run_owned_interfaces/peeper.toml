@@ -1,0 +1,7 @@
+name = "run_owned_interfaces"
+build = "program"
+
+[test]
+mode = "run"
+outcome = "success"
+stdout_contains = ["area 9\ngrown 25\ntwice 6\nkept 12 -2\ntotal 14\nconst 36\nview 27\nretired 5\n"]

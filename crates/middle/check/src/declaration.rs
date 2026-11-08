@@ -75,7 +75,12 @@ impl Checker<'_> {
                     // itself, however deep, is a cycle, as is one a reference
                     // field reaches: a reference's target is a complete type.
                     // A raw pointer's need not be (`resolve_type`).
-                    field_types.push(self.resolve_value_type(ty));
+                    let mut field = self.resolve_value_type(ty);
+                    if self.is_interface(field) {
+                        field =
+                            self.not_supported(tree.types.span(ty), "owned interfaces in structs");
+                    }
+                    field_types.push(field);
                 }
                 // Invalid when a field is, as an array is when its element
                 // is, so no later phase lays out a field it cannot.
@@ -584,6 +589,11 @@ impl Checker<'_> {
                 };
                 let message = if self.types[result].borrows().is_some() {
                     format!("a {kind} result needs a {kind} parameter to borrow from")
+                } else if self.is_interface(result) {
+                    let ty = self.type_text(result);
+                    format!(
+                        "a `{ty}` result needs a parameter to come from: a struct the function moves into it is gone once it returns"
+                    )
                 } else {
                     "a result holding references needs a parameter that holds one".to_owned()
                 };
@@ -618,8 +628,8 @@ impl Checker<'_> {
     }
 
     /// `resolve_value_type` of `resolved`, the type written `ty`. An
-    /// interface is used through a reference; only an interface method's
-    /// `self` taken whole has its type.
+    /// interface method's `self` taken whole is the interface being checked,
+    /// so it stays a name.
     fn value_type(&mut self, resolved: TypeId, ty: Id<ast::Type>) -> TypeId {
         let tree = &self.module().ast;
         if let ast::Type::Owner = tree.types[ty]
@@ -631,12 +641,9 @@ impl Checker<'_> {
         self.value_type_at(resolved, span)
     }
 
-    /// `resolved`, written at `span`, as a value's type: an interface is
-    /// used only through a reference, and a named type is checked.
+    /// `resolved`, written at `span`, as a value's type: a named type is
+    /// checked.
     fn value_type_at(&mut self, resolved: TypeId, span: Span) -> TypeId {
-        if self.is_interface(resolved) {
-            return self.not_supported(span, "owned interface values");
-        }
         match self.types[resolved] {
             Type::Named(definition) => self.declared_type(definition, span),
             _ => resolved,
@@ -677,6 +684,9 @@ impl Checker<'_> {
             }
             Type::InterfaceReference { .. } => {
                 self.not_supported(span, "interface references in `extern` functions")
+            }
+            Type::Interface { .. } => {
+                self.not_supported(span, "owned interfaces in `extern` functions")
             }
             // C could keep what the target holds, which no loan would follow.
             Type::Reference { target, .. } if self.types.holds_loans(target).is_some() => {
@@ -957,6 +967,9 @@ impl Checker<'_> {
     pub(crate) fn resolve_type_argument(&mut self, argument: Id<ast::Expr>) -> TypeId {
         let resolved = self.expression_type(argument);
         let span = self.module().ast.exprs.span(argument);
+        if self.is_interface(resolved) {
+            return self.not_supported(span, "owned interfaces as type arguments");
+        }
         self.value_type_at(resolved, span)
     }
 

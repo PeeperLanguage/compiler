@@ -359,10 +359,10 @@ impl ThirBuilder<'_, '_> {
     }
 
     /// The function `name` of the struct `value` is or points to, or the
-    /// method `name` of the interface reference `value` is, called with a
-    /// dot written at `span`: the place of the struct, or of what the
-    /// interface reference views, which the call gives as `self`, the
-    /// callee, and its type.
+    /// method `name` of the interface or interface reference `value` is,
+    /// called with a dot written at `span`: the place of the struct, of the
+    /// interface, or of what the interface reference views, which the call
+    /// gives as `self`, the callee, and its type.
     fn method(
         &mut self,
         value: Id<ast::Expr>,
@@ -370,10 +370,13 @@ impl ThirBuilder<'_, '_> {
         span: Span,
     ) -> Option<(Id<Expr>, Callee, TypeId)> {
         let value = self.add_expr(value, None);
-        if let Type::InterfaceReference { interface, .. } =
-            self.checker.types[self.body.exprs[value].ty]
-        {
-            return self.interface_method(value, interface, name);
+        let ty = self.body.exprs[value].ty;
+        match self.checker.types[ty] {
+            Type::InterfaceReference { interface, .. } => {
+                return self.interface_method(value, interface, name);
+            }
+            Type::Interface { .. } => return self.interface_method(value, ty, name),
+            _ => {}
         }
         let place = self.through_pointer(value, self.body.exprs.span(value));
         let ty = self.body.exprs[place].ty;
@@ -475,13 +478,13 @@ impl ThirBuilder<'_, '_> {
         Some((Callee::Function(copy), ty))
     }
 
-    /// The method `name` of the interface reference `reference`, to
-    /// `interface`, as `method` gives it: its place in the interface's
-    /// table. A method taking `self` whole is not called through a
-    /// reference.
+    /// The method `name` of `interface` that `value`, an interface or a
+    /// reference to one, calls, as `method` gives it: its place in the
+    /// interface's table. A method taking `self` whole is called only on an
+    /// interface, which it takes.
     fn interface_method(
         &mut self,
-        reference: Id<Expr>,
+        value: Id<Expr>,
         interface: TypeId,
         name: Ident,
     ) -> Option<(Id<Expr>, Callee, TypeId)> {
@@ -517,6 +520,10 @@ impl ThirBuilder<'_, '_> {
         let Type::Function { parameters, .. } = &self.checker.types[signature] else {
             unreachable!("a method's type is a function type")
         };
+        let callee = Callee::Method(slot as u32);
+        let Type::InterfaceReference { .. } = self.checker.types[self.body.exprs[value].ty] else {
+            return Some((value, callee, signature)); // an interface, the place itself
+        };
         if !matches!(
             self.checker.types[parameters[0]],
             Type::InterfaceReference { .. }
@@ -527,8 +534,8 @@ impl ThirBuilder<'_, '_> {
                 .error(diagnostics::INVALID_OPERATION, message, name.span);
             return None;
         }
-        let place = self.through_pointer(reference, self.body.exprs.span(reference));
-        Some((place, Callee::Method(slot as u32), signature))
+        let place = self.through_pointer(value, self.body.exprs.span(value));
+        Some((place, callee, signature))
     }
 
     /// Whether the function `function`, called with a dot at `span`, takes

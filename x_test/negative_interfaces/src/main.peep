@@ -31,7 +31,7 @@ fn show(s: &Shape) {
     s.parts();
 }
 
-fn owned(s: Shape) {}
+struct Holder { s: Shape }
 fn pointer(p: *Shape) {}
 
 fn main() {

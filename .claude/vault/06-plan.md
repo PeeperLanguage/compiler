@@ -20,7 +20,16 @@ interface, allocator and type parameter work below, in PR #182. Order of work
 4. [-] `String`: skipped (owner, 2026-11-06). When it comes back: it
    takes a `&mut Allocator` on each call that allocates or frees, since
    structs cannot hold references yet.
-5. [ ] Owned `Shape`: explicit allocation, or moving in an existing one.
+5. [~] Owned `Shape` (owner, 2026-11-08, `owned-interfaces.localplan.md`):
+   made by a plain move, `let s: Shape = square;`; it lives as long as the
+   struct it took; heap data is freed with `memory::Release(s)` through the
+   allocator the `Shape` keeps.
+   - [x] Step 1: stack data, on `feature/owned-interfaces` (stacked on PR
+     #185) (worklog, "Owned interfaces, step 1").
+   - [ ] Step 2: heap data: the allocator word, a call that makes a heap
+     `Shape`, per-value loans, `memory::Release`.
+   - [ ] Step 3: structs and arrays holding a `Shape`.
+   - [ ] The Website, once the feature is complete.
 6. [~] Type parameters (owner, 2026-11-06, `type-parameters.localplan.md`):
    a `const T: type` parameter takes a type known when compiling, and each
    type gets its own copy of the function; a plain `T: type` is refused for

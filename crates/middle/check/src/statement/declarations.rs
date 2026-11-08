@@ -102,9 +102,14 @@ impl ThirBuilder<'_, '_> {
     }
 
     /// Keeps the temporary that `value`, a `let`'s value, lends itself to the
-    /// end of the block, as Rust does for `let r = &make();`. Any other in
+    /// end of the block, as Rust does for `let r = &make();`, or that an
+    /// interface made from it views: `let s: Shape = square;`. Any other in
     /// `value`, such as a call's argument, still ends with the `let`.
     fn keep_temporary(&mut self, value: Id<Expr>) {
+        let value = match self.body.exprs[value].kind {
+            ExprKind::ToInterface { reference, .. } => reference,
+            _ => value,
+        };
         let (ExprKind::Borrow(place) | ExprKind::Slice { array: place, .. }) =
             self.body.exprs[value].kind
         else {

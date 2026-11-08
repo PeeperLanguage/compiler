@@ -154,7 +154,7 @@ impl<'b> Interpreter<'b, '_> {
                     length: self.read_word(address + self.pointer_bytes(), span)?,
                 });
             }
-            Type::InterfaceReference { .. } => {
+            Type::InterfaceReference { .. } | Type::Interface { .. } => {
                 return Ok(Register::Interface {
                     address: self.read_word(address, span)?,
                     table: self.read_word(address + self.pointer_bytes(), span)?,

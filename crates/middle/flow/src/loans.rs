@@ -838,9 +838,14 @@ impl Loans<'_> {
         errors: &mut Vec<(u32, Diagnostic)>,
     ) {
         // Named by what the function returns: a reference into a slice's
-        // elements is still a reference.
-        let words = self.words(self.body.result);
-        let (returned, into) = (words.noun, words.into);
+        // elements is still a reference; an owned interface holds the struct
+        // it took.
+        let returned = if let Type::Interface { .. } = self.types[self.body.result] {
+            "an interface holding".to_owned()
+        } else {
+            let words = self.words(self.body.result);
+            format!("a {} {}", words.noun, words.into)
+        };
         for &loan in loans {
             if reported.has(loan) {
                 continue;
@@ -857,9 +862,8 @@ impl Loans<'_> {
                     continue;
                 }
                 let name = self.variable_name(place.variable, file);
-                let message = format!(
-                    "returns a {returned} {into} {name}, which is gone once the function returns"
-                );
+                let message =
+                    format!("returns {returned} {name}, which is gone once the function returns");
                 let error = Diagnostic::new(diagnostics::LOCAL_ADDRESS_RETURNED, message)
                     .label(file, span, "");
                 // A borrow inside the `return` is already shown.
@@ -879,8 +883,7 @@ impl Loans<'_> {
                 }
                 let parameter = self.body.variables.span(Id::from_index(position as usize));
                 let name = file.slice(parameter);
-                let message =
-                    format!("returns a {returned} {into} `{name}`, which `in` does not name");
+                let message = format!("returns {returned} `{name}`, which `in` does not name");
                 Diagnostic::new(diagnostics::INVALID_RETURN, message)
                     .label(file, span, "")
                     .help(format!("add `{name}` to `in`"), Vec::new())

@@ -105,18 +105,20 @@ impl Function<'_, '_, '_> {
     }
 
     /// The global holding the table of `implementation`, which an interface
-    /// reference of the type `ty` calls, written once per module with a
-    /// `declare` of each method (the module leaves out those it defines). A
-    /// method's `self` is an address: a reference's, or a struct's kept in
-    /// memory.
+    /// reference or owned interface of the type `ty` calls, written once per
+    /// module with a `declare` of each method (the module leaves out those it
+    /// defines). A method's `self` is an address: a reference's, or a
+    /// struct's kept in memory.
     pub(super) fn method_table(&mut self, implementation: ImplementationId, ty: TypeId) -> String {
         let table = format!("@.table.{}", implementation.index());
         if !self.module.written.tables.insert(implementation) {
             return table;
         }
         let types = self.types;
-        let Type::InterfaceReference { interface, .. } = types[ty] else {
-            unreachable!("a table is made for an interface reference")
+        let interface = match types[ty] {
+            Type::InterfaceReference { interface, .. } => interface,
+            Type::Interface { .. } => ty,
+            _ => unreachable!("a table is made for an interface or interface reference"),
         };
         let Type::Interface {
             methods: signatures,
