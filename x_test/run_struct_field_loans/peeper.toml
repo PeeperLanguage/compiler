@@ -1,0 +1,7 @@
+name = "run_struct_field_loans"
+build = "program"
+
+[test]
+mode = "run"
+outcome = "success"
+stdout_contains = ["2 3\n2 3\n2 3\n2 3\n1 3\n5\n3 7\n3 7\n"]

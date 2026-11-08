@@ -1,11 +1,12 @@
 // What a struct holding references may not do: one error per function, each
-// refused by Rust too unless it says otherwise.
+// a real hazard. `run_struct_field_loans` has what is safe and accepted.
 struct Pair { first: &i32, second: &i32 }
 struct Outer { pair: Pair, count: i32 }
 struct Mark { label: &i32, count: i32 }
 struct Counter { value: &mut i32 }
 struct Grid { cells: &mut []i32 }
 struct Wrap { inner: &Pair }
+struct Two { left: &mut i32, right: &mut i32 }
 
 fn pair_of(a: &i32, b: &i32) -> Pair {
     return Pair.{ first = a, second = b };
@@ -50,22 +51,7 @@ fn Dangling() {
     println(p.first.*);
 }
 
-// Using any part of a struct uses all of it, even with two lifetimes in Rust.
-fn OtherField() {
-    let mut a = 1;
-    let b = 2;
-    let p = Pair.{ first = &a, second = &b };
-    a = 3;
-    println(p.second.*);
-}
-
-fn PlainField() {
-    let mut a = 1;
-    let m = Mark.{ label = &a, count = 2 };
-    a = 3;
-    println(m.count);
-}
-
+// Using a struct whole uses what every field holds.
 fn WholeUse() {
     let mut a = 1;
     let b = 2;
@@ -74,26 +60,7 @@ fn WholeUse() {
     look(&p);
 }
 
-// A move takes every loan along.
-fn Moved() {
-    let mut a = 1;
-    let b = 2;
-    let p = Pair.{ first = &a, second = &b };
-    let q = p;
-    a = 3;
-    println(q.second.*);
-}
-
-// Writing a field adds to its loans, as `first` of a struct stays one lifetime.
-fn FieldWrite() {
-    let mut a = 1;
-    let b = 2;
-    let mut p = Pair.{ first = &a, second = &b };
-    p.first = &b;
-    a = 3;
-    println(p.first.*);
-}
-
+// A field written on one path only may still hold what it held.
 fn FieldWriteOnOnePath(flag: bool) {
     let mut a = 1;
     let b = 2;
@@ -199,15 +166,6 @@ fn MovedWhileLent() {
     d.value.* = 3;
 }
 
-fn NestedField() {
-    let mut a = 1;
-    let b = 2;
-    let mut o = Outer.{ pair = Pair.{ first = &b, second = &b }, count = 1 };
-    o.pair = Pair.{ first = &a, second = &b };
-    a = 3;
-    println(o.count);
-}
-
 // A temporary in a field ends with its statement.
 fn TemporaryInField() {
     let p = Pair.{ first = &5, second = &6 };
@@ -282,5 +240,54 @@ fn ReadWholeFromBehindAReference() {
     second_source = 3;
     println(second.*);
 }
+
+// Writing one field replaces only its loans: `first` still holds `a`.
+fn OtherFieldWritten() {
+    let mut a = 1;
+    let b = 2;
+    let mut p = Pair.{ first = &a, second = &b };
+    p.second = &b;
+    a = 3;
+    println(p.first.*);
+}
+
+// A field written again no longer names what was lent through it, but the
+// reference taken through it still points at `n`.
+fn ReferenceThroughReplacedField() {
+    let mut n = 1;
+    let mut m = 2;
+    let mut c = Counter.{ value = &mut n };
+    let r = &mut c.value.*;
+    c.value = &mut m;
+    n = 5;
+    r.* = 3;
+}
+
+// Writing `right` ends no loan taken through `left`.
+fn OtherFieldReplacedKeepsLoan() {
+    let mut x = 1;
+    let mut y = 2;
+    let mut z = 3;
+    let mut t = Two.{ left = &mut x, right = &mut y };
+    let r = &mut t.left.*;
+    t.right = &mut z;
+    t.left.* = 5;
+    r.* = 4;
+}
+
+// Two fields deep: writing `h.two.right` ends no loan taken through
+// `h.two.left`, though both start with `h.two`.
+fn DeepOtherFieldKeepsLoan() {
+    let mut x = 1;
+    let mut y = 2;
+    let mut z = 3;
+    let mut h = Nest.{ two = Two.{ left = &mut x, right = &mut y } };
+    let r = &mut h.two.left.*;
+    h.two.right = &mut z;
+    h.two.left.* = 5;
+    r.* = 4;
+}
+
+struct Nest { two: Two }
 
 fn main() {}

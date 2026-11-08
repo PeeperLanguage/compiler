@@ -52,11 +52,7 @@ fn slice_through_shared(g: &Grid) {
     part[0] = 1;
 }
 
-// `&[]Pair`, `[2]Pair` and `*Pair` do not say which reference is which.
-fn elements(pairs: &[]Pair) {}
-
-fn array(pairs: [2]Pair) {}
-
+// Nothing follows a raw pointer to say what it may point into.
 fn pointer(p: *Pair) {
     let read = p.*.first;
 }

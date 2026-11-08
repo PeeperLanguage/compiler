@@ -363,9 +363,7 @@ impl ThirBuilder<'_, '_> {
             (_, Type::Named(_)) => TypeId::INVALID,
             (Type::RawPointer { .. }, _) => {
                 let span = self.body.exprs.span(reference);
-                let held = self
-                    .checker
-                    .loan_free_held_type(target, "raw pointers to", span);
+                let held = self.checker.reached_through_pointer(target, span);
                 held.unwrap_or(TypeId::INVALID)
             }
             _ => target,

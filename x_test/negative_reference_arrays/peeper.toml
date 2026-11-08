@@ -1,0 +1,42 @@
+name = "negative_reference_arrays"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = [
+    "`a` is gone while a reference to it is still in use",
+    "main.peep:13:5\n",
+    "`a` is changed while a reference to it is still in use",
+    "main.peep:21:5\n",
+    "main.peep:32:5\n",
+    "main.peep:40:5\n",
+    "main.peep:50:5\n",
+    "main.peep:60:5\n",
+    "assignments of references through a reference are not supported yet",
+    "main.peep:67:5\n",
+    "cannot move an element out of its array",
+    "main.peep:73:13\n",
+    "a result holding references needs a parameter that holds one",
+    "main.peep:77:22\n",
+    "`x` is borrowed as `&mut` while a `&mut` reference to it is still in use",
+    "main.peep:84:37\n",
+    "raw pointers to arrays holding references are not supported yet",
+    "main.peep:90:13\n",
+    "raw pointers to references are not supported yet",
+    "main.peep:93:26\n",
+    "owned interface values are not supported yet",
+    "main.peep:95:21\n",
+    "`[1]&Shape` cannot be printed",
+    "main.peep:101:13\n",
+    "`[4097]&i32` holds more than 4096 references and slices",
+    "main.peep:105:19\n",
+    "references to arrays holding references in `extern` functions are not supported yet",
+    "main.peep:108:16\n",
+    "cannot mutably borrow immutable `view`",
+    "main.peep:113:22\n",
+    "main.peep:119:5\n",
+    "`numbers` is borrowed as `&mut` while a `&mut` reference to it is still in use",
+    "main.peep:126:17\n",
+    "Compilation failed with 19 error(s)",
+]

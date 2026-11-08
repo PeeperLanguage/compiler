@@ -1,0 +1,130 @@
+// What arrays and slices of references refuse: one error per function, each
+// a real hazard. `run_reference_arrays` has what is safe and accepted.
+iface Shape { fn Area(&self) -> f64 }
+struct Square { side: f64 }
+fn Square::Area(&self) -> f64 { return self.side * self.side; }
+
+// The element outlives what it points at.
+fn OutlivesElement() {
+    let mut refs = [2]&i32{ &1, &2 };
+    {
+        let a = 1;
+        refs[0] = &a;
+    }
+    println(refs[0].*);
+}
+
+fn ChangedWhileHeld() {
+    let mut a = 1;
+    let b = 2;
+    let refs = [2]&i32{ &a, &b };
+    a = 5;
+    println(refs[0].*);
+}
+
+// An index known only when the program runs may be any element.
+fn UnknownIndexStoreAdds(i: usize) {
+    let mut a = 1;
+    let b = 2;
+    let c = 3;
+    let mut refs = [2]&i32{ &b, &c };
+    refs[i] = &a;
+    a = 5;
+    println(refs[1].*);
+}
+
+fn UnknownIndexRead(i: usize) {
+    let mut a = 1;
+    let b = 2;
+    let refs = [2]&i32{ &a, &b };
+    a = 5;
+    println(refs[i].*);
+}
+
+// A spread may put any part in any element.
+fn SpreadKeeps() {
+    let mut a = 1;
+    let b = 2;
+    let first = [1]&i32{ &a };
+    let refs = [2]&i32{ first..., &b };
+    a = 5;
+    println(refs[1].*);
+}
+
+// An element written on one path only may still hold what it held.
+fn OnePath(flag: bool) {
+    let mut a = 1;
+    let b = 2;
+    let mut refs = [1]&i32{ &a };
+    if flag { refs[0] = &b; }
+    a = 5;
+    println(refs[0].*);
+}
+
+// The caller's slice would outlive `a` unseen.
+fn ThroughSlice(values: &mut []&i32) {
+    let a = 1;
+    values[0] = &a;
+}
+
+fn MoveOut() {
+    let mut x = 1;
+    let muts = [1]&mut i32{ &mut x };
+    let m = muts[0];
+    println(m.*);
+}
+
+fn ReturnsLocal() -> [1]&i32 {
+    let a = 1;
+    return [1]&i32{ &a };
+}
+
+fn TwoMuts() {
+    let mut x = 1;
+    let muts = [2]&mut i32{ &mut x, &mut x };
+    println(muts[0].*);
+}
+
+// Nothing follows a raw pointer to say what it may point into.
+fn Pointer(p: *[2]&i32) {
+    println(p.*[0].*);
+}
+
+fn PointerToReference(p: *&i32) {}
+
+fn Owned(shapes: [2]Shape) {}
+
+// An interface reference prints nothing of its own yet.
+fn PrintShapes() {
+    let square = Square.{ side = 2.0 };
+    let shapes = [1]&Shape{ &square };
+    println(shapes);
+}
+
+// The loan check keeps every element apart.
+fn TooMany(refs: &[4097]&i32) {}
+
+#[extern("takes")]
+fn takes(refs: &[2]&i32);
+
+fn ImmutableView() {
+    let numbers = [1]i32{ 1 };
+    let view: &[]i32 = &numbers;
+    let place = &mut view;
+}
+
+// A slice repointed while its index is worked out would be read past the
+// length checked before.
+fn Repoint(view: &mut &[]i32, other: &[]i32) {
+    view.* = other;
+}
+
+// The same constant index twice is one place.
+fn SameElementTwice() {
+    let mut numbers = [2]i32{ 1, 2 };
+    let first = &mut numbers[1];
+    let again = &mut numbers[1];
+    first.* = 5;
+}
+
+fn main() {}

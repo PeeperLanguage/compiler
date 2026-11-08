@@ -13,8 +13,7 @@ stderr_contains = [
     "index `-1i64` is outside `[3]i32`, whose length is 3",
     "an index must be an integer, found `bool`",
     "`i32` cannot be indexed",
-    "arrays of references are not supported yet",
     "an array length is a whole number without a suffix",
     "cannot assign to `c[0]` of immutable `c`",
-    "Compilation failed with 11 error(s)",
+    "Compilation failed with 10 error(s)",
 ]

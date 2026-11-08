@@ -1,7 +1,7 @@
 // What the checks on MIR reject in arrays: moving an element out, a change
-// while an element is lent (any two elements may be one), and setting an
-// element of an array that is not set yet; a returned reference to one
-// element holds the whole array.
+// while an element is lent (an index known only when the program runs may
+// be any element), and setting an element of an array that is not set yet;
+// a returned reference to one element holds the whole array.
 struct Name { text: &cstr }
 struct Holder { tokens: [2]i32 }
 
@@ -21,9 +21,9 @@ fn moved() {
     let taken = names[0];
 }
 
-fn lent() {
+fn lent(at: usize) {
     let mut values = [2]i32{1, 2};
-    let first = &mut values[0];
+    let first = &mut values[at];
     values[1] = 3;
     first.* = 4;
 }
@@ -35,7 +35,7 @@ fn unset() {
 
 fn main() {
     moved();
-    lent();
+    lent(0);
     unset();
     returned();
 }

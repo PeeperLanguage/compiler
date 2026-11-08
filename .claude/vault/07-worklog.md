@@ -1272,3 +1272,75 @@ The decision log, with every item kept and why, is
 - Open for the owner: L0003 used by check; the lexer ends a line at a bare
   `\r` while line numbers count `\n` only; whether to delete the fixtures'
   unused `program_args` support.
+
+### Loans per holder (2026-11-08, `feature/reference-arrays`)
+
+- Owner: accept what Peeper proves safe even when Rust refuses it; refuse
+  only real hazards. Structs change too; one set of loans per array element.
+- `flow::loans`: reading a place uses only the holders under it; a store to
+  a place naming its holders exactly (fields, constant indexes) replaces
+  their loans and ends the `loans_through` entries under it.
+- Fixtures: five safe cases moved from `negative_struct_loans` to the new
+  `run_struct_field_loans` (the old compiler refuses all of them);
+  `negative_struct_loans` gains four real hazards (30 errors), one of them
+  two fields deep. Breaking the prefix match was seen to drop an error.
+- Old against new `check` on every fixture and example: only
+  `negative_struct_loans` changed (6 errors gone). Benchmark 3,883.5 M to
+  3,876.7 M instructions.
+
+### References in arrays and slices (2026-11-08, `feature/reference-arrays`)
+
+- Types: `holders_in([N]T)` is `N * holders_in(T)` (saturating),
+  `holds_loans([N]T)` is `T`'s. Arrays and slices take any element but an
+  owned interface (`Checker::element_type`); references may refer to
+  references and slices. Raw pointers still reach no reference, slice or
+  interface reference (`written_pointer_target`), and nothing holding one
+  through `.*` or `@` (`reached_through_pointer`). An array holds at most 4,096
+  references and slices (P0011), as a struct does.
+- `flow::loans`: a constant index narrows a place to one element; an index
+  known only when the program runs names every element, a read using all
+  and a store adding to each; `ArrayParts` (a spread) gives every element
+  the loans of every part.
+- Bug found and fixed: a borrow of a slice place was always taken as the
+  slice lent again (its elements), in lowering and in the write check, so
+  `&view` as `&&[]i32` crashed at run time and `&mut view` of a `let mut`
+  slice was refused. One owner now: `Types::lends_slice_elements`.
+- T0016 reads "a result holding references needs a parameter that holds
+  one"; the `extern` refusal names what the reference reaches.
+- Fixtures: `run_reference_arrays` and `run_i686_reference_arrays`;
+  `negative_reference_arrays` (18 errors, each a real hazard);
+  `negative_arrays`, `negative_interfaces`, `negative_references`,
+  `negative_slices`, `negative_struct_references` lose the cases now
+  accepted. Rust test `arrays_hold_each_elements_holders`. Constant indexes
+  of 1 in the run fixture were seen to fail when the element offset was
+  not multiplied by the element's holders.
+- Old (622f13e0) against new `check` on every fixture and example: only
+  the six fixtures above differ, by the removed refusals, step 1's six and
+  the T0016 wording.
+- Cost: benchmark 3,886.4 M instructions (+0.07% on 622f13e0, +0.25% on
+  step 1). A function holding `[4096]&i32` checks in 0.29 s and 8 MB.
+- References nest as deep as the source now: `hash_type` and
+  `Types::real_text` walk them inside `source::grow_stack`, as for raw
+  pointers; `checks_deeply_nested_statements` builds 50,000 levels of
+  `& &[]` and overflowed the stack without each.
+- Open: a chain of borrows each holding the one before (`& & & x`, or
+  `let r2 = &r1.*;` repeated) checks in about cubic time, as every borrow
+  holds all the loans inside it: 1,000 deep 0.79 s, 4,000 deep 60 s.
+  622f13e0 takes 44.8 s at 1,000 and over 120 s at 2,000, so per-holder
+  liveness made it faster; not fixed here.
+- Review fixes (2026-11-08): two indexes known while compiling overlap only
+  when equal, so `&mut muts[0]` and `&mut muts[1]` live together (seen to
+  fail without it); the 4,096 limit's message is built once
+  (`reports_too_many_holders`); the raw pointer checks share one body and
+  lose their always-same `holder` words; `step_store`'s ended filter is
+  flattened. `negative_reference_arrays` gains the same index twice (19);
+  `negative_array_flow`'s `lent` borrows at a run-time index, as
+  `&mut values[0]` then `values[1] = 3` is now accepted. Seven overlap
+  attacks (same constant, run-time against constant both ways, subslice,
+  row, same nested cell, whole array) stay refused.
+- Rust test `array_elements_keep_their_own_loans` (compile crate, as `flow`
+  cannot read source): element offset, nested arrays, run-time index store
+  and read, ended loans through a repointed element, overlap of constant
+  and run-time indexes. Breaking each of those four parts of `flow::loans`
+  was seen to fail it.
+- `scripts/check.sh`: all pass.
