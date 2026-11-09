@@ -1,7 +1,7 @@
 // A value not in a variable can be lent, indexed or gone through: it is a
 // temporary, kept until its statement ends, or, when it is made in the value
-// a `let` or an assignment gives a variable, as long as that variable. It is
-// computed where written, so the order stays.
+// a `let` or an assignment gives a variable, a field or an element of it, as
+// long as that variable. It is computed where written, so the order stays.
 
 struct Point { row: i32, col: i32 }
 struct Pair { first: &i32, second: &i32 }
@@ -180,4 +180,10 @@ fn main() {
     println("20. kept through a method's self:");
     let row = point().Row();
     println(row.*);
+    println("21. a field or element set keeps it too:");
+    let mut set = Pair.{ first = &1, second = &2 };
+    set.first = &read(&40);
+    let mut refs = [2]&i32{&1, &2};
+    refs[1] = &read(&2);
+    println(set.first.* + set.second.*, refs[0].* + refs[1].*);
 }

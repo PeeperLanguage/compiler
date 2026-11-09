@@ -92,8 +92,6 @@ fn Pointer(p: *[2]&i32) {
 
 fn PointerToReference(p: *&i32) {}
 
-fn Owned(shapes: [2]Shape) {}
-
 // An interface reference prints nothing of its own yet.
 fn PrintShapes() {
     let square = Square.{ side = 2.0 };

@@ -500,10 +500,12 @@ value is stored into where it is computed, so it runs in the order written,
 and the place starts there. As in Rust, a temporary ends with its statement;
 one in an `if` or loop condition ends before the branch, in each pass, and
 one in a side of `&&` or `||` with that side. The value a `let` gives its
-variable, or an assignment gives a whole variable, keeps every temporary made
-in computing it as long as that variable (`let r = &make();`, `r =
-&make();`, `let r = id(&num());`, `let p = Pair.{ first = &5, second = &6
-};`), so whatever loan the variable may hold lasts as long as it does; the
+variable, or an assignment gives a place in a variable's own storage (the
+variable, or a field or element of it, not behind a reference:
+`ThirBuilder::place_root` finds no pointer), keeps every temporary made in
+computing it as long as that variable (`let r = &make();`, `r = &make();`,
+`p.first = &make()[0];`, `let r = id(&num());`, `let p = Pair.{ first =
+&5, second = &6 };`), so whatever loan the variable may hold lasts as long as it does; the
 loan check follows uses, so keeping one nothing holds refuses nothing. The
 checker marks each with the variable as `kept_by` (`Body::keep_temporaries`,
 over every part of the value); lowering finds them before any code and puts
@@ -550,9 +552,12 @@ the loan check keeps it inside the struct's block and refuses it as a
 result with no parameter to borrow from (T0016). A borrow of a `Shape`
 place, `&s` or a method's `&self`, is a `Borrow` of `s.*`, which lends
 again what it views as its own two words (`Place::lent_again`); a method
-taking `self` whole moves `s` and gets the struct's address. A `Shape` is
-not yet a struct field, an array element, a type argument or behind a raw
-pointer (T0043).
+taking `self` whole moves `s` and gets the struct's address. A struct
+field, an array or slice element holds a `Shape` as it holds any loan
+holder (`Types::holders_in`, `layout`): `h.shape = Circle.{ radius = 1 };`
+and `all[1] = Circle.{ radius = 1 };` keep the new struct as long as `h`
+and `all`. A `Shape` is not yet a type argument, reached through a raw
+pointer, or set through a reference (T0043), the rules of any loan holder.
 
 `&a[i..j]` (or `&mut`, or `..=`) is THIR's `Slice` of the array place `a`,
 each end left out or an integer of any type, as an index is; ends known at

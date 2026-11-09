@@ -1471,3 +1471,42 @@ variable a `let` or `=` gives it to" (`Loans::broken_loan`). Naming the
 keeping variable was not done: the loan check reads MIR, which does not
 record it. `negative_temporaries` checks the new words; `docs/ir-design.md`
 updated.
+
+## Owned interfaces, step 3 (2026-11-09, `feature/owned-interfaces`)
+
+Owner: finish owned interfaces before the feature-interface redesign
+(`feature-interface.localplan.md`), so it starts from a complete system.
+
+- A struct field, an array or slice element can be a `Shape`. The model
+  already answered for one as a container needs (`layout` two words,
+  `holds_loans` `&mut`, `holders_in` 1, `is_copy` no); two guards blocked
+  it: `not_supported("owned interfaces in structs")` in the struct check
+  and `element_type`'s "{holder} interfaces", whose reason ("an interface
+  held whole has no size") stopped being true with step 1. Both removed;
+  `element_type` lost its unused `holder` and `span`, and so did
+  `reference_type`, `reference_to` and `check_borrow` up the chain.
+- `*Shape` is now refused where it is reached, as `*Holder` of any struct
+  holding loans (`reached_through_pointer`); `loan_holder_text` names it
+  "owned interfaces" (it fell into "structs holding references").
+- An assignment to a place in a variable's own storage (no pointer on the
+  path, `place_root`) keeps its value's temporaries as long as that
+  variable, not only a whole variable: `h.shape = Circle.{ radius = 2 };`,
+  `all[1] = Circle.{ radius = 3 };`, and for plain references
+  `p.first = &read(&40);`. One behind a reference or slice is not kept
+  (storage the variable does not own); assigning a loan holder through a
+  reference stays refused by the existing rule (T0043, lifetimes of
+  references in structs, Later).
+- Still refused, by the general rules: a field or element moved out
+  (T0035), a function returning a struct holding a `Shape` with nothing to
+  borrow from (T0016), a struct made in a loop body kept in an outer array,
+  an element set in each pass while an older one views the same storage.
+- Fixtures: `run_owned_interfaces`, `run_i686_owned_interfaces` (held 7 16,
+  all 3 31, grown all 16 12); `negative_owned_interfaces` 14 errors (five
+  holder cases); `negative_interfaces` 13 (`struct Holder` gone, `*Shape`
+  reached at 34:39); `negative_reference_arrays` 18 (`[2]Shape` gone);
+  `run_temporaries` 21 (a field and an element set). Seen to fail: the
+  place rule back to whole variables only (both run fixtures fail). A
+  `const` run with held shapes (memory checked) gives 83, as native,
+  interpreter and i686 do.
+- Not done: a `Shape` as a type argument, in `extern` functions, or set
+  through a reference (each its own rule, refused).

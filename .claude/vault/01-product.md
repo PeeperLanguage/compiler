@@ -74,7 +74,7 @@ as few walks per body as possible; one owner per fact.
   interfaces (`let s: Shape = square;`), with `self` methods; a temporary
   lasts as long as the variable a `let` or an assignment gives it to, so
   `s = Circle.{ radius = 1 };` picks the struct while the program runs;
-  `Shape` in structs and arrays not yet.
+  `Shape` in structs, arrays and slices.
 - **Planned order:** lifetimes of references in structs; enums and `match`
   with `?T`; strings, generics; port the Go
   fixtures.

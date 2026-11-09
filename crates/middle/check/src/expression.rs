@@ -343,7 +343,7 @@ impl ThirBuilder<'_, '_> {
                 .error(diagnostics::INVALID_ASSIGNMENT, message, span);
             return Expr::INVALID;
         }
-        self.check_borrow(mutable, place, span)
+        self.check_borrow(mutable, place)
     }
 
     /// An expression of a kind that `what` names, at `span`, which no check

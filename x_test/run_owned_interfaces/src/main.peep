@@ -17,6 +17,23 @@ fn Circle::area(&self) -> i32 { return 3 * self.radius * self.radius; }
 fn Circle::grow(&mut self, by: i32) { self.radius = self.radius + by; }
 fn Circle::retire(self) -> i32 { return -self.radius; }
 
+// A struct, array or slice holds a `Shape` as it holds any value.
+struct Holder { name: i32, shape: Shape }
+
+fn total_area(shapes: &[]Shape) -> i32 {
+    let mut sum = 0;
+    for shape in shapes {
+        sum = sum + shape.area();
+    }
+    return sum;
+}
+
+fn grow_all(shapes: &mut []Shape) {
+    for shape in shapes {
+        shape.grow(1);
+    }
+}
+
 fn show(shape: &Shape) {
     println("area", shape.area());
 }
@@ -63,8 +80,8 @@ fn main() {
     let view: &Shape = &Circle.{ radius = 3 };
     println("view", view.area());
     println("retired", s.retire());
-    // The value a `let` or an assignment gives a variable keeps the struct
-    // it holds as long as that variable, through `&` and `in` too.
+    // A struct made in the value a `let` or an assignment gives a variable
+    // lasts as long as that variable.
     let mut picked: Shape = Square.{ side = 1 };
     if AREA > 0 {
         picked = Circle.{ radius = 1 };
@@ -76,4 +93,14 @@ fn main() {
         last = Square.{ side = side };
     }
     println("kept", picked.area(), through.area(), lent.area(), last.area());
+    let mut holder = Holder.{ name = 7, shape = Square.{ side = 3 } };
+    holder.shape.grow(1);
+    println("held", holder.name, holder.shape.area());
+    holder.shape = Circle.{ radius = 2 };
+    let mut all = [3]Shape{Square.{ side = 1 }, Circle.{ radius = 1 }, Square.{ side = 2 }};
+    all[2] = Circle.{ radius = 3 };
+    println("all", all[1].area(), total_area(&all));
+    grow_all(&mut all);
+    let moved = holder;
+    println("grown all", total_area(&all[0..2]), moved.shape.area());
 }

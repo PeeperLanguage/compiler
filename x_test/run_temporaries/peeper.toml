@@ -26,4 +26,5 @@ stdout_contains = [
     "18. an assignment keeps it too:\n  make\n30\n",
     "19. kept in a struct or an array:\n  make\n  make\n11 30\n",
     "20. kept through a method's self:\n1\n",
+    "21. a field or element set keeps it too:\n42 3\n",
 ]

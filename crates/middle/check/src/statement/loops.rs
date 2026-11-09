@@ -320,7 +320,7 @@ impl ThirBuilder<'_, '_> {
         let Some(mutable) = borrow else {
             return (read, element);
         };
-        let ty = self.checker.reference_type(mutable, element, span);
+        let ty = self.checker.reference_type(mutable, element);
         let reference = Expr {
             ty,
             kind: ExprKind::Borrow(read),

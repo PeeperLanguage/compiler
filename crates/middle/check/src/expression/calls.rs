@@ -65,10 +65,10 @@ impl ThirBuilder<'_, '_> {
                 let lent = match types[ty] {
                     Type::Reference { target, .. } => {
                         let reference = self.body.exprs[printed].clone();
-                        let shared = self.checker.reference_type(false, target, span);
+                        let shared = self.checker.reference_type(false, target);
                         self.reborrow(reference, span, shared)
                     }
-                    _ => self.check_borrow(false, printed, span),
+                    _ => self.check_borrow(false, printed),
                 };
                 printed = self.body.add(lent, span);
             }
@@ -274,7 +274,7 @@ impl ThirBuilder<'_, '_> {
             let argument = match self.checker.types[parameters[0]] {
                 Type::Reference { mutable, .. } | Type::InterfaceReference { mutable, .. } => {
                     let span = self.body.exprs.span(place);
-                    let borrowed = self.check_borrow(mutable, place, span);
+                    let borrowed = self.check_borrow(mutable, place);
                     self.body.add(borrowed, span)
                 }
                 _ => place,

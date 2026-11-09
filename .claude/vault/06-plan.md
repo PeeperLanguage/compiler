@@ -32,7 +32,8 @@ interface, allocator and type parameter work below, in PR #182. Order of work
    - [x] Every temporary of a `let`'s or an assignment's value kept as
      long as the variable it sets (1193d2c7) (worklog, "Temporaries kept as
      long as their holder").
-   - [ ] Step 3: structs and arrays holding a `Shape`.
+   - [x] Step 3: structs, arrays and slices holding a `Shape` (worklog,
+     "Owned interfaces, step 3").
    - [ ] The Website, once the feature is complete.
 6. [~] Type parameters (owner, 2026-11-06, `type-parameters.localplan.md`):
    a `const T: type` parameter takes a type known when compiling, and each
