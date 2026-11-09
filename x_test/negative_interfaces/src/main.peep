@@ -31,8 +31,7 @@ fn show(s: &Shape) {
     s.parts();
 }
 
-fn owned(s: Shape) {}
-fn pointer(p: *Shape) {}
+fn pointer(p: *Shape) -> f64 { return p.*.area(); }
 
 fn main() {
     let sq = Square.{ side = 2.0 };

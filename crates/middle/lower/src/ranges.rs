@@ -260,7 +260,7 @@ impl Lowering<'_> {
             let place = mir::Place::whole(variable);
             let store = mir::InstructionKind::Store { place, value };
             self.emit(store, TypeId::VOID, self.mir.variables.span(variable));
-            self.declared.push(variable);
+            self.declare(variable);
         }
         let bool = TypeId::BOOL;
         let more = match included {

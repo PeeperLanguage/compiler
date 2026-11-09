@@ -2,7 +2,7 @@
 // a spread where no array or `...` parameter takes it, a slice spread beside
 // other arguments, an array or slice passed without `...`, a shared slice for
 // a `...mut T`, and what any argument rejects: a value moved twice, a result
-// that borrows from a temporary array after that array is gone, writing to
+// that borrows from a temporary array returned past it, writing to
 // what a result borrows, and `&mut` of what cannot be written. A call does not
 // run in a constant, as building a slice does not run at compile time.
 struct Point { row: i32 }
@@ -62,16 +62,6 @@ fn array_moved() -> i32 {
 
 fn slice_of_moved(points: &[]Point) {
     rows(1, points...);
-}
-
-fn gone() -> i32 {
-    let r = largest(7, 8);
-    return r.*;
-}
-
-fn copy_gone(a: [2]i32) -> i32 {
-    let r = largest(a...);
-    return r.*;
 }
 
 fn returned(kept: &i32) -> &i32 {

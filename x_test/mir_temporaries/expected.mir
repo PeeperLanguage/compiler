@@ -46,5 +46,23 @@ fn main:
     goto bb5
   bb5:
     %31 = phi bb3: false, bb4: %29: bool
-    store both.7, %31
+    branch %31 (look(&make()) && look(&make())) bb6 bb7
+  bb6:
+    println(2)
+    goto bb7
+  bb7:
+    %33 = call make(): i32
+    store _.7, %33
+    %35 = borrow _.7: &i32
+    %36 = call look(%35): bool
+    branch %36 (look(&make())) bb8 bb9
+  bb8:
+    %37 = call make(): i32
+    store _.8, %37
+    %39 = borrow _.8: &i32
+    %40 = call look(%39): bool
+    goto bb9
+  bb9:
+    %41 = phi bb7: false, bb8: %40: bool
+    store both.9, %41
     fall off at `}`

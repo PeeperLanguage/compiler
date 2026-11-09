@@ -20,7 +20,11 @@ stdout_contains = [
     "12. slice of a kept temporary:\n  make\n30\n",
     "13. a call's `&mut` result lent as shared:\n7\n6\n",
     "14. a loop's code keeps all its temporaries:\n  make\n10\n20\n  make\n0\n1\n2\n",
-    "15. an argument in a `let` ends with it:\n  make\n",
+    "15. an argument a call's `in` names is kept too:\n  make\n10\n",
     "16. kept in each pass:\n  make\n10\n  make\n  make\n30\n",
     "17. a literal takes the type wanted:\n5000000000\n6000000000\n201\n",
+    "18. an assignment keeps it too:\n  make\n30\n",
+    "19. kept in a struct or an array:\n  make\n  make\n11 30\n",
+    "20. kept through a method's self:\n1\n",
+    "21. a field or element set keeps it too:\n42 3\n",
 ]

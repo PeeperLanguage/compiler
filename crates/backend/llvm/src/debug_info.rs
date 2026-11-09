@@ -184,7 +184,7 @@ impl Metadata {
                 return Some(composite);
             }
             // Its address and its methods' table, neither of a known type.
-            Type::InterfaceReference { .. } => {
+            Type::InterfaceReference { .. } | Type::Interface { .. } => {
                 let name = model::program::type_text(&program.modules, types, ty);
                 let composite = self.reserve();
                 let pointer = self.add(format_args!(
@@ -217,7 +217,7 @@ impl Metadata {
                     comma_separated(ranges)
                 )
             }
-            Type::Invalid | Type::Void | Type::Function { .. } | Type::Interface { .. } => {
+            Type::Invalid | Type::Void | Type::Function { .. } => {
                 unreachable!("MIR holds no value of this type")
             }
             Type::Struct {

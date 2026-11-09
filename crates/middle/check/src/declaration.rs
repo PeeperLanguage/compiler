@@ -584,6 +584,11 @@ impl Checker<'_> {
                 };
                 let message = if self.types[result].borrows().is_some() {
                     format!("a {kind} result needs a {kind} parameter to borrow from")
+                } else if self.is_interface(result) {
+                    let ty = self.type_text(result);
+                    format!(
+                        "a `{ty}` result needs a parameter to come from: a struct the function moves into it is gone once it returns"
+                    )
                 } else {
                     "a result holding references needs a parameter that holds one".to_owned()
                 };
@@ -618,8 +623,8 @@ impl Checker<'_> {
     }
 
     /// `resolve_value_type` of `resolved`, the type written `ty`. An
-    /// interface is used through a reference; only an interface method's
-    /// `self` taken whole has its type.
+    /// interface method's `self` taken whole is the interface being checked,
+    /// so it stays a name.
     fn value_type(&mut self, resolved: TypeId, ty: Id<ast::Type>) -> TypeId {
         let tree = &self.module().ast;
         if let ast::Type::Owner = tree.types[ty]
@@ -631,12 +636,9 @@ impl Checker<'_> {
         self.value_type_at(resolved, span)
     }
 
-    /// `resolved`, written at `span`, as a value's type: an interface is
-    /// used only through a reference, and a named type is checked.
+    /// `resolved`, written at `span`, as a value's type: a named type is
+    /// checked.
     fn value_type_at(&mut self, resolved: TypeId, span: Span) -> TypeId {
-        if self.is_interface(resolved) {
-            return self.not_supported(span, "owned interface values");
-        }
         match self.types[resolved] {
             Type::Named(definition) => self.declared_type(definition, span),
             _ => resolved,
@@ -678,6 +680,9 @@ impl Checker<'_> {
             Type::InterfaceReference { .. } => {
                 self.not_supported(span, "interface references in `extern` functions")
             }
+            Type::Interface { .. } => {
+                self.not_supported(span, "owned interfaces in `extern` functions")
+            }
             // C could keep what the target holds, which no loan would follow.
             Type::Reference { target, .. } if self.types.holds_loans(target).is_some() => {
                 let what = self.loan_holder_text(target);
@@ -695,21 +700,10 @@ impl Checker<'_> {
     }
 
     /// The real type of `element`, for an array, slice, reference or raw
-    /// pointer written at `span` that holds or reaches it, so `[2]Meters` is
-    /// `[2]f64` under an alias; `None` when it is invalid, or after reporting
-    /// an interface held whole, which has no size. `holder` starts the
-    /// message: "arrays of".
-    pub(crate) fn element_type(
-        &mut self,
-        element: TypeId,
-        holder: &str,
-        span: Span,
-    ) -> Option<TypeId> {
+    /// pointer that holds or reaches it, so `[2]Meters` is `[2]f64` under an
+    /// alias; `None` when it is invalid.
+    pub(crate) fn element_type(&self, element: TypeId) -> Option<TypeId> {
         if self.types[element] == Type::Invalid {
-            return None;
-        }
-        if self.is_interface(element) {
-            self.not_supported(span, &format!("{holder} interfaces"));
             return None;
         }
         Some(self.types.real(element))
@@ -737,7 +731,7 @@ impl Checker<'_> {
         span: Span,
         loans: impl Fn(&Types, TypeId) -> Option<bool>,
     ) -> Option<TypeId> {
-        let target = self.element_type(target, "raw pointers to", span)?;
+        let target = self.element_type(target)?;
         if loans(&self.types, target).is_none() {
             return Some(target);
         }
@@ -752,21 +746,22 @@ impl Checker<'_> {
             Type::Reference { .. } => "references",
             Type::Slice { .. } => "slices",
             Type::InterfaceReference { .. } => "interface references",
+            Type::Interface { .. } => "owned interfaces",
             Type::Array { .. } => "arrays holding references",
             _ => "structs holding references",
         }
     }
 
-    /// `&target`, or `&mut target` when `mutable`, written or borrowed at
-    /// `span` (`element_type`); an interface reference to an interface.
-    pub(crate) fn reference_type(&mut self, mutable: bool, target: TypeId, span: Span) -> TypeId {
+    /// `&target`, or `&mut target` when `mutable` (`element_type`); an
+    /// interface reference to an interface.
+    pub(crate) fn reference_type(&mut self, mutable: bool, target: TypeId) -> TypeId {
         if self.is_interface(target) {
             return self.types.intern(Type::InterfaceReference {
                 mutable,
                 interface: target,
             });
         }
-        match self.element_type(target, "references to", span) {
+        match self.element_type(target) {
             Some(target) => self.types.intern(Type::Reference { mutable, target }),
             None => TypeId::INVALID,
         }
@@ -775,7 +770,7 @@ impl Checker<'_> {
     /// `[length]element`, written at `span` (`element_type`), holding at
     /// most `MOST_HOLDERS` references and slices.
     pub(crate) fn array_type(&mut self, element: TypeId, length: u64, span: Span) -> TypeId {
-        let Some(element) = self.element_type(element, "arrays of", span) else {
+        let Some(element) = self.element_type(element) else {
             return TypeId::INVALID;
         };
         let ty = self.types.array(element, length);
@@ -932,22 +927,16 @@ impl Checker<'_> {
         Some(TypeId::INVALID)
     }
 
-    /// `&target` or `&mut target`, written at `span`, of `target` resolved
-    /// and written at `target_span`: an interface is referred to as it is,
-    /// any other type as a value's type.
-    fn reference_to(
-        &mut self,
-        mutable: bool,
-        target: TypeId,
-        target_span: Span,
-        span: Span,
-    ) -> TypeId {
+    /// `&target` or `&mut target`, of `target` resolved and written at
+    /// `target_span`: an interface is referred to as it is, any other type as
+    /// a value's type.
+    fn reference_to(&mut self, mutable: bool, target: TypeId, target_span: Span) -> TypeId {
         let target = if self.is_interface(target) {
             target
         } else {
             self.value_type_at(target, target_span)
         };
-        self.reference_type(mutable, target, span)
+        self.reference_type(mutable, target)
     }
 
     /// The value type the argument `argument` is read as where a parameter
@@ -957,6 +946,9 @@ impl Checker<'_> {
     pub(crate) fn resolve_type_argument(&mut self, argument: Id<ast::Expr>) -> TypeId {
         let resolved = self.expression_type(argument);
         let span = self.module().ast.exprs.span(argument);
+        if self.is_interface(resolved) {
+            return self.not_supported(span, "owned interfaces as type arguments");
+        }
         self.value_type_at(resolved, span)
     }
 
@@ -978,7 +970,7 @@ impl Checker<'_> {
                         return view;
                     }
                     let resolved = self.expression_type(value);
-                    self.reference_to(mutable, resolved, target, span)
+                    self.reference_to(mutable, resolved, target)
                 }
                 ast::Expr::Index { value, index }
                     if let ast::Expr::Name = tree.exprs[value]
@@ -1067,7 +1059,7 @@ impl Checker<'_> {
                         return view;
                     }
                     let resolved = self.resolve_type(target);
-                    return self.reference_to(mutable, resolved, tree.types.span(target), span);
+                    return self.reference_to(mutable, resolved, tree.types.span(target));
                 }
                 ast::Type::Optional(_) => "optional types",
                 ast::Type::RawPointer => return TypeId::RAWPTR,
@@ -1107,7 +1099,7 @@ impl Checker<'_> {
                 } => unreachable!("the parser reads `[_]` only in an array literal, checked there"),
                 ast::Type::Slice { mutable, element } => {
                     let element = self.resolve_value_type(element);
-                    return match self.element_type(element, "slices of", span) {
+                    return match self.element_type(element) {
                         Some(element) => self.types.intern(Type::Slice { mutable, element }),
                         None => TypeId::INVALID,
                     };

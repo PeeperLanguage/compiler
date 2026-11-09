@@ -220,12 +220,13 @@ pub enum ExprKind {
     /// `value`, stored into the hidden `variable` where it is computed, so
     /// a place starts there: a value not in a variable (a call's result, a
     /// literal) that is lent, indexed or gone through. The variable ends
-    /// with the statement, as in Rust, or, when `kept`, with the block: a
-    /// `let`'s value lends it.
+    /// with the statement, or with `kept_by`, the variable a `let` declares
+    /// or an assignment sets with a value computed with it
+    /// (`Body::keep_temporaries`).
     Temporary {
         variable: Id<Variable>,
         value: Id<Expr>,
-        kept: bool,
+        kept_by: Option<Id<Variable>>,
     },
     /// `&array[start..end]`, `&mut` as the slice type `ty` says, or `..=`
     /// when `inclusive`: a slice of the elements of the array, a place as a
@@ -274,10 +275,6 @@ pub enum Stmt {
     Let {
         variable: Id<Variable>,
         value: Option<Id<Expr>>,
-        /// Whether the temporaries of its value last until its block ends,
-        /// not its statement: those of a `for` loop's array, which the loop
-        /// goes through.
-        keeps_temporaries: bool,
     },
     /// `target = value`; the target is a place: a `Variable`, a
     /// `Dereference`, or a `Field` or `Index` of a place.
@@ -381,6 +378,23 @@ impl Body {
         found
     }
 
+    /// Keeps every temporary made in computing `value`, the value a `let` or
+    /// an assignment gives the variable `kept_by`, as long as `kept_by`: so
+    /// what `kept_by` may hold a loan on lasts as long as it does.
+    pub fn keep_temporaries(&mut self, value: Id<Expr>, kept_by: Id<Variable>) {
+        // A list, not recursion: `id(id(...))` nests as deep as it is written.
+        let mut parts = vec![value];
+        while let Some(part) = parts.pop() {
+            if let ExprKind::Temporary { kept_by: kept, .. } = &mut self.exprs[part].kind {
+                *kept = Some(kept_by);
+            }
+            self.any_part(&self.exprs[part].kind, |inner| {
+                parts.push(inner);
+                false
+            });
+        }
+    }
+
     /// Whether `test` holds for an expression directly inside `kind`, tried
     /// in the order they are computed.
     fn any_part(&self, kind: &ExprKind, mut test: impl FnMut(Id<Expr>) -> bool) -> bool {
@@ -474,9 +488,7 @@ impl<N: Display, F: Fn(DefId) -> N + Copy> Printer<'_, F> {
     /// `depth + 1` levels in.
     fn write_statement(&mut self, statement: Id<Stmt>, depth: usize) {
         match self.body.stmts[statement] {
-            Stmt::Let {
-                variable, value, ..
-            } => {
+            Stmt::Let { variable, value } => {
                 let mutable = self.body.variables[variable].mutable;
                 self.out.push_str(if mutable { "let mut " } else { "let " });
                 self.write_variable(variable);
@@ -687,9 +699,10 @@ impl<N: Display, F: Fn(DefId) -> N + Copy> Printer<'_, F> {
             ExprKind::Temporary {
                 variable,
                 value,
-                kept,
+                kept_by,
             } => {
-                self.out.push_str(if *kept { "(kept " } else { "(" });
+                self.out
+                    .push_str(if kept_by.is_some() { "(kept " } else { "(" });
                 self.write_variable(*variable);
                 self.out.push_str(" = ");
                 self.write_expr(*value);

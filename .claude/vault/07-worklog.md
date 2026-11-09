@@ -1344,3 +1344,169 @@ The decision log, with every item kept and why, is
   and run-time indexes. Breaking each of those four parts of `flow::loans`
   was seen to fail it.
 - `scripts/check.sh`: all pass.
+
+## Owned interfaces, step 1 (2026-11-08, `feature/owned-interfaces`)
+
+Design with the owner in `owned-interfaces.localplan.md`: a `Shape` is made
+by a plain move and lives as long as the struct it took; step 1 is stack
+data only, two words, no `Release` (its first use is step 2).
+
+- `Type::Interface` is the owned interface's type, laid out as an
+  `InterfaceReference` (`layout`, LLVM `{ ptr, ptr }`, debug info, the
+  interpreter's `Register::Interface`). `holds_loans` is `Some(true)` and
+  `holders_in` is 1: it holds a `&mut` loan.
+- A struct where a `Shape` is expected is `Conversion::ToInterface`;
+  `ThirBuilder::owned_interface` moves it into a hidden `Temporary` and
+  makes a `ToInterface` of a `&mut` `Borrow` of it. `keep_temporary` looks
+  through `ToInterface`, so a `let` keeps it to the end of its block; this
+  also accepts `let r: &Shape = &Square.{ ... };`, refused before.
+- Calls on a `Shape` find the method in its table; a `self` method is
+  allowed only on an owned one and moves it. `&s` and `&self` lower to a
+  `Borrow` of `s.*` (`behind`, which replaces `slice_elements`), which
+  `Place::lent_again` gives as `s`'s two words; a place a `&Shape` views
+  already ends in that step, so none is added.
+- Refused for now (T0043): a `Shape` struct field, array element, type
+  argument, `extern` parameter, raw pointer target. Escape errors name the
+  interface: T0016 "a `Shape` result needs a parameter to come from",
+  T0036 "returns an interface holding a temporary value".
+- Known limit: `let s: Shape; s = square;` and `let t = back(Square.{ ...
+  });` are refused, as only a `let` of the conversion keeps the hidden
+  variable.
+- Found for step 2: loans are decided by type, so `fn Make(..., heap: &mut
+  Heap) -> Shape` would tie every result to `heap`; the loan check must
+  decide per value (owner agreed to design it in step 2).
+- Fixtures: `run_owned_interfaces`, `run_i686_owned_interfaces` (native,
+  release and the interpreter agree), `negative_owned_interfaces` (7
+  errors). `negative_interfaces`, `negative_size_of`,
+  `negative_reference_arrays` get the new refusals. The Rust test of
+  interface conversions checks struct-to-`Shape`, its loan facts and its
+  layout on x86_64 and i686. Seen to fail: `holds_loans` of `Shape` as
+  `None`, `keep_temporary` not looking through `ToInterface`, and the extra
+  `Dereference` added to a `&Shape`'s place (a crash in
+  `run_i686_interfaces`).
+- Not done: the benchmark was not run; the Website waits until the feature
+  is complete.
+- `scripts/check.sh`: all pass.
+
+## Owned interfaces, step 2: built, then removed (2026-11-09, `feature/owned-interfaces`)
+
+Built: a function giving `Shape` with no `in` returned one struct, which
+each call moved into a `Shape` of its own. Removed by the owner before any
+commit ("what kind of nonsense design is it? ... A functional system should
+work on its own"):
+
+- The function's real result, the struct, was not in its type, so nine
+  places kept it in a side table (`Checker::returned_structs`) or a special
+  case: `Types::makes_interface`, `result_origins`, `check_call`,
+  `lower_function`, `check_interface`, the module hash, and
+  `ThirBuilder::returned_struct` and `made_struct`, which dug the struct back
+  out of a conversion it had built.
+- One struct per function gives no choice while the program runs; that
+  already works through general rules (the section below).
+- Found while testing it, now gone with it: `lower_function` reported an
+  error through `Checker::error` after the body's check had ended, which
+  crashed (no declaration being checked).
+- If hiding a struct's type from callers is wanted later, it needs a
+  general feature: a result type worked out from the body, for any type.
+
+## Temporaries kept as long as their holder (2026-11-09, `feature/owned-interfaces`)
+
+Owner: "fix the first three, better error for the loop", then: no
+type-specific code.
+
+- The value a `let` gives its variable, or an assignment gives a whole
+  variable, keeps every temporary made in computing it as long as that
+  variable (`Body::keep_temporaries`, over `Body::any_part`, as a list, not
+  recursion). THIR's `Temporary::kept_by` is that variable (it was a flag).
+  A first version followed only what the value holds a loan on (`&`, an
+  interface, an `in` argument); the untangle review found it copied the
+  loan rules and missed struct and array literals, so it was replaced.
+  Keeping one nothing holds refuses nothing: the loan check follows uses.
+- `Stmt::Let`'s `keeps_temporaries` flag is gone: the `for` loop's hidden
+  `let` of its array is a `let` like any other. The loop variable's `let`
+  needs no call: its value is made of variables only.
+- Lowering finds them before any code and puts each in `declared` just
+  before its variable (`Lowering::declare`, used by `let`s, parameters and
+  loop variables), so it ends with it on every path, a `return` before the
+  assignment too. Every other temporary ends with its statement
+  (`close_scopes`, the `let` too). The `ScopeEnd` code is unchanged.
+- Accepted now: `s = Square.{ side = 2 };`, `if c { s = Circle.{ radius =
+  1 }; }`, `for i in 0..4 { keep = Square.{ side = i }; }`, `let t =
+  back(back(Square.{ side = 3 }));`, `let r: &Shape = &back(Square.{ side
+  = 4 });`, `let late: Shape; late = ...;`. Plain references too, a change
+  from the earlier rule: `r = &num();`, `let r = id(&num());`, `let e =
+  &view(&make())[0];`, `let r = largest(7, 8);`, `let p = Pair.{ first =
+  &5, second = &6 };`, `let both = [2]&[3]i32{&make(), &make()};`.
+- Still refused: a temporary kept by a `let` in an inner block, used after
+  it; one a `for` loop keeps, used after the loop; one changed while an
+  older holder uses it (one slot each pass of a loop).
+- The loan message is the general one. Its help, "keep the value in a
+  variable with `let`", is wrong for a temporary already kept by a `let`:
+  owner to choose the words (changed after the commit, below).
+- Fixtures: `run_owned_interfaces` and `run_i686_owned_interfaces` add the
+  kept forms; `negative_owned_interfaces` 9 errors (moved out of a loop,
+  changed while viewed); `run_temporaries` 15, 18, 19 (a struct and an
+  array literal) and 20 (a method's `self`) and `run_variadics` 23 show
+  plain references kept; `negative_temporaries` (13 errors),
+  `negative_variadics` (24) and `negative_struct_loans` (29, without
+  `TemporaryInField`) lose the cases now accepted; `mir_temporaries` moves
+  its `&&` into an `if` so a side's temporaries still end with it; the
+  unit test `statement::tests::temporaries` shows the new marks. Seen to
+  fail: the walk not going into parts, each of the three calls (`let`,
+  assignment, loop array) off, kept temporaries left out of `declared` (a
+  struct moved out of a loop then dangles unseen: the negative fixtures
+  catch it). The accepted forms also run in a `const`, whose run checks
+  each memory block is open (128).
+
+Committed as 1193d2c7.
+
+## Loan help for a temporary (2026-11-09, `feature/owned-interfaces`)
+
+The help of a loan error on a temporary said "keep the value in a variable
+with `let`, so it lasts as long as the reference": wrong once a `let` or an
+assignment keeps it (moved out of the loop body that keeps it, or replaced
+while an older copy uses it). Owner chose one general line, true in every
+case: "a temporary lasts until its statement ends, or as long as the
+variable a `let` or `=` gives it to" (`Loans::broken_loan`). Naming the
+keeping variable was not done: the loan check reads MIR, which does not
+record it. `negative_temporaries` checks the new words; `docs/ir-design.md`
+updated.
+
+## Owned interfaces, step 3 (2026-11-09, `feature/owned-interfaces`)
+
+Owner: finish owned interfaces before the feature-interface redesign
+(`feature-interface.localplan.md`), so it starts from a complete system.
+
+- A struct field, an array or slice element can be a `Shape`. The model
+  already answered for one as a container needs (`layout` two words,
+  `holds_loans` `&mut`, `holders_in` 1, `is_copy` no); two guards blocked
+  it: `not_supported("owned interfaces in structs")` in the struct check
+  and `element_type`'s "{holder} interfaces", whose reason ("an interface
+  held whole has no size") stopped being true with step 1. Both removed;
+  `element_type` lost its unused `holder` and `span`, and so did
+  `reference_type`, `reference_to` and `check_borrow` up the chain.
+- `*Shape` is now refused where it is reached, as `*Holder` of any struct
+  holding loans (`reached_through_pointer`); `loan_holder_text` names it
+  "owned interfaces" (it fell into "structs holding references").
+- An assignment to a place in a variable's own storage (no pointer on the
+  path, `place_root`) keeps its value's temporaries as long as that
+  variable, not only a whole variable: `h.shape = Circle.{ radius = 2 };`,
+  `all[1] = Circle.{ radius = 3 };`, and for plain references
+  `p.first = &read(&40);`. One behind a reference or slice is not kept
+  (storage the variable does not own); assigning a loan holder through a
+  reference stays refused by the existing rule (T0043, lifetimes of
+  references in structs, Later).
+- Still refused, by the general rules: a field or element moved out
+  (T0035), a function returning a struct holding a `Shape` with nothing to
+  borrow from (T0016), a struct made in a loop body kept in an outer array,
+  an element set in each pass while an older one views the same storage.
+- Fixtures: `run_owned_interfaces`, `run_i686_owned_interfaces` (held 7 16,
+  all 3 31, grown all 16 12); `negative_owned_interfaces` 14 errors (five
+  holder cases); `negative_interfaces` 13 (`struct Holder` gone, `*Shape`
+  reached at 34:39); `negative_reference_arrays` 18 (`[2]Shape` gone);
+  `run_temporaries` 21 (a field and an element set). Seen to fail: the
+  place rule back to whole variables only (both run fixtures fail). A
+  `const` run with held shapes (memory checked) gives 83, as native,
+  interpreter and i686 do.
+- Not done: a `Shape` as a type argument, in `extern` functions, or set
+  through a reference (each its own rule, refused).

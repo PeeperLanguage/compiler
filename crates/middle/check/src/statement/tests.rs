@@ -490,17 +490,17 @@ fn temporaries() {
             }",
     );
     assert!(reported.is_empty(), "{reported:?}");
-    // A temporary is stored where it is computed, and the one a `let` lends
-    // is marked to last.
+    // A temporary is stored where it is computed, and each one a `let`'s
+    // value makes is marked to last with it; one in a plain statement is not.
     assert_eq!(
         bodies[3],
-        "    let total.1 = call f2(&(_.0 = call f0():[2]i32)):i32
+        "    let total.1 = call f2(&(kept _.0 = call f0():[2]i32)):i32
     let kept.3 = &(kept _.2 = call f0():[2]i32)
-    let first.5 = (_.4 = call f0():[2]i32)[at 0:u64]
+    let first.5 = (kept _.4 = call f0():[2]i32)[at 0:u64]
     let mut x.6 = 1:i32
     (_.7 = call f1(&mut x.6):&mut i32).* = 2:i32
     {
-        let _.9 = &(_.8 = call f0():[2]i32)
+        let _.9 = &(kept _.8 = call f0():[2]i32)
         for _.10 in 0:u64..2:u64 by 1:u64 {
             let v.11 = &_.9.*[at _.10]
         }

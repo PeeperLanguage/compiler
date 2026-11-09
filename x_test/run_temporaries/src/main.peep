@@ -1,8 +1,14 @@
 // A value not in a variable can be lent, indexed or gone through: it is a
-// temporary, kept until its statement ends, or to the block's end by a `let`
-// that lends it. It is computed where written, so the order stays.
+// temporary, kept until its statement ends, or, when it is made in the value
+// a `let` or an assignment gives a variable, a field or an element of it, as
+// long as that variable. It is computed where written, so the order stays.
 
 struct Point { row: i32, col: i32 }
+struct Pair { first: &i32, second: &i32 }
+
+fn Point::Row(&self) -> &i32 in self {
+    return &self.row;
+}
 
 fn make() -> [3]i32 {
     println("  make");
@@ -147,8 +153,9 @@ fn main() {
     for i in 0..count(&make()) {
         println(i);
     }
-    println("15. an argument in a `let` ends with it:");
-    let unused = &view(&make())[0];
+    println("15. an argument a call's `in` names is kept too:");
+    let element = &view(&make())[0];
+    println(element.*);
     println("16. kept in each pass:");
     for i in 0..3 {
         let each = &make();
@@ -162,4 +169,21 @@ fn main() {
     println(literal.*);
     println(wide(&6000000000));
     println(small(&mut 200));
+    println("18. an assignment keeps it too:");
+    let later: &[3]i32;
+    later = &make();
+    println(later[2]);
+    println("19. kept in a struct or an array:");
+    let pair = Pair.{ first = &5, second = &read(&6) };
+    let both = [2]&[3]i32{&make(), &make()};
+    println(pair.first.* + pair.second.*, both[1][2]);
+    println("20. kept through a method's self:");
+    let row = point().Row();
+    println(row.*);
+    println("21. a field or element set keeps it too:");
+    let mut set = Pair.{ first = &1, second = &2 };
+    set.first = &read(&40);
+    let mut refs = [2]&i32{&1, &2};
+    refs[1] = &read(&2);
+    println(set.first.* + set.second.*, refs[0].* + refs[1].*);
 }

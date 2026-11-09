@@ -56,8 +56,18 @@ pub fn lower(
         debug_scope: Id::from_index(0),
         loops: Vec::new(),
         declared: Vec::new(),
-        kept: None,
+        kept: vec![Vec::new(); body.variables.len()],
     };
+    for id in body.exprs.ids() {
+        if let thir::ExprKind::Temporary {
+            variable,
+            kept_by: Some(kept_by),
+            ..
+        } = body.exprs[id].kind
+        {
+            lowering.kept[kept_by.index()].push(lowered_variable(variable));
+        }
+    }
     // One debug scope per block and one MIR variable per THIR variable, in
     // order: block `i` is debug scope `i`, and the ids of variables match.
     for block in body.blocks.ids() {
@@ -96,7 +106,7 @@ pub fn lower(
         let store = mir::InstructionKind::Store { place, value };
         let span = lowering.mir.variables.span(variable);
         lowering.emit(store, TypeId::VOID, span);
-        lowering.declared.push(variable);
+        lowering.declare(variable);
     }
     lowering.lower_block(function, 0)?; // the parameters are its variables too
     let end = Span::new(span.end as usize - 1, span.end as usize); // the `}`
@@ -115,9 +125,10 @@ struct Lowering<'t> {
     /// The variables in scope, in the order declared: those of a block,
     /// from where it starts (`lower_block`), are the last.
     declared: Vec<Id<mir::Variable>>,
-    /// The `kept` temporary of the `let` being lowered, which joins
-    /// `declared` when the `let` ends: the others end there, before it.
-    kept: Option<Id<mir::Variable>>,
+    /// The temporaries each variable keeps (THIR's `kept_by`), found before
+    /// any code: each joins `declared` just before its variable (`declare`),
+    /// so it ends with it on every path.
+    kept: Vec<Vec<Id<mir::Variable>>>,
 }
 
 /// Where a loop's `continue` and `break` go, and where the variables they

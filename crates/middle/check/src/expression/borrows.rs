@@ -13,11 +13,11 @@ use source::Span;
 use crate::builder::ThirBuilder;
 
 impl ThirBuilder<'_, '_> {
-    /// A `&place` or `&mut place` reference to the checked place `place`,
-    /// reported at `span`. `&mut` needs a place that can be written.
-    pub(super) fn check_borrow(&mut self, mutable: bool, place: Id<Expr>, span: Span) -> Expr {
+    /// A `&place` or `&mut place` reference to the checked place `place`.
+    /// `&mut` needs a place that can be written.
+    pub(super) fn check_borrow(&mut self, mutable: bool, place: Id<Expr>) -> Expr {
         let target = self.body.exprs[place].ty;
-        let ty = self.checker.reference_type(mutable, target, span);
+        let ty = self.checker.reference_type(mutable, target);
         if ty == TypeId::INVALID {
             return Expr::INVALID;
         }
@@ -109,7 +109,7 @@ impl ThirBuilder<'_, '_> {
             kind: ExprKind::Temporary {
                 variable,
                 value,
-                kept: false,
+                kept_by: None,
             },
         };
         (variable, decider)

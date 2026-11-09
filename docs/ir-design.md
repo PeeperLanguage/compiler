@@ -499,14 +499,22 @@ A value in no variable that is lent, indexed or gone through (`&make()`,
 value is stored into where it is computed, so it runs in the order written,
 and the place starts there. As in Rust, a temporary ends with its statement;
 one in an `if` or loop condition ends before the branch, in each pass, and
-one in a side of `&&` or `||` with that side. A `let` whose whole value is a
-borrow or slice of one (`let r = &make();`, `let s = &make()[0..2];`) keeps
-that one to the block's end: the checker marks it `kept`, and any other in the
-value still ends with the `let` (`let e = &view(&make())[0];` keeps the slice,
-not the array, so `e` cannot be used after it). Through a call nothing is kept
-(`let r = id(&num());` is an error when `r` is used), as in Rust. A `for`
-loop keeps every temporary of its iterable to the loop's end: the hidden `let`
-of its array ends none, so they end with the block around the loop. Its own
+one in a side of `&&` or `||` with that side. The value a `let` gives its
+variable, or an assignment gives a place in a variable's own storage (the
+variable, or a field or element of it, not behind a reference:
+`ThirBuilder::place_root` finds no pointer), keeps every temporary made in
+computing it as long as that variable (`let r = &make();`, `r = &make();`,
+`p.first = &make()[0];`, `let r = id(&num());`, `let p = Pair.{ first =
+&5, second = &6 };`), so whatever loan the variable may hold lasts as long as it does; the
+loan check follows uses, so keeping one nothing holds refuses nothing. The
+checker marks each with the variable as `kept_by` (`Body::keep_temporaries`,
+over every part of the value); lowering finds them before any code and puts
+each in scope just before its variable (`Lowering::declare`), so it ends with
+it on every path. One kept in a loop is the same storage in each pass, so the
+loan check refuses a change to it while an older holder still uses it. A
+`for` loop keeps every temporary of its iterable to the loop's end: its
+hidden `let` of the array keeps them with the array's variable, which ends
+with the block around the loop. Its own
 storage is never written (T0007, "cannot assign to a temporary value") and its
 address never taken (T0004, "cannot take address of a temporary value", Rust's
 E0745), since it is gone before anything could read it; through a reference
@@ -515,7 +523,8 @@ an error (T0018, "cannot mutably borrow constant `LIMIT`"), since a constant
 has no storage and the write would not change it; Rust only warns
 (`const_item_mutation`). `&LIMIT`, `&mut 5` and `&mut (LIMIT + 1)` are
 temporaries; Rust's promotion of `&LIMIT` to a value that lasts forever is not
-done, so such a reference cannot outlive its statement unless a `let` keeps it.
+done, so such a reference cannot outlive its statement unless a `let` or an
+assignment keeps it.
 
 A slice (`&[]T`, `&mut []T`) is its own type, not a reference to some
 unsized `[]T`: the address of some elements and their count, known only when
@@ -532,6 +541,23 @@ slice place as a slice (a `&mut []` lent again, or used as a `&[]`) is a
 itself (`Types::lends_slice_elements`, which the write check and lowering
 both ask). `s.len` loads the slice, never moving a `&mut []`, and takes
 its field 1: a read of the slice, as `s.len()` borrows it in Rust.
+
+An owned interface (`Shape`, `Type::Interface`) is laid out as an interface
+reference: the address of the struct it took and that struct's table. A
+struct where a `Shape` is expected (`Conversion::ToInterface`) is moved into
+a hidden variable, a `Temporary` that a `let` or an assignment keeps as long
+as the variable it sets, and THIR's `ToInterface` of a `&mut` `Borrow` of it views it; so the
+`Shape` holds a `&mut` loan on that variable (`Types::holds_loans`), and
+the loan check keeps it inside the struct's block and refuses it as a
+result with no parameter to borrow from (T0016). A borrow of a `Shape`
+place, `&s` or a method's `&self`, is a `Borrow` of `s.*`, which lends
+again what it views as its own two words (`Place::lent_again`); a method
+taking `self` whole moves `s` and gets the struct's address. A struct
+field, an array or slice element holds a `Shape` as it holds any loan
+holder (`Types::holders_in`, `layout`): `h.shape = Circle.{ radius = 1 };`
+and `all[1] = Circle.{ radius = 1 };` keep the new struct as long as `h`
+and `all`. A `Shape` is not yet a type argument, reached through a raw
+pointer, or set through a reference (T0043), the rules of any loan holder.
 
 `&a[i..j]` (or `&mut`, or `..=`) is THIR's `Slice` of the array place `a`,
 each end left out or an integer of any type, as an index is; ends known at
@@ -634,8 +660,9 @@ in it: `r = &mut b` while `s = &mut r.*` is in use is valid (owner,
 (owner, 2026-10-29). The message names the variable: "`x` is changed while a
 `&mut` reference to it is still in use" (events: read, changed, moved,
 borrowed, borrowed as `&mut`, gone), a temporary as "a temporary value",
-since its code may take several lines, with the help to keep it in a
-variable so it lasts as long as the reference; with "reference made here" and
+since its code may take several lines, with the help that it lasts until
+its statement ends or as long as the variable a `let` or `=` gives it to;
+with "reference made here" and
 "reference used later here" (owner, 2026-10-24). A function with no
 `borrow` is not walked. A `&mut` borrow whose only use is a call argument is
 reserved until that call (two-phase, as the spec on `legacy` asks): until

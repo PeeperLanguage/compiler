@@ -61,7 +61,7 @@ as few walks per body as possible; one owner per fact.
   printing, `panic`, compile-time calls, C functions, paths, methods
   (`fn Point::name(&self)`, called `Point::name(&p)` or `p.name()`).
 - **Not done (parser reads, check reports T0043):** enums, optionals,
-  owned interfaces, generics, function values, default
+  generics, function values, default
   parameters, destructuring, block expressions, pipes, dependencies.
 - **Since then (worklog, 2026-11-06 to 2026-11-07):** borrowed interfaces (`&Shape`),
   `core:memory` (`Allocator` with `Heap`, `Arena`, `Pool`, `Stack`,
@@ -70,9 +70,14 @@ as few walks per body as possible; one owner per fact.
   and libraries as projects (`build = "lib"`); `core` is one.
 - **Since then (2026-11-08):** references in arrays and slices
   (`[N]&T`, `&[]&Shape`), references to references and to slices; a struct
-  field or array element keeps and replaces its own loans.
+  field or array element keeps and replaces its own loans. Owned
+  interfaces (`let s: Shape = square;`), with `self` methods; a temporary
+  lasts as long as the variable a `let` or an assignment gives it to, so
+  `s = Circle.{ radius = 1 };` picks the struct while the program runs;
+  `Shape` in structs, arrays and slices.
 - **Planned order:** lifetimes of references in structs; enums and `match`
-  with `?T`; strings, owned interfaces, generics; port the Go fixtures.
+  with `?T`; strings, generics; port the Go
+  fixtures.
 
 ## Non-goals now
 

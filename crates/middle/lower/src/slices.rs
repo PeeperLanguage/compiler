@@ -59,7 +59,7 @@ impl Lowering<'_> {
             Type::Slice { .. } => {
                 let read = mir::InstructionKind::Length(place.clone());
                 let read = self.emit(read, self.types.usize, span);
-                place = slice_elements(place);
+                place = behind(place, mir::Projection::SliceElements);
                 Length::Read(read)
             }
             _ => unreachable!("the checker slices only an array or a slice"),
@@ -226,10 +226,11 @@ impl Lowering<'_> {
     }
 }
 
-/// The elements of the slice at `place`, which are behind it.
-pub(crate) fn slice_elements(mut place: mir::Place) -> mir::Place {
+/// What `step` reaches from `place`, which is behind it: a slice's elements
+/// or what an owned interface took.
+pub(crate) fn behind(mut place: mir::Place, step: mir::Projection) -> mir::Place {
     let mut projections = place.projections.into_vec();
-    projections.push(mir::Projection::SliceElements);
+    projections.push(step);
     place.projections = projections.into();
     place
 }

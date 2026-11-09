@@ -1,0 +1,112 @@
+// What the checks refuse for owned interfaces: one cannot outlive the
+// struct it took, a struct or interface moved away is gone, a change
+// through one needs `mut` and no other loan of it in use, and a struct or
+// array holding one follows the rules of any loan holder.
+iface Shape {
+    fn area(&self) -> i32,
+    fn grow(&mut self, by: i32),
+    fn retire(self) -> i32
+}
+
+struct Square { side: i32 }
+fn Square::area(&self) -> i32 { return self.side * self.side; }
+fn Square::grow(&mut self, by: i32) { self.side = self.side + by; }
+fn Square::retire(self) -> i32 { return self.side; }
+
+fn escapes() -> Shape {
+    let s: Shape = Square.{ side = 2 };
+    return s;
+}
+
+fn replaced(given: Shape) -> Shape {
+    let made: Shape = Square.{ side = 1 };
+    return made;
+}
+
+fn taken() {
+    let square = Square.{ side = 2 };
+    let s: Shape = square;
+    println(square.side, s.area());
+}
+
+fn retired() {
+    let s: Shape = Square.{ side = 2 };
+    println(s.retire(), s.area());
+}
+
+fn fixed() {
+    let s: Shape = Square.{ side = 2 };
+    s.grow(1);
+}
+
+fn lent() {
+    let mut s: Shape = Square.{ side = 2 };
+    let view = &s;
+    println(s.retire(), view.area());
+}
+
+fn through_reference() {
+    let mut s: Shape = Square.{ side = 2 };
+    let edit = &mut s;
+    println(edit.retire());
+}
+
+fn main() {
+    replaced(Square.{ side = 3 });
+    taken();
+    retired();
+    fixed();
+    lent();
+    through_reference();
+}
+
+// A struct lasts as long as the variable that first holds it: moved out of
+// its block, it is gone; changed while an older interface views it, that
+// one would see the new struct.
+fn moved_out() {
+    let mut keep: Shape = Square.{ side = 0 };
+    for side in 0..3 {
+        let each: Shape = Square.{ side = side };
+        keep = each;
+    }
+    println(keep.area());
+}
+
+fn overwritten() {
+    let mut keep: Shape = Square.{ side = 1 };
+    for side in 0..3 {
+        let old = keep;
+        keep = Square.{ side = side };
+        println(old.area());
+    }
+}
+
+// A struct or array holding a `Shape` follows the same rules as one holding
+// any loan.
+struct Holder { shape: Shape }
+
+fn held() -> Holder {
+    return Holder.{ shape = Square.{ side = 1 } };
+}
+
+fn field_moved_out() {
+    let h = Holder.{ shape = Square.{ side = 1 } };
+    println(h.shape.retire());
+}
+
+fn element_moved_out() {
+    let all = [2]Shape{Square.{ side = 1 }, Square.{ side = 2 }};
+    let first = all[0];
+}
+
+fn set_through(h: &mut Holder) {
+    h.shape = Square.{ side = 2 };
+}
+
+fn each_pass() {
+    let mut all = [2]Shape{Square.{ side = 1 }, Square.{ side = 2 }};
+    for i in 0..2 {
+        all[i] = Square.{ side = i };
+    }
+    println(all[0].area());
+}

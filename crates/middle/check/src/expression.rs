@@ -109,8 +109,8 @@ impl ThirBuilder<'_, '_> {
 
     /// `expr`, written at `span`, as a value of the type `to` by
     /// `conversion` (`Types::conversion`): given the type, converted (folded
-    /// when it is a constant) or lent again as a `&`. `None` when it never
-    /// converts.
+    /// when it is a constant), lent again as a `&`, or made an interface.
+    /// `None` when it never converts.
     fn convert(
         &mut self,
         expr: Expr,
@@ -132,6 +132,9 @@ impl ThirBuilder<'_, '_> {
                 _ => ExprKind::Convert(self.body.add(expr, span)),
             },
             Conversion::Reborrow => return Some(self.reborrow(expr, span, to)),
+            Conversion::ToInterface if let Type::Interface { .. } = self.checker.types[to] => {
+                return Some(self.owned_interface(expr, span, to));
+            }
             Conversion::ToInterface => {
                 let types = &self.checker.types;
                 let (
@@ -169,6 +172,38 @@ impl ThirBuilder<'_, '_> {
             Conversion::Never => return None,
         };
         Some(Expr { ty: to, kind })
+    }
+
+    /// The struct `expr`, written at `span`, as the owned interface `to`:
+    /// moved into a hidden variable, which the interface views as a `&mut`
+    /// reference would, so it lives as long as that variable (a `let` or an
+    /// assignment keeps it as long as the variable it sets).
+    fn owned_interface(&mut self, expr: Expr, span: Span, to: TypeId) -> Expr {
+        let target = expr.ty;
+        let Some(implementation) = self.checker.implementation(target, to, span) else {
+            return Expr::INVALID; // reported
+        };
+        let variable = self.add_hidden_variable(target, true, span);
+        let value = self.body.add(expr, span);
+        let kind = ExprKind::Temporary {
+            variable,
+            value,
+            kept_by: None,
+        };
+        let stored = self.body.add(Expr { ty: target, kind }, span);
+        let ty = (self.checker.types).intern(Type::Reference {
+            mutable: true,
+            target,
+        });
+        let reference = Expr {
+            ty,
+            kind: ExprKind::Borrow(stored),
+        };
+        let kind = ExprKind::ToInterface {
+            reference: self.body.add(reference, span),
+            implementation,
+        };
+        Expr { ty: to, kind }
     }
 
     /// The THIR of `expression`, as a value of the type `ty`, or that
@@ -308,7 +343,7 @@ impl ThirBuilder<'_, '_> {
                 .error(diagnostics::INVALID_ASSIGNMENT, message, span);
             return Expr::INVALID;
         }
-        self.check_borrow(mutable, place, span)
+        self.check_borrow(mutable, place)
     }
 
     /// An expression of a kind that `what` names, at `span`, which no check

@@ -258,7 +258,11 @@ pub enum Type {
     /// its methods, in declaration order, whose first parameter is `self` as
     /// an `InterfaceReference` to this type, or this type for a `self` taken
     /// whole. The declaration is its identity; the method names stay in it.
-    /// A value of it, an owned interface, is not supported yet.
+    /// A value of it, an owned interface, is laid out as an
+    /// `InterfaceReference`: the address of the struct it took and that
+    /// struct's table. The struct is moved into a hidden variable of the
+    /// block, which the value holds a `&mut` loan on, so it lives as long as
+    /// its struct.
     Interface {
         definition: DefId,
         methods: Box<[TypeId]>,
@@ -350,7 +354,8 @@ pub enum Conversion {
     /// A `&T` or `&mut T` of a struct `T` used as an interface reference,
     /// `&Shape` (`&mut Shape` from a `&mut T` only): its address with the
     /// table of `T`'s methods, when `T` has every method of the interface,
-    /// which the checker finds.
+    /// which the checker finds; or a struct moved into an owned interface,
+    /// `Shape`, which views it the same way.
     ToInterface,
     /// Converts only when written with `as`: between integers that lose
     /// values, between floats and integers, from `f64` to `f32`, from
@@ -877,6 +882,7 @@ impl Types {
             ) if (from_mutable || !mutable) && matches!(self[target], Type::Struct { .. }) => {
                 Conversion::ToInterface
             }
+            (Type::Struct { .. }, Type::Interface { .. }) => Conversion::ToInterface,
             (Type::RawPointer { target: Some(_) }, Type::RawPointer { target: None }) => {
                 Conversion::Same
             }
@@ -886,27 +892,30 @@ impl Types {
     }
 
     /// `Some(whether one is mutable)` for a type whose values hold loans: a
-    /// reference, a slice, or a struct or array with one in a field or
-    /// element, however deep.
+    /// reference, a slice, an owned interface (on the struct it took), or a
+    /// struct or array with one in a field or element, however deep.
     pub fn holds_loans(&self, id: TypeId) -> Option<bool> {
         match &self[id] {
             Type::Struct { internals, .. } => {
                 (internals.holders > 0).then_some(internals.mutable_holder)
             }
             Type::Array { internals, .. } => self.holds_loans(internals.base),
+            Type::Interface { .. } => Some(true),
             other => other.borrows(),
         }
     }
 
-    /// How many references, slices and interface references a value of the
-    /// type `id` is: one for each, its fields' for a struct, its elements'
-    /// for an array, as no other type holds one. Not past `usize`.
+    /// How many references, slices, interface references and owned
+    /// interfaces a value of the type `id` is: one for each, its fields' for
+    /// a struct, its elements' for an array, as no other type holds one. Not
+    /// past `usize`.
     pub fn holders_in(&self, id: TypeId) -> usize {
         match &self[id] {
             Type::Struct { internals, .. } => internals.holders,
             Type::Array { internals, .. } => usize::try_from(internals.count)
                 .unwrap_or(usize::MAX)
                 .saturating_mul(self.holders_in(internals.base)),
+            Type::Interface { .. } => 1,
             other => usize::from(other.borrows().is_some()),
         }
     }
