@@ -1,0 +1,9 @@
+[package]
+name = "references"
+edition.workspace = true
+version.workspace = true
+publish.workspace = true
+
+[dependencies]
+gateway = { path = "../../gateway" }
+model = { path = "../../model" }

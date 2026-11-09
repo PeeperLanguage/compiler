@@ -1,0 +1,16 @@
+[package]
+name = "language"
+edition.workspace = true
+version.workspace = true
+publish.workspace = true
+
+[dependencies]
+gateway = { path = "../gateway" }
+bools = { path = "../features/bools" }
+integers = { path = "../features/integers" }
+operators = { path = "../features/operators" }
+bindings = { path = "../features/bindings" }
+references = { path = "../features/references" }
+functions = { path = "../features/functions" }
+members = { path = "../features/members" }
+structs = { path = "../features/structs" }

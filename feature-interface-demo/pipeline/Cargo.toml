@@ -1,0 +1,19 @@
+[package]
+name = "pipeline"
+edition.workspace = true
+version.workspace = true
+publish.workspace = true
+
+[dependencies]
+model = { path = "../model" }
+gateway = { path = "../gateway" }
+flow = { path = "../flow" }
+eval = { path = "../eval" }
+llvm = { path = "../llvm" }
+language = { path = "../language" }
+
+# Only for `examples/parse_speed.rs`, which times this parser against the
+# real compiler's on the same text.
+[dev-dependencies]
+parser = { path = "../../crates/frontend/parser" }
+source = { path = "../../crates/base/source" }

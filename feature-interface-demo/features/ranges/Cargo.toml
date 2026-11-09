@@ -1,0 +1,9 @@
+[package]
+name = "ranges"
+edition.workspace = true
+version.workspace = true
+publish.workspace = true
+
+[dependencies]
+gateway = { path = "../../gateway" }
+integers = { path = "../integers" }

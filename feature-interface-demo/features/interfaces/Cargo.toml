@@ -1,0 +1,9 @@
+[package]
+name = "interfaces"
+edition.workspace = true
+version.workspace = true
+publish.workspace = true
+
+[dependencies]
+gateway = { path = "../../gateway" }
+functions = { path = "../functions" }
