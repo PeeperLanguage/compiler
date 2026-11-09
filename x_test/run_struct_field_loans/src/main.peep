@@ -1,0 +1,97 @@
+// Loans are kept per field: a read of one field uses only what that field
+// holds, and writing a field replaces what it held. Each of these is safe.
+struct Pair { first: &i32, second: &i32 }
+struct Outer { pair: Pair, count: i32 }
+struct Mark { label: &i32, count: i32 }
+struct Counter { value: &mut i32 }
+struct Wrapper { counter: Counter }
+
+// `second` never pointed at `a`.
+fn OtherField() {
+    let mut a = 1;
+    let b = 2;
+    let p = Pair.{ first = &a, second = &b };
+    a = 3;
+    println(p.second.*, a);
+}
+
+// `count` holds no loan.
+fn PlainField() {
+    let mut a = 1;
+    let m = Mark.{ label = &a, count = 2 };
+    a = 3;
+    println(m.count, a);
+}
+
+// A move takes each field's loans along, field by field.
+fn Moved() {
+    let mut a = 1;
+    let b = 2;
+    let p = Pair.{ first = &a, second = &b };
+    let q = p;
+    a = 3;
+    println(q.second.*, a);
+}
+
+// Writing `first` replaces what it held: nothing points at `a` now.
+fn FieldWrite() {
+    let mut a = 1;
+    let b = 2;
+    let mut p = Pair.{ first = &a, second = &b };
+    p.first = &b;
+    a = 3;
+    println(p.first.*, a);
+}
+
+// So does writing a struct in a field, and `count` holds no loan.
+fn NestedField() {
+    let mut a = 1;
+    let b = 2;
+    let mut o = Outer.{ pair = Pair.{ first = &b, second = &b }, count = 1 };
+    o.pair = Pair.{ first = &a, second = &b };
+    a = 3;
+    println(o.count, a);
+}
+
+// The temporary `6` ends with its statement, but `second` is not read again.
+fn TemporaryInField() {
+    let five = 5;
+    let p = Pair.{ first = &five, second = &6 };
+    println(p.first.*);
+}
+
+// After `c.value` is written again, `c.value.*` is `m`, while `r` still
+// points at `n`: both can be written.
+fn ReferenceThroughReplacedField() {
+    let mut n = 1;
+    let mut m = 2;
+    let mut c = Counter.{ value = &mut n };
+    let r = &mut c.value.*;
+    c.value = &mut m;
+    c.value.* = 7;
+    r.* = 3;
+    println(n, m);
+}
+
+// Writing `w.counter` whole ends what was lent through `w.counter.value`.
+fn WholeFieldReplaced() {
+    let mut n = 1;
+    let mut m = 2;
+    let mut w = Wrapper.{ counter = Counter.{ value = &mut n } };
+    let r = &mut w.counter.value.*;
+    w.counter = Counter.{ value = &mut m };
+    w.counter.value.* = 7;
+    r.* = 3;
+    println(n, m);
+}
+
+fn main() {
+    OtherField();
+    PlainField();
+    Moved();
+    FieldWrite();
+    NestedField();
+    TemporaryInField();
+    ReferenceThroughReplacedField();
+    WholeFieldReplaced();
+}

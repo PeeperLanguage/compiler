@@ -280,11 +280,15 @@ fn checks_deeply_nested_statements() {
 }}"
     );
     assert_eq!(diagnostics(&[("app:main", &text)]), []);
-    // References to references are not supported yet, so the one error.
-    let types = format!("fn f(a: {}i32) {{}}\nfn main() {{}}", "& ".repeat(DEPTH));
+    // References and slices nest as deep as the source does; an error's type
+    // text and the module's hash walk all of them.
+    let types = format!(
+        "fn f(a: {}i32) {{ let b: bool = a; }}\nfn main() {{}}",
+        "& &[]".repeat(DEPTH / 2)
+    );
     let found = diagnostics(&[("app:main", &types)]);
     let codes: Vec<&str> = found.iter().map(|&(code, ..)| code).collect();
-    assert_eq!(codes, ["T0043"], "{found:?}");
+    assert_eq!(codes, ["T0001"], "{found:?}");
     let arrays = format!(
         "fn f(a: {}i32) {{ println(a); }}\nfn main() {{}}",
         "[1]".repeat(DEPTH)
@@ -1234,4 +1238,116 @@ fn a_function_with_const_parameters_records_its_signature_once() {
     let expected = ["Pick", "i64", "T", "T", "i32", "2", "3", "x"];
     assert_eq!(found[..expected.len()], expected);
     assert_eq!(found.iter().filter(|&&text| text == "i64").count(), 1);
+}
+
+/// Each element of an array keeps its own loans: a constant index reads,
+/// replaces and borrows only its element, nested and inside structs, and ends
+/// what was borrowed through it; an index known only when the program runs
+/// may be any element.
+#[test]
+fn array_elements_keep_their_own_loans() {
+    let check = |function: &str| -> Vec<(&'static str, String)> {
+        let text =
+            format!("struct Pair {{ first: &i32, second: &i32 }}\n{function}\nfn main() {{}}");
+        let found = diagnostics(&[("app:main", &text)]);
+        found
+            .into_iter()
+            .map(|(code, message, _)| (code, message))
+            .collect()
+    };
+    let accepted = [
+        // `pairs[1].second` is the fourth holder, not the second.
+        "fn f() {
+            let mut a = 1; let b = 2; let c = 3;
+            let mut pairs = [2]Pair{ Pair.{ first = &c, second = &b }, Pair.{ first = &b, second = &a } };
+            pairs[1].second = &c;
+            a = 4;
+            let all = &pairs;
+            println(all.*[0].first.*);
+        }",
+        "fn f() {
+            let mut a = 1; let b = 2;
+            let mut grid = [2][2]&i32{ [2]&i32{ &b, &b }, [2]&i32{ &a, &b } };
+            grid[1][0] = &b;
+            a = 7;
+            let rows = &grid;
+            println(rows.*[0][0].*);
+        }",
+        // Repointing `muts[1]` ends the loan of what it pointed to.
+        "fn f() {
+            let mut a = 1; let mut b = 2; let mut c = 3;
+            let mut muts = [2]&mut i32{ &mut a, &mut b };
+            let r = &muts[1].*;
+            muts[1] = &mut c;
+            muts[1].* = 5;
+            println(r.*);
+        }",
+        "fn f() {
+            let mut numbers = [2]i32{ 1, 2 };
+            let first = &mut numbers[0];
+            let second = &mut numbers[1];
+            first.* = 3;
+            second.* = 4;
+        }",
+    ];
+    for function in accepted {
+        assert_eq!(check(function), [], "{function}");
+    }
+    let changed =
+        |name: &str| format!("`{name}` is changed while a reference to it is still in use");
+    let lent_twice =
+        "`numbers` is borrowed as `&mut` while a `&mut` reference to it is still in use".to_owned();
+    let refused = [
+        (
+            "fn f() {
+                let mut a = 1; let mut b = 2; let mut c = 3;
+                let mut muts = [2]&mut i32{ &mut a, &mut b };
+                let r = &muts[1].*;
+                muts[0] = &mut c;
+                muts[1].* = 5;
+                println(r.*);
+            }",
+            changed("muts"),
+        ),
+        (
+            "fn f(i: usize) {
+                let mut a = 1; let b = 2; let c = 3;
+                let mut refs = [2]&i32{ &b, &c };
+                refs[i] = &a;
+                a = 5;
+                println(refs[1].*);
+            }",
+            changed("a"),
+        ),
+        (
+            "fn f(i: usize) {
+                let mut a = 1; let b = 2;
+                let refs = [2]&i32{ &a, &b };
+                a = 5;
+                println(refs[i].*);
+            }",
+            changed("a"),
+        ),
+        (
+            "fn f() {
+                let mut numbers = [2]i32{ 1, 2 };
+                let first = &mut numbers[1];
+                let again = &mut numbers[1];
+                first.* = 3;
+            }",
+            lent_twice.clone(),
+        ),
+        (
+            "fn f(i: usize) {
+                let mut numbers = [2]i32{ 1, 2 };
+                let first = &mut numbers[i];
+                let again = &mut numbers[0];
+                first.* = 3;
+            }",
+            lent_twice,
+        ),
+    ];
+    for (function, message) in refused {
+        assert_eq!(check(function), [("T0037", message)], "{function}");
+    }
 }

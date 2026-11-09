@@ -305,8 +305,8 @@ impl Type {
         // shortcut: `&str` and `&cstr` hold no loan, as each is a literal's
         // (which borrows nothing) or C's (which Peeper cannot see); make them
         // loan holders when one can view memory that ends, with a way for a
-        // literal's to be returned and kept in arrays, which a loan holder's
-        // cannot today.
+        // literal's to be returned with no parameter, which a loan holder's
+        // cannot be today.
         match *self {
             Type::Reference { mutable, .. }
             | Type::Slice { mutable, .. }
@@ -886,24 +886,39 @@ impl Types {
     }
 
     /// `Some(whether one is mutable)` for a type whose values hold loans: a
-    /// reference, a slice, or a struct with one in a field, however deep.
+    /// reference, a slice, or a struct or array with one in a field or
+    /// element, however deep.
     pub fn holds_loans(&self, id: TypeId) -> Option<bool> {
         match &self[id] {
             Type::Struct { internals, .. } => {
                 (internals.holders > 0).then_some(internals.mutable_holder)
             }
+            Type::Array { internals, .. } => self.holds_loans(internals.base),
             other => other.borrows(),
         }
     }
 
     /// How many references, slices and interface references a value of the
-    /// type `id` is: one for each, its fields' for a struct, as no other type
-    /// holds one.
+    /// type `id` is: one for each, its fields' for a struct, its elements'
+    /// for an array, as no other type holds one. Not past `usize`.
     pub fn holders_in(&self, id: TypeId) -> usize {
         match &self[id] {
             Type::Struct { internals, .. } => internals.holders,
+            Type::Array { internals, .. } => usize::try_from(internals.count)
+                .unwrap_or(usize::MAX)
+                .saturating_mul(self.holders_in(internals.base)),
             other => usize::from(other.borrows().is_some()),
         }
+    }
+
+    /// Whether borrowing a place of type `place` as `borrow` lends again the
+    /// elements of the slice there: a slice borrowed as a slice, not as
+    /// `&[]T`, which lends the slice itself.
+    pub fn lends_slice_elements(&self, place: TypeId, borrow: TypeId) -> bool {
+        matches!(
+            (&self[place], &self[borrow]),
+            (Type::Slice { .. }, Type::Slice { .. })
+        )
     }
 
     /// `holders_in` for a struct of `fields`, not past `usize`.
@@ -1018,7 +1033,8 @@ impl Types {
                 mutable,
                 interface: target,
             } => {
-                let target = self.real_text(*target, name_of);
+                // References, slices and pointers nest as deep as the source does.
+                let target = source::grow_stack(|| self.real_text(*target, name_of));
                 if *mutable {
                     format!("&mut {target}")
                 } else {
@@ -1026,7 +1042,7 @@ impl Types {
                 }
             }
             Type::Slice { mutable, element } => {
-                let element = self.real_text(*element, name_of);
+                let element = source::grow_stack(|| self.real_text(*element, name_of));
                 if *mutable {
                     format!("&mut []{element}")
                 } else {
@@ -1037,7 +1053,6 @@ impl Types {
             Type::RawPointer {
                 target: Some(target),
             } => {
-                // Pointers nest as deep as the source does.
                 let target = source::grow_stack(|| self.real_text(*target, name_of));
                 format!("*{target}")
             }

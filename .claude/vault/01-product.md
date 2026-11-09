@@ -68,6 +68,9 @@ as few walks per body as possible; one owner per fact.
   `Realloc`, `New`, `Replace`), `rawptr + usize`, `size_of`/`align_of`,
   `const` parameters (a type or a value, one copy per set of arguments),
   and libraries as projects (`build = "lib"`); `core` is one.
+- **Since then (2026-11-08):** references in arrays and slices
+  (`[N]&T`, `&[]&Shape`), references to references and to slices; a struct
+  field or array element keeps and replaces its own loans.
 - **Planned order:** lifetimes of references in structs; enums and `match`
   with `?T`; strings, owned interfaces, generics; port the Go fixtures.
 

@@ -194,8 +194,7 @@ impl Lowering<'_> {
                         unreachable!("a borrow's type is a reference or slice")
                     };
                     let mut place = self.place(*borrowed)?;
-                    // Borrowing a slice lends its elements again.
-                    if let Type::Slice { .. } = self.types[self.thir.exprs[*borrowed].ty] {
+                    if (self.types).lends_slice_elements(self.thir.exprs[*borrowed].ty, *ty) {
                         place = slice_elements(place);
                     }
                     mir::InstructionKind::Borrow { place, mutable }

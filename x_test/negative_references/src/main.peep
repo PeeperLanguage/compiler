@@ -1,5 +1,5 @@
-// What references cannot do yet, or ever: refer to a reference, write or
-// lend `&mut` through `&`, or lend `&mut` of an immutable variable.
+// What references cannot do yet, or ever: write or lend `&mut` through `&`,
+// or lend `&mut` of an immutable variable.
 struct Point { x: i32, y: i32 }
 
 fn first(point: &Point) -> &i32 {
@@ -26,7 +26,6 @@ fn reads(count: &i32) -> i32 {
 fn main() {
     let p = Point.{ x = 1, y = 2 };
     let r = &p;
-    let rr = &r;
     r.x = 3;
     let m = &mut r.y;
     let q = &mut p;

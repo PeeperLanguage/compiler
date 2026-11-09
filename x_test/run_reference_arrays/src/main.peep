@@ -1,0 +1,150 @@
+// Arrays and slices that hold references. Each element keeps its own loans:
+// an element known while compiling is read and replaced alone, and an index
+// known only when the program runs reads or may write any element.
+iface Shape { fn Area(&self) -> f64 }
+struct Square { side: f64 }
+fn Square::Area(&self) -> f64 { return self.side * self.side; }
+struct Circle { radius: f64 }
+fn Circle::Area(&self) -> f64 { return 3.0 * self.radius * self.radius; }
+struct Pair { first: &i32, second: &i32 }
+
+fn total(shapes: &[]&Shape) -> f64 {
+    let mut sum = 0.0;
+    for shape in shapes {
+        sum = sum + shape.*.Area();
+    }
+    return sum;
+}
+
+fn sum(values: &[]&i32) -> i32 {
+    let mut result = 0;
+    for value in values {
+        result = result + value.*.*;
+    }
+    return result;
+}
+
+fn pick(a: &i32, b: &i32) -> [2]&i32 {
+    return [2]&i32{ a, b };
+}
+
+fn longest(rows: &[]&[]i32) -> usize {
+    let mut most: usize = 0;
+    for row in rows {
+        if row.*.len > most { most = row.*.len; }
+    }
+    return most;
+}
+
+fn first_of(view: &&[]i32) -> i32 {
+    return view.*[0];
+}
+
+fn Shapes() {
+    let square = Square.{ side = 2.0 };
+    let circle = Circle.{ radius = 1.0 };
+    let shapes = [2]&Shape{ &square, &circle };
+    println(total(&shapes), shapes[1].Area());
+}
+
+// `a` changes while no element used later points at it.
+fn OtherElement() {
+    let mut a = 1;
+    let b = 2;
+    let refs = [2]&i32{ &a, &b };
+    a = 5;
+    println(refs[1].*, a);
+}
+
+// A store to a constant index replaces that element's loan.
+fn ElementReplaced() {
+    let mut a = 1;
+    let b = 2;
+    let c = 3;
+    let mut refs = [2]&i32{ &a, &b };
+    refs[0] = &c;
+    a = 6;
+    println(refs[0].*, refs[1].*, a);
+}
+
+fn Returned() {
+    let b = 2;
+    let c = 3;
+    let picked = pick(&b, &c);
+    let spread = [3]&i32{ picked..., &b };
+    println(picked[0].*, sum(&picked), sum(&spread));
+}
+
+fn Pairs() {
+    let mut a = 1;
+    let b = 2;
+    let c = 3;
+    let mut pairs = [2]Pair{ Pair.{ first = &c, second = &b }, Pair.{ first = &b, second = &a } };
+    pairs[1].second = &c;
+    a = 4;
+    let all: &[]Pair = &pairs;
+    println(pairs[1].second.*, all[0].second.*, a);
+}
+
+fn Nested() {
+    let mut a = 1;
+    let b = 2;
+    let mut grid = [2][2]&i32{ [2]&i32{ &b, &b }, [2]&i32{ &a, &b } };
+    grid[1][0] = &b;
+    a = 7;
+    let rows: &[][2]&i32 = &grid;
+    println(rows[1][0].*, rows[0][1].*, a);
+}
+
+fn Writable() {
+    let mut x = 1;
+    let mut y = 2;
+    let mut muts = [2]&mut i32{ &mut x, &mut y };
+    muts[0].* = 10;
+    for each in &mut muts {
+        each.*.* = each.*.* + 1;
+    }
+    println(x, y);
+}
+
+fn Views() {
+    let first = [3]i32{ 1, 2, 3 };
+    let second = [2]i32{ 4, 5 };
+    let rows = [2]&[]i32{ &first, &second };
+    let view: &[]i32 = &second;
+    let number = 8;
+    let reference = &number;
+    let twice = &reference;
+    let mut current: &[]i32 = &first;
+    let place = &mut current;
+    println(longest(&rows), first_of(&view), twice.*.*, place.*[2]);
+}
+
+// Two elements at different constant indexes are different places.
+fn DistinctElements() {
+    let a = 1;
+    let c = 3;
+    let mut refs = [2]&i32{ &a, &a };
+    let r = &refs[0];
+    refs[1] = &c;
+    let mut x = 1;
+    let mut y = 2;
+    let mut muts = [2]&mut i32{ &mut x, &mut y };
+    let first = &mut muts[0];
+    let second = &mut muts[1];
+    first.*.* = 10;
+    second.*.* = 20;
+    println(r.*.*, refs[1].*, x, y);
+}
+
+fn main() {
+    Shapes();
+    OtherElement();
+    ElementReplaced();
+    Returned();
+    Pairs();
+    Nested();
+    Writable();
+    Views();
+    DistinctElements();
+}

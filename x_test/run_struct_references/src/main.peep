@@ -1,6 +1,5 @@
-// References and slices in struct fields. Each field keeps its own loans, as
-// if it had a lifetime of its own in Rust, and using any part of a struct uses
-// all of it.
+// References and slices in struct fields. Each field keeps its own loans, and
+// reading a field uses only its own.
 struct Pair { first: &i32, second: &i32 }
 struct Outer { pair: Pair, count: i32 }
 struct Text { bytes: &[]u8 }

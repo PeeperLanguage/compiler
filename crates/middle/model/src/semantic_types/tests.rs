@@ -364,3 +364,55 @@ fn arrays_in_arrays_keep_their_base_and_count() {
     let empty = types.array(past, 0);
     assert_eq!(count_of(&types, empty), 0);
 }
+
+/// An array holds one set of loan holders per element, however deep, and a
+/// count past `usize` stays the largest.
+#[test]
+fn arrays_hold_each_elements_holders() {
+    let mut types = Types::new(64);
+    let shared = types.intern(Type::Reference {
+        mutable: false,
+        target: TypeId::I32,
+    });
+    let mutable = types.intern(Type::Reference {
+        mutable: true,
+        target: TypeId::I32,
+    });
+    let pair = types.intern(Type::Struct {
+        definition: DefId {
+            module: ModuleId::from_index(0),
+            index: 0,
+        },
+        fields: [shared, shared].into(),
+        internals: StructInternals {
+            offsets: [0, 8].into(),
+            size: 16,
+            align: 8,
+            holders: 2,
+            mutable_holder: false,
+        },
+    });
+    let refs = types.array(shared, 3);
+    assert_eq!(
+        (types.holders_in(refs), types.holds_loans(refs)),
+        (3, Some(false))
+    );
+    let row = types.array(mutable, 3);
+    let grid = types.array(row, 2);
+    assert_eq!(
+        (types.holders_in(grid), types.holds_loans(grid)),
+        (6, Some(true))
+    );
+    let pairs = types.array(pair, 2);
+    assert_eq!(
+        (types.holders_in(pairs), types.holds_loans(pairs)),
+        (4, Some(false))
+    );
+    let numbers = types.array(TypeId::I32, 3);
+    assert_eq!(
+        (types.holders_in(numbers), types.holds_loans(numbers)),
+        (0, None)
+    );
+    let huge = types.array(refs, u64::MAX);
+    assert_eq!(types.holders_in(huge), usize::MAX);
+}

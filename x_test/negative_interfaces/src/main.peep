@@ -33,8 +33,6 @@ fn show(s: &Shape) {
 
 fn owned(s: Shape) {}
 fn pointer(p: *Shape) {}
-fn array(a: [2]&Shape) {}
-fn nested(n: &&Shape) {}
 
 fn main() {
     let sq = Square.{ side = 2.0 };

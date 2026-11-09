@@ -17,6 +17,7 @@ use model::semantic_types::ImplementationId;
 use model::semantic_types::Integer;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
+use model::semantic_types::Types;
 use model::thir::Body;
 use model::thir::FactKind;
 use model::thir::Symbol;
@@ -30,11 +31,12 @@ use crate::function::function_declaration;
 use crate::scope;
 use crate::scope::report_redeclared;
 
-/// The most references and slices a struct holds, however deep.
+/// The most references and slices a struct or an array holds, however deep.
 // shortcut: the loan check keeps each one apart, so a struct that holds the
 // last one twice costs twice as much at each level, and 40 of them need 2^39
-// holders. Real structs hold a few; lift this if the check ever tracks them
-// by lifetime, as Rust does.
+// holders; an array keeps one per element. Real structs and arrays of
+// references hold a few; lift this if the check ever tracks them by
+// lifetime, as Rust does.
 const MOST_HOLDERS: usize = 4_096;
 
 impl Checker<'_> {
@@ -83,11 +85,9 @@ impl Checker<'_> {
                 let (offsets, size, align) = struct_layout(&self.types, &field_types, self.target);
                 let named = self.types.intern(Type::Named(definition));
                 let mut ty = self.fits_target(named, size, written.name.span);
-                if self.types.holders_in_fields(&field_types) > MOST_HOLDERS {
-                    let text = self.type_text(named);
-                    let message =
-                        format!("`{text}` holds more than {MOST_HOLDERS} references and slices");
-                    ty = self.error(diagnostics::INVALID_TYPE, message, written.name.span);
+                let holders = self.types.holders_in_fields(&field_types);
+                if self.reports_too_many_holders(named, holders, written.name.span) {
+                    ty = TypeId::INVALID;
                 }
                 if ty != TypeId::INVALID {
                     self.types
@@ -585,7 +585,7 @@ impl Checker<'_> {
                 let message = if self.types[result].borrows().is_some() {
                     format!("a {kind} result needs a {kind} parameter to borrow from")
                 } else {
-                    "a struct holding references needs a parameter that holds one".to_owned()
+                    "a result holding references needs a parameter that holds one".to_owned()
                 };
                 let result = signature.result.expect("a reference result is written");
                 self.error(
@@ -678,10 +678,10 @@ impl Checker<'_> {
             Type::InterfaceReference { .. } => {
                 self.not_supported(span, "interface references in `extern` functions")
             }
-            // C could keep what the struct holds, which no loan would follow.
+            // C could keep what the target holds, which no loan would follow.
             Type::Reference { target, .. } if self.types.holds_loans(target).is_some() => {
-                let what = "references to structs holding references in `extern` functions";
-                self.not_supported(span, what)
+                let what = self.loan_holder_text(target);
+                self.not_supported(span, &format!("references to {what} in `extern` functions"))
             }
             Type::Integer(integer) if integer.bits > self.target.widest_c_integer() => {
                 let (target, widest) = (self.target.name, self.target.widest_c_integer());
@@ -694,45 +694,71 @@ impl Checker<'_> {
         }
     }
 
-    /// The real type of `held`, for a type written at `span` that holds it,
-    /// so `&Meters` is `&f64` under an alias; `None` when it is invalid, or
-    /// after reporting that it borrows. `holder` starts the message:
-    /// "references to".
-    fn held_type(&mut self, held: TypeId, holder: &str, span: Span) -> Option<TypeId> {
-        let what = match self.types[held] {
-            Type::Invalid => return None,
-            // shortcut: the loan check follows no reference held in an array
-            // or a slice, behind a raw pointer or another reference; allow
-            // each when lifetimes are checked (ownership step 4).
-            Type::Reference { .. } => "references",
-            Type::Slice { .. } => "slices",
-            Type::InterfaceReference { .. } => "interface references",
-            _ if self.is_interface(held) => "interfaces",
-            _ => return Some(self.types.real(held)),
-        };
-        self.not_supported(span, &format!("{holder} {what}"));
-        None
-    }
-
-    /// `held_type` for an array or a slice, which hold no struct that holds
-    /// a reference either, and for what is reached through a raw pointer: a
-    /// holder is one reference, and no index or pointer says which.
-    pub(crate) fn loan_free_held_type(
+    /// The real type of `element`, for an array, slice, reference or raw
+    /// pointer written at `span` that holds or reaches it, so `[2]Meters` is
+    /// `[2]f64` under an alias; `None` when it is invalid, or after reporting
+    /// an interface held whole, which has no size. `holder` starts the
+    /// message: "arrays of".
+    pub(crate) fn element_type(
         &mut self,
-        held: TypeId,
+        element: TypeId,
         holder: &str,
         span: Span,
     ) -> Option<TypeId> {
-        let held = self.held_type(held, holder, span)?;
-        if self.types.holds_loans(held).is_some() {
-            self.not_supported(span, &format!("{holder} structs holding references"));
+        if self.types[element] == Type::Invalid {
             return None;
         }
-        Some(held)
+        if self.is_interface(element) {
+            self.not_supported(span, &format!("{holder} interfaces"));
+            return None;
+        }
+        Some(self.types.real(element))
+    }
+
+    /// The target of a raw pointer type `*target` written at `span`: no
+    /// reference, slice or interface reference, as nothing follows a pointer
+    /// to say what they point into. A struct or an array holding one is
+    /// refused only where it is reached (`reached_through_pointer`).
+    fn written_pointer_target(&mut self, target: TypeId, span: Span) -> Option<TypeId> {
+        self.pointer_target(target, span, |types, target| types[target].borrows())
+    }
+
+    /// What a raw pointer reaches at `span`, with `.*` or `@`: nothing that
+    /// holds a loan, for the reason `written_pointer_target` gives.
+    pub(crate) fn reached_through_pointer(&mut self, target: TypeId, span: Span) -> Option<TypeId> {
+        self.pointer_target(target, span, Types::holds_loans)
+    }
+
+    /// `target` through a raw pointer at `span`, refused when `loans` says
+    /// it holds one.
+    fn pointer_target(
+        &mut self,
+        target: TypeId,
+        span: Span,
+        loans: impl Fn(&Types, TypeId) -> Option<bool>,
+    ) -> Option<TypeId> {
+        let target = self.element_type(target, "raw pointers to", span)?;
+        if loans(&self.types, target).is_none() {
+            return Some(target);
+        }
+        let what = self.loan_holder_text(target);
+        self.not_supported(span, &format!("raw pointers to {what}"));
+        None
+    }
+
+    /// What `ty`, which holds loans, is, in a message: "slices".
+    fn loan_holder_text(&self, ty: TypeId) -> &'static str {
+        match self.types[ty] {
+            Type::Reference { .. } => "references",
+            Type::Slice { .. } => "slices",
+            Type::InterfaceReference { .. } => "interface references",
+            Type::Array { .. } => "arrays holding references",
+            _ => "structs holding references",
+        }
     }
 
     /// `&target`, or `&mut target` when `mutable`, written or borrowed at
-    /// `span` (`held_type`); an interface reference to an interface.
+    /// `span` (`element_type`); an interface reference to an interface.
     pub(crate) fn reference_type(&mut self, mutable: bool, target: TypeId, span: Span) -> TypeId {
         if self.is_interface(target) {
             return self.types.intern(Type::InterfaceReference {
@@ -740,22 +766,36 @@ impl Checker<'_> {
                 interface: target,
             });
         }
-        match self.held_type(target, "references to", span) {
+        match self.element_type(target, "references to", span) {
             Some(target) => self.types.intern(Type::Reference { mutable, target }),
             None => TypeId::INVALID,
         }
     }
 
-    /// `[length]element`, written at `span` (`held_type`).
+    /// `[length]element`, written at `span` (`element_type`), holding at
+    /// most `MOST_HOLDERS` references and slices.
     pub(crate) fn array_type(&mut self, element: TypeId, length: u64, span: Span) -> TypeId {
-        match self.loan_free_held_type(element, "arrays of", span) {
-            Some(element) => {
-                let ty = self.types.array(element, length);
-                let (size, _) = layout(&self.types, ty, self.target);
-                self.fits_target(ty, size, span)
-            }
-            None => TypeId::INVALID,
+        let Some(element) = self.element_type(element, "arrays of", span) else {
+            return TypeId::INVALID;
+        };
+        let ty = self.types.array(element, length);
+        if self.reports_too_many_holders(ty, self.types.holders_in(ty), span) {
+            return TypeId::INVALID;
         }
+        let (size, _) = layout(&self.types, ty, self.target);
+        self.fits_target(ty, size, span)
+    }
+
+    /// Whether `ty`, written at `span` and holding `holders` references and
+    /// slices, holds more than `MOST_HOLDERS`, after reporting it there.
+    fn reports_too_many_holders(&mut self, ty: TypeId, holders: usize, span: Span) -> bool {
+        if holders <= MOST_HOLDERS {
+            return false;
+        }
+        let text = self.type_text(ty);
+        let message = format!("`{text}` holds more than {MOST_HOLDERS} references and slices");
+        self.error(diagnostics::INVALID_TYPE, message, span);
+        true
     }
 
     /// `ty`, made at `span`, or invalid after an error there when its `size`
@@ -1038,7 +1078,7 @@ impl Checker<'_> {
                 // program needs it.
                 ast::Type::Pointer(target) => {
                     let pointee = self.resolve_type(target);
-                    return match self.held_type(pointee, "raw pointers to", span) {
+                    return match self.written_pointer_target(pointee, span) {
                         Some(target) => self.types.intern(Type::RawPointer {
                             target: Some(target),
                         }),
@@ -1067,7 +1107,7 @@ impl Checker<'_> {
                 } => unreachable!("the parser reads `[_]` only in an array literal, checked there"),
                 ast::Type::Slice { mutable, element } => {
                     let element = self.resolve_value_type(element);
-                    return match self.loan_free_held_type(element, "slices of", span) {
+                    return match self.element_type(element, "slices of", span) {
                         Some(element) => self.types.intern(Type::Slice { mutable, element }),
                         None => TypeId::INVALID,
                     };

@@ -477,9 +477,10 @@ in `s[g()][h()]` a `g` outside stops the program before `h` runs (owner,
 address. A `length` reads only the slice's own storage, as rustc's shallow
 read: a loan of its elements does not stop it, and the use that follows is
 checked in full. Nothing may change the slice between its check and that use
-(rustc's E0510); today nothing can, as no reference, pointer or array holds a
-slice that could be written through it (T0043), and that rule must come
-with the first. `&place` and
+(rustc's E0510); today nothing can: no slice is stored through a reference
+(T0043, "assignments of references through a reference") or reached through
+a raw pointer, though arrays and references hold slices, and that rule must
+come with the first way to. `&place` and
 `&mut place` are a `borrow` of the place, its address. The checker also makes
 the spec's reborrow explicit: a `&mut` in a variable passed to a call becomes a
 `Borrow` of what it refers to, so the variable stays usable; a `let` moves it.
@@ -520,14 +521,16 @@ A slice (`&[]T`, `&mut []T`) is its own type, not a reference to some
 unsized `[]T`: the address of some elements and their count, known only when
 the program runs. The loan rules hold for it as for a reference: both answer
 `Type::borrows`, which the write checks ask, so no rule is
-copied. A slice is never an array element or directly behind a reference or
-raw pointer, but it may be in a struct field. THIR writes
+copied. A slice may be an array element, a struct field or behind a
+reference, never behind a raw pointer. THIR writes
 `s[i]` as an `Index` of `s` with no dereference; lowering adds the
 `SliceElements` step before the index, so a write through a slice is behind a
 reference for every check, as `r.*[i]` is. `&a` where a slice is expected is
 a `Borrow` of `a` with the slice type (`Conversion::Reborrow`); a borrow of a
-slice place (a `&mut []` lent again, or used as a `&[]`) is a `Borrow` of its
-elements, `s.*`. `s.len` loads the slice, never moving a `&mut []`, and takes
+slice place as a slice (a `&mut []` lent again, or used as a `&[]`) is a
+`Borrow` of its elements, `s.*`; as `&&[]T` it is a `Borrow` of the slice
+itself (`Types::lends_slice_elements`, which the write check and lowering
+both ask). `s.len` loads the slice, never moving a `&mut []`, and takes
 its field 1: a read of the slice, as `s.len()` borrows it in Rust.
 
 `&a[i..j]` (or `&mut`, or `..=`) is THIR's `Slice` of the array place `a`,
@@ -579,35 +582,45 @@ extended to moves 2026-10-23).
 The loan check (T0037, `flow::loans::report_loan_errors`) rejects an access that a
 reference still in use forbids. A loan is one `borrow`; it lasts until the
 last use of a reference holding it (owner, 2026-10-23), found by liveness of
-its holders: each reference or slice in a variable or value, a struct's fields one by one,
-however deep (owner, 2026-11-01). A struct holds at most 4,096 of them (P0011):
-each is kept apart, and a struct holding the last one twice doubles them. So
+its holders: each reference or slice in a variable or value, a struct's fields
+and an array's elements one by one, however deep (owner, 2026-11-01; arrays,
+one set per element, 2026-11-08). A struct or an array holds at most 4,096 of
+them (P0011): each is kept apart, and a struct holding the last one twice
+doubles them. So
 each field keeps its own loans, as if it had a lifetime of its own in Rust, with
 no syntax: `p.second` read out of `p`
-holds only the loans of `second`. Liveness stays per variable, as Rust's does:
-using any part of a struct uses all of it, even with two lifetimes in Rust
-(`a = 3; print(p.second.*);` is refused when `first` borrows `a`), and each
+holds only the loans of `second`. Liveness is per holder too (owner,
+2026-11-08: accept what Peeper proves safe, though Rust refuses it): reading
+`p.second` uses only its holders, so `a = 3; print(p.second.*);` is accepted
+when only `first` borrows `a`, and a whole use of `p` uses them all. Each
 holder a call returns holds every loan of the arguments its origins name, as
 callers read only the signature. A `borrow` of a place holds the loans of the
 holders in or on the way to it: `&mut r.*` holds `r`'s, so what `r` refers to
 stays borrowed while the new reference is in use, and `&p` holds `p`'s, so what
-is read through the reference still counts them. A `store` to a whole variable
-replaces its loans; one to a field adds to them, as a field keeps its lifetime
-in Rust. No loan is stored behind a reference (T0043, "assignments of
+is read through the reference still counts them. A place names its holders
+exactly when every step is a field or a constant index: a `store` there, as
+to a whole variable, replaces their loans (owner, 2026-11-08), and ends each
+loan of a place through it, which now names what the new reference points
+to. An index known only when the program runs may be any element: a read
+uses every element's holders and a store adds to each, as does an array
+literal's spread (`ArrayParts`). No loan is stored behind a reference (T0043, "assignments of
 references through a reference"): it would outlive what it borrows unseen. So
 `p.input = &p.input[1..]` through `p: &mut Parser` is refused, though Rust
 accepts it, until a signature can say that two parameters share an origin; a
-parser keeps its position next to an input that does not change. Arrays and
-slices hold no struct that holds a reference, and nothing goes through a raw
-pointer to one nor takes its address (T0043), since a holder is one reference
-and no index or pointer says which; a `*T` itself only names `T`. An `extern`
-function takes no reference to one, since C could keep what it holds. A `&mut`
+parser keeps its position next to an input that does not change. Nothing
+goes through a raw pointer to a value that holds a reference nor takes its
+address (T0043), since no pointer says what it may point into; a written
+`*T` only names `T`, unless `T` is itself a reference, slice or interface
+reference. An `extern` function takes no reference to such a value, since C
+could keep what it holds. A `&mut`
 field is lent again where a `&mut` variable is, as a call argument or loop
 iterable, and never moved out (T0035): `&mut h.value.*`, or `h.value` there.
 A shared loan forbids
 changing, moving, ending and `&mut` borrowing its place; a `&mut` loan
 forbids every access; places overlap when one's steps start with the
-other's, so other fields stay free. Lowering writes a `scope end` at a
+other's, so other fields stay free, and so do other elements at indexes
+known while compiling; an index known only when the program runs, or a
+subslice, may meet any element. Lowering writes a `scope end` at a
 block's `}`, and at a `break`, `continue` or `return` that leaves the block,
 for each variable of that block, and one where each temporary ends; it writes no code (`InstructionKind::runs`), is gone from a
 compiled body (`flow::cleanup`) and is how a reference

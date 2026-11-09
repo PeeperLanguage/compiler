@@ -45,6 +45,17 @@ interface, allocator and type parameter work below, in PR #182. Order of work
    - [ ] The Website (`peeper.toml`'s `build`, `core:memory`, `size_of`,
      `const` parameters, a new wasm build), once the feature is complete.
 
+7. [~] References in arrays and slices, and loans per holder for structs
+   (owner, 2026-11-08, `arrays-of-references.localplan.md`), on
+   `feature/reference-arrays`. Accept what Peeper proves safe
+   though Rust refuses it; refuse only real hazards (owner, 2026-11-08).
+   - [x] Step 1: a struct field read uses only its own loans; a store to a
+     field replaces them (worklog, "Loans per holder").
+   - [x] Step 2: `[N]&T`, `&[]&T`, `[2]&Shape`, slices of slices,
+     references to references and to slices; one set of loans per element
+     (worklog, "References in arrays and slices").
+   - [ ] The Website, once the feature is complete.
+
 Later: lifetimes of references held in structs; enums and `match` with
 `?T` (put off by the owner 2026-10-30); generics.
 

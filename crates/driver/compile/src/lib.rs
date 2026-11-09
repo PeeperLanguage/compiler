@@ -547,12 +547,12 @@ fn hash_type(checker: &Checker, id: TypeId, hasher: &mut DefaultHasher) {
             interface: target,
         } => {
             mutable.hash(hasher);
-            hash_type(checker, *target, hasher);
+            // References and pointers nest as deep as the source does.
+            source::grow_stack(|| hash_type(checker, *target, hasher));
         }
         Type::RawPointer { target } => {
             target.is_some().hash(hasher);
             if let Some(target) = target {
-                // Pointers nest as deep as the source does.
                 source::grow_stack(|| hash_type(checker, *target, hasher));
             }
         }

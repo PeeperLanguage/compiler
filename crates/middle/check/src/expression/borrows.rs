@@ -37,17 +37,19 @@ impl ThirBuilder<'_, '_> {
     /// Makes the checked place `place` one that can be lent as `ty`, a
     /// reference or slice (`make_place`). A `&mut` or `&mut []` needs a place
     /// that can be written, else that is reported but the place is still
-    /// lent, so checking goes on; a slice place is lent again, so its own
-    /// type decides, never the variable holding it, unless it is behind a
-    /// shared reference, through which nothing is written.
+    /// lent, so checking goes on; a slice place lent again as a slice
+    /// (`lends_slice_elements`) is decided by its own type, never the
+    /// variable holding it, unless it is behind a shared reference, through
+    /// which nothing is written.
     pub(super) fn check_lending(&mut self, ty: TypeId, place: Id<Expr>) {
         let (variable, decider) = self.make_place(place);
         let types = &self.checker.types;
-        let decider = match types[self.body.exprs[place].ty] {
-            Type::Slice { .. } => decider
+        let decider = if types.lends_slice_elements(self.body.exprs[place].ty, ty) {
+            decider
                 .filter(|&decider| !self.writes_through(decider))
-                .or(Some(place)),
-            _ => decider,
+                .or(Some(place))
+        } else {
+            decider
         };
         if types[ty].borrows() == Some(true) {
             self.report_unwritable(place, variable, decider, "mutably borrow");
@@ -59,8 +61,7 @@ impl ThirBuilder<'_, '_> {
     /// temporary's own storage.
     pub(super) fn check_address(&mut self, place: Id<Expr>, span: Span) -> Expr {
         let target = self.body.exprs[place].ty;
-        let Some(target) = (self.checker).loan_free_held_type(target, "raw pointers to", span)
-        else {
+        let Some(target) = self.checker.reached_through_pointer(target, span) else {
             return Expr::INVALID;
         };
         let ty = self.checker.types.intern(Type::RawPointer {

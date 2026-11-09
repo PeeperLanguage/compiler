@@ -5,11 +5,12 @@
 //! A loan is one `Borrow`. A holder is a reference or slice in a variable or
 //! an instruction value, on its own or in a field, however deep: it holds the
 //! loans it may refer through. So each field of a struct keeps its own loans,
-//! as if each had a lifetime of its own in Rust, and `p.second` read out of
-//! `p` holds only those of `second`. Liveness is by variable or value, as in
-//! Rust: using any part of a struct uses all its holders. A loan is in use
-//! after a point when some holder that holds it is used again later, so a
-//! borrow lasts until the last use of the reference, not to its block's end.
+//! and `p.second` read out of `p` holds only those of `second`. Liveness is
+//! by holder too: reading `p.second` uses only the holders of `second`, so
+//! what `p.first` points at may change meanwhile, and a whole use of `p`
+//! uses them all. A loan is in use after a point when some holder that holds
+//! it is used again later, so a borrow lasts until the last use of the
+//! reference, not to its block's end.
 //!
 //! Two dataflow passes, then one walk:
 //!
@@ -19,10 +20,10 @@
 //!    `r`, so what `r` refers to stays borrowed while the new reference is in
 //!    use; borrowing a struct holds the loans of the holders in the place
 //!    too, so what a reference to it reads out still counts them. Copying a
-//!    reference copies its loans; a `store` to a variable replaces them and
-//!    ends each loan of a place through it, which now names what the new
-//!    reference points to, and one to a field adds to them, as in Rust. No
-//!    `store` behind a reference holds a loan: the checker refuses it.
+//!    reference copies its loans; a `store` to a variable or a field
+//!    replaces them and ends each loan of a place through it, which now
+//!    names what the new reference points to. No `store` behind a reference
+//!    holds a loan: the checker refuses it.
 //!    Each block passes on only the loans of holders live at its end: a loan
 //!    is read only through a holder that is used, so no error can need a
 //!    dead holder's, and what is carried follows the references in use, not
@@ -55,6 +56,7 @@ use std::sync::Arc;
 
 use arena::Id;
 use diagnostics::Diagnostic;
+use model::constant::Value;
 use model::mir;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
@@ -318,15 +320,49 @@ impl Loans<'_> {
         (first..first + self.types.holders_in(rest[0]), rest[0])
     }
 
-    /// The holders that `place` is in: those under its fields up to its
-    /// first other step.
+    /// The index of the step `step` when it is an index known while
+    /// compiling: a constant `usize`.
+    fn known_index(&self, step: mir::Projection) -> Option<usize> {
+        let mir::Projection::Index(index) = step else {
+            return None;
+        };
+        match &self.body.constant(index)?.value {
+            Value::Integer(limbs) => Some(limbs.as_slice()[0] as usize), // a `usize`
+            _ => unreachable!("an index is an integer"),
+        }
+    }
+
+    /// Whether `place` names its holders one by one, so a store gives each
+    /// a new value and a read copies each: it is in the variable's own
+    /// storage, and each step is a field or an index known while compiling.
+    /// An index known only when the program runs may be any element.
+    fn names_exactly(&self, place: &mir::Place) -> bool {
+        (place.projections.iter()).all(|&step| {
+            matches!(step, mir::Projection::Field(_)) || self.known_index(step).is_some()
+        })
+    }
+
+    /// The holders that `place` is in: those under its fields and its
+    /// indexes known while compiling, up to its first other step. Past an
+    /// index known only when the program runs, all of the array's.
     fn place_holders(&self, place: &mir::Place) -> Range<usize> {
         let mut holders = self.variable_holders(place.variable);
         let mut ty = self.body.variables[place.variable].ty;
-        for step in &place.projections {
-            match *step {
-                mir::Projection::Field(field) if !holders.is_empty() => {
+        for &step in &place.projections {
+            if holders.is_empty() {
+                break;
+            }
+            match (step, &self.types[ty]) {
+                (mir::Projection::Field(field), _) => {
                     (holders, ty) = self.field_holders(holders, ty, field);
+                }
+                (mir::Projection::Index(_), &Type::Array { element, .. }) => {
+                    let Some(at) = self.known_index(step) else {
+                        break;
+                    };
+                    let first = holders.start + at * self.types.holders_in(element);
+                    holders = first..first + self.types.holders_in(element);
+                    ty = element;
                 }
                 _ => break,
             }
@@ -344,8 +380,10 @@ impl Loans<'_> {
         loans
     }
 
-    /// The holders the instruction `id` uses: all those of the variable of a
-    /// place it reads or goes through, and of each operand.
+    /// The holders the instruction `id` uses: those under a place it reads
+    /// or goes through, and those of each operand. Reading `p.second` uses
+    /// only the holders of `p.second`, so what `p.first` holds may be
+    /// changed meanwhile.
     fn uses(&self, id: Id<mir::Instruction>, mut used: impl FnMut(Id<Holder>)) {
         let kind = &self.body.instructions[id].kind;
         let (place, operands): (Option<&mir::Place>, &[mir::Operand]) = match kind {
@@ -354,9 +392,9 @@ impl Loans<'_> {
             | mir::InstructionKind::Move(place)
             | mir::InstructionKind::Borrow { place, .. }
             | mir::InstructionKind::Address(place) => (Some(place), &[]),
-            // Setting a whole variable does not read it.
+            // A store reads only a reference it writes through.
             mir::InstructionKind::Store { place, value } => (
-                place.whole_variable().is_none().then_some(place),
+                place.is_behind_reference().then_some(place),
                 std::slice::from_ref(value),
             ),
             mir::InstructionKind::Binary { left, right, .. } => {
@@ -389,7 +427,7 @@ impl Loans<'_> {
             mir::InstructionKind::ScopeEnd(_) => (None, &[]),
         };
         if let Some(place) = place {
-            holder_ids(self.variable_holders(place.variable)).for_each(&mut used);
+            holder_ids(self.place_holders(place)).for_each(&mut used);
         }
         for operand in operands {
             holder_ids(self.operand_holders(operand)).for_each(&mut used);
@@ -397,12 +435,13 @@ impl Loans<'_> {
     }
 
     /// The holders the instruction `id` gives a new value: its own value,
-    /// or the whole variable it stores to.
+    /// or those of the place it stores to when it `replaces` them.
     fn defines(&self, id: Id<mir::Instruction>) -> Range<usize> {
         match &self.body.instructions[id].kind {
-            mir::InstructionKind::Store { place, .. } => place
-                .whole_variable()
-                .map_or(0..0, |variable| self.variable_holders(variable)),
+            mir::InstructionKind::Store { place, .. } if self.names_exactly(place) => {
+                self.place_holders(place)
+            }
+            mir::InstructionKind::Store { .. } => 0..0,
             _ => self.value_holders(id),
         }
     }
@@ -490,14 +529,15 @@ impl Loans<'_> {
                 holder_ids(target).for_each(|holder| held.set(holder, &loans));
             }
             // A value read out of a holder holds its loans; from behind it,
-            // those of any it may have come from.
+            // or from any of several elements, those of any it may have
+            // come from.
             mir::InstructionKind::Load(place) | mir::InstructionKind::Move(place) => {
                 let source = self.place_holders(place);
-                if place.is_behind_reference() {
+                if self.names_exactly(place) {
+                    copy(held, target, source);
+                } else {
                     let loans = self.loans_of(held, source);
                     holder_ids(target).for_each(|holder| held.set(holder, &loans));
-                } else {
-                    copy(held, target, source);
                 }
             }
             // What the place holds, or goes through, stays borrowed while
@@ -528,8 +568,14 @@ impl Loans<'_> {
             mir::InstructionKind::ToInterface { reference, .. } => {
                 copy(held, target, self.operand_holders(reference));
             }
-            // These give no value that holds a loan: the checker refuses
-            // an array of references (`ArrayParts`), `&&` and `||` give a
+            // A spread's values land where only the program knows, so each
+            // element holds what any part held.
+            mir::InstructionKind::ArrayParts(parts) => {
+                let sources = parts.iter().flat_map(|part| self.operand_holders(part));
+                let loans = self.loans_of(held, sources);
+                holder_ids(target).for_each(|holder| held.set(holder, &loans));
+            }
+            // These give no value that holds a loan: `&&` and `||` give a
             // `bool` (`Phi`), and a reference converts only to an address.
             mir::InstructionKind::Store { .. }
             | mir::InstructionKind::Length(_)
@@ -537,7 +583,6 @@ impl Loans<'_> {
             | mir::InstructionKind::Binary { .. }
             | mir::InstructionKind::Unary { .. }
             | mir::InstructionKind::Convert(_)
-            | mir::InstructionKind::ArrayParts(_)
             | mir::InstructionKind::Print { .. }
             | mir::InstructionKind::Phi(_)
             | mir::InstructionKind::Check { .. }
@@ -547,37 +592,70 @@ impl Loans<'_> {
         }
     }
 
-    /// `held` after `value` is stored to `place`. To a whole variable, it
-    /// replaces what the variable held and ends each loan of a place through
-    /// it: a store to `r` repoints it, so `r.*` no longer names what a loan
-    /// of it borrowed, and what it points into stays borrowed by the loans
-    /// its reference took from `r`. To a field, it adds to what the field
-    /// held, as Rust's lifetime of a field stays what it was.
+    /// `held` after `value` is stored to `place`. When the place
+    /// `names_exactly` its holders, as a variable or a field does, the store
+    /// replaces what each held, and ends each loan of a place through them:
+    /// a store to `r` repoints it, so `r.*` no longer names what a loan of it
+    /// borrowed, and what it points into stays borrowed by the loans its
+    /// reference took from `r`. An element only the program picks may be any
+    /// of them, so each adds what the value holds.
     fn step_store(&self, held: &mut Held, place: &mir::Place, value: &mir::Operand) {
         if place.is_behind_reference() {
             return; // the checker lets no store here hold a loan
         }
-        let whole = place.whole_variable();
-        let mut sources = holder_ids(self.operand_holders(value));
-        for holder in holder_ids(self.place_holders(place)) {
+        let target = self.place_holders(place);
+        let source = self.operand_holders(value);
+        // Its parameter loan, after the borrows.
+        let parameter = match *value {
+            mir::Operand::Argument(position) => {
+                Some(Id::from_index(self.borrows.len() + position as usize))
+            }
+            _ => None,
+        };
+        if !self.names_exactly(place) {
+            let loans = self.loans_of(held, source);
+            for holder in holder_ids(target) {
+                loans
+                    .iter()
+                    .chain(&parameter)
+                    .for_each(|&loan| held.add(holder, loan));
+            }
+            return;
+        }
+        let mut sources = holder_ids(source);
+        for holder in holder_ids(target) {
             let loans: Vec<Id<Loan>> = match sources.next() {
                 Some(source) => held.loans(source).collect(),
                 None => Vec::new(),
             };
-            if whole.is_some() {
-                held.set(holder, &[]);
-            }
-            loans.iter().for_each(|&loan| held.add(holder, loan));
-            // Its parameter loan, after the borrows.
-            if let mir::Operand::Argument(position) = *value {
-                let loan = Id::from_index(self.borrows.len() + position as usize);
-                held.add(holder, loan);
-            }
+            held.set(holder, &loans);
+            parameter.iter().for_each(|&loan| held.add(holder, loan));
         }
-        if let Some(variable) = whole
-            && let ended = &self.loans_through[variable.index()]
-            && !ended.is_empty()
-        {
+        // Each loan of a place under `place` that goes through a reference:
+        // its steps start with the same fields and known indexes.
+        let same = |stored: mir::Projection, borrowed: mir::Projection| match (stored, borrowed) {
+            (mir::Projection::Field(stored), mir::Projection::Field(borrowed)) => {
+                stored == borrowed
+            }
+            (mir::Projection::Index(_), _) => {
+                (self.known_index(stored)).is_some_and(|at| self.known_index(borrowed) == Some(at))
+            }
+            _ => unreachable!("a place named exactly has only fields and indexes"),
+        };
+        let under_place =
+            |loan: &Id<Loan>| match &self.body.instructions[self.borrows[loan.index()]].kind {
+                mir::InstructionKind::Borrow {
+                    place: borrowed, ..
+                } => (place.projections.iter())
+                    .zip(&borrowed.projections)
+                    .all(|(&stored, &borrowed)| same(stored, borrowed)),
+                _ => unreachable!("each loan is a `Borrow`"),
+            };
+        let ended: Vec<Id<Loan>> = (self.loans_through[place.variable.index()].iter())
+            .copied()
+            .filter(under_place)
+            .collect();
+        if !ended.is_empty() {
             held.pairs.retain(|pair| !ended.contains(&pair.1));
         }
     }
@@ -911,9 +989,15 @@ impl Loans<'_> {
             else {
                 unreachable!("each loan is a `Borrow`")
             };
+            // Two indexes known while compiling meet only when equal.
             let mut steps = access.projections.iter().zip(&*loaned.projections);
             let overlaps = access.variable == loaned.variable
-                && steps.all(|(&left, &right)| left.may_overlap(right));
+                && steps.all(|(&left, &right)| {
+                    match (self.known_index(left), self.known_index(right)) {
+                        (Some(left), Some(right)) => left == right,
+                        _ => left.may_overlap(right),
+                    }
+                });
             let common = access.projections.len().min(loaned.projections.len());
             let past_storage = access.own_storage
                 && (loaned.projections[common..].iter()).any(|step| step.leaves_storage());
