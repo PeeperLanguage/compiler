@@ -655,8 +655,9 @@ in it: `r = &mut b` while `s = &mut r.*` is in use is valid (owner,
 (owner, 2026-10-29). The message names the variable: "`x` is changed while a
 `&mut` reference to it is still in use" (events: read, changed, moved,
 borrowed, borrowed as `&mut`, gone), a temporary as "a temporary value",
-since its code may take several lines, with the help to keep it in a
-variable so it lasts as long as the reference; with "reference made here" and
+since its code may take several lines, with the help that it lasts until
+its statement ends or as long as the variable a `let` or `=` gives it to;
+with "reference made here" and
 "reference used later here" (owner, 2026-10-24). A function with no
 `borrow` is not walked. A `&mut` borrow whose only use is a call argument is
 reserved until that call (two-phase, as the spec on `legacy` asks): until

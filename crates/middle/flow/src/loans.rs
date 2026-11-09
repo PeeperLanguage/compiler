@@ -1028,10 +1028,10 @@ impl Loans<'_> {
                     self.body.instructions.span(borrow),
                     format!("{noun} made here"),
                 );
-            // A temporary ends with its statement; a variable, its block.
+            // How long a temporary lasts is not written in the code.
             if self.body.variables[access.variable].hidden {
-                let help =
-                    "keep the value in a variable with `let`, so it lasts as long as the reference";
+                let help = "a temporary lasts until its statement ends, \
+                            or as long as the variable a `let` or `=` gives it to";
                 error = error.help(help, Vec::new());
             }
             return Some((holder, error));

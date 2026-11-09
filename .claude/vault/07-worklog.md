@@ -1442,7 +1442,7 @@ type-specific code.
   older holder uses it (one slot each pass of a loop).
 - The loan message is the general one. Its help, "keep the value in a
   variable with `let`", is wrong for a temporary already kept by a `let`:
-  owner to choose the words.
+  owner to choose the words (changed after the commit, below).
 - Fixtures: `run_owned_interfaces` and `run_i686_owned_interfaces` add the
   kept forms; `negative_owned_interfaces` 9 errors (moved out of a loop,
   changed while viewed); `run_temporaries` 15, 18, 19 (a struct and an
@@ -1457,3 +1457,17 @@ type-specific code.
   struct moved out of a loop then dangles unseen: the negative fixtures
   catch it). The accepted forms also run in a `const`, whose run checks
   each memory block is open (128).
+
+Committed as 1193d2c7.
+
+## Loan help for a temporary (2026-11-09, `feature/owned-interfaces`)
+
+The help of a loan error on a temporary said "keep the value in a variable
+with `let`, so it lasts as long as the reference": wrong once a `let` or an
+assignment keeps it (moved out of the loop body that keeps it, or replaced
+while an older copy uses it). Owner chose one general line, true in every
+case: "a temporary lasts until its statement ends, or as long as the
+variable a `let` or `=` gives it to" (`Loans::broken_loan`). Naming the
+keeping variable was not done: the loan check reads MIR, which does not
+record it. `negative_temporaries` checks the new words; `docs/ir-design.md`
+updated.
