@@ -1,6 +1,7 @@
 //! Lowering: a function's THIR into MIR, in one walk (docs/ir-design.md).
 //! The checks on the MIR are in the `flow` crate.
 
+pub mod core;
 mod expression;
 mod ranges;
 mod slices;

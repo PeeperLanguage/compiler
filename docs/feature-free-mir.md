@@ -56,12 +56,17 @@ data, and a debug-type table.
 
 A value an instruction gives lives in a register of one class:
 
-`I8 I16 I32 I64 I128 F32 F64 Pointer`
+`I8 I16 I32 I64 I128 Wide(bits) F32 F64 Pointer`
 
 Lowering picks the class from the type once: `usize` and `isize` are the
 pointer-wide integer class of the `Machine` (`pointer_bits`), `bool` is
-`I8`. Signedness is not a class: it is in the operation (`SignedDivide`
-against `UnsignedDivide`), as machines do it. Anything that is not one
+`I8`. An integer wider than 128 bits (Peeper allows up to 2^23 bits:
+`i200`, `u256`) is `Wide` of its exact width, as LLVM has `i200`; its
+operations wrap there, and its constants are read-only data, loaded.
+Signedness is not a class: it is in the operation (`SignedDivide`
+against `UnsignedDivide`), as machines do it. A type narrower than its
+class (`i24` in `I32`) is kept extended to the class; after an operation
+that may carry past its width, lowering cuts the value back. Anything that is not one
 register (a struct, an array, a slice's two words, an interface value's two
 pointers, a range) lives in memory and is handled by its address.
 
@@ -127,8 +132,8 @@ The events, for the path checks only, removed before the backends run:
 
 | Event | Meaning |
 | --- | --- |
-| `Borrow { place, size, mutable, noun }` | a loan of `size` bytes at `place`; its value is the address. `noun` is the word the message uses ("reference", "slice", "interface"), as `Check` carries its message: a word, not a feature |
-| `Moved { place, size }` | the bytes just read are moved out |
+| `Borrow { place, mutable, noun }` | a loan of `place`; its value is the address. `noun` is the word the message uses ("reference", "slice", "interface reference"), as `Check` carries its message: a word, not a feature |
+| `Moved(place)` | the value just read at `place` is moved out |
 | `Dead(slot)` | the slot's storage ends |
 
 Terminators: `Jump`, `Branch { condition, span, then, otherwise }`,
@@ -163,10 +168,10 @@ LLVM writer reads the table and never sees a language type.
 | Today (`mir.rs:176-268`) | Lowering writes |
 | --- | --- |
 | `Load(place)` of a register type | `Load { class }` |
-| `Load`/`Move(place)` of a memory type | `Copy` into the destination slot, plus `Moved` for a move |
+| `Load`/`Move(place)` of a memory type | the place itself is the value; `Moved` for a move; a `Copy` where it is stored |
 | `Length(place)` | `Load { Pointer-wide, place + Offset(pointer_bytes) }` |
 | `Store { place, value }` | `Store` or `Copy` |
-| `Borrow { place, mutable }` of a reference | `Borrow { size, noun: "reference" }`, then its value is the address |
+| `Borrow { place, mutable }` of a reference | `Borrow { noun: "reference" }`; its value is the address |
 | `Borrow` of a slice `&a[i..j]` | the bounds `Check`s, then `Borrow { noun: "slice" }` of the elements, then two `Store`s (address, length) into the slice slot |
 | `Address(place)` | `Address` |
 | `Binary { op }` on integers | `Integer` or `Compare`; division and shifts are preceded by a `Check` with the message from `runtime_abi::messages`, which the backends trap on today |
@@ -205,7 +210,8 @@ gone.
 
 **Interpreter** (`middle/eval`, 2,578) is rewritten on v4's
 (`v4/backend/eval/src/lib.rs`, 291 lines): byte memory, registers as
-`u128` so `I128` fits, no bigint. Every rule of a constant's run stays a
+`u128` so `I128` fits; a `Wide` register holds a big integer, the one
+place bigint stays. Every rule of a constant's run stays a
 rule at its operation, as today (`eval/src/interpreter/instructions.rs:61,
 73, 102, 144`, `places.rs:39`, `calls.rs:233`): `Integer` on the pointer
 class, `Compare` of two non-null pointers, `Convert` of a pointer to an

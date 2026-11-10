@@ -6,6 +6,7 @@
 
 pub mod ast;
 pub mod constant;
+pub mod core_mir;
 pub mod layout;
 pub mod machine;
 pub mod mir;

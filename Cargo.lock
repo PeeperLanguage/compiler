@@ -435,7 +435,10 @@ version = "0.3.1"
 dependencies = [
  "arena",
  "bigint",
+ "check",
  "model",
+ "parser",
+ "project",
  "runtime_abi",
  "source",
 ]
