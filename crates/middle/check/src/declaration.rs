@@ -183,10 +183,15 @@ impl Checker<'_> {
         }
         let module = definition.module.index();
         let reported = self.module_checks[module].diagnostics.len();
-        let checking = self.checking.last().expect("the function is being checked");
+        let checking = self
+            .internals
+            .declarations_being_checked
+            .last()
+            .expect("the function is being checked");
         if first_const.is_some() && checking.arguments == ConstArguments::NONE {
             let own = self.own_arguments(tree, signature);
-            self.checking
+            self.internals
+                .declarations_being_checked
                 .last_mut()
                 .expect("the function is being checked")
                 .arguments = own;
@@ -381,7 +386,11 @@ impl Checker<'_> {
         interface: TypeId,
         span: Span,
     ) -> Option<ImplementationId> {
-        if let Some(&found) = self.implementations.get(&(structure, interface)) {
+        if let Some(&found) = self
+            .internals
+            .known_implementations
+            .get(&(structure, interface))
+        {
             return Some(found);
         }
         let modules = self.modules;
@@ -450,7 +459,9 @@ impl Checker<'_> {
             return None;
         }
         let id = self.types.add_implementation(found.into());
-        self.implementations.insert((structure, interface), id);
+        self.internals
+            .known_implementations
+            .insert((structure, interface), id);
         Some(id)
     }
 
@@ -1008,7 +1019,8 @@ impl Checker<'_> {
                 // was reported by `scope::collect`.
                 ast::Type::Owner => {
                     let checking = self
-                        .checking
+                        .internals
+                        .declarations_being_checked
                         .last()
                         .expect("a declaration is being checked");
                     let declaration =

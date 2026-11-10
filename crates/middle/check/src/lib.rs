@@ -49,35 +49,41 @@ pub struct Checker<'p> {
     /// What checking each module found so far, by `ModuleId`.
     pub module_checks: Vec<ModuleChecks<'p>>,
     pub types: Types, // the program's types, built-in and declared
-    /// Each struct and interface pair found to implement (`implementation`),
-    /// so its methods are looked up once.
-    implementations: FxHashMap<(TypeId, TypeId), ImplementationId>,
     /// The machine the program is for: the width of `isize` and `usize` is
     /// its `pointer_bits`, and a value may take its `largest_object` bytes.
     pub target: &'static Machine,
+    internals: CheckerInternals,
+}
+
+/// What checking keeps track of on its way, which no declaration of the
+/// program states (`Checker::internals`).
+struct CheckerInternals {
+    /// Each struct and interface pair found to implement (`implementation`),
+    /// so its methods are looked up once.
+    known_implementations: FxHashMap<(TypeId, TypeId), ImplementationId>,
     /// Whether the facts found are recorded (`ModuleChecks::facts`), as for
     /// an editor.
-    record_facts: bool,
+    records_editor_facts: bool,
     /// The declarations being checked, outermost first: the innermost's
     /// module is the module being checked (`current_module`). One asked for
     /// again while it is here depends on itself.
-    checking: Vec<Checking>,
+    declarations_being_checked: Vec<Checking>,
     /// How far the body of each function, or each copy of one, is built
     /// (`build_function`).
-    bodies: FxHashMap<FunctionCopy, Built>,
+    built_bodies: FxHashMap<FunctionCopy, Built>,
     /// Each copy of a function with `const T: type` parameters made so far
     /// (`copy_type`).
-    copies: FxHashMap<FunctionCopy, Copied>,
+    function_copies: FxHashMap<FunctionCopy, Copied>,
     /// The copies made whose bodies the compile has not built yet, in the
     /// order made; it takes them (`next_copy`).
-    unbuilt_copies: Vec<FunctionCopy>,
+    copies_to_build: Vec<FunctionCopy>,
     /// Whether copies nested too deep (`COPY_DEPTH_LIMIT`): then no copy's
     /// body is built any more, as a function that makes two copies inside
     /// each would make twice as many at each depth.
-    copies_stopped: bool,
+    copies_too_deep: bool,
 }
 
-/// A copy of a function with `const T: type` parameters (`Checker::copies`).
+/// A copy of a function with `const T: type` parameters (`CheckerInternals::function_copies`).
 struct Copied {
     signature: TypeId, // its function type, invalid when it has an error
     /// The copies it is made inside, each in the body of the one before,
@@ -97,7 +103,7 @@ struct Copied {
 /// copies without end.
 const COPY_DEPTH_LIMIT: u32 = 64;
 
-/// A declaration being checked (`Checker::checking`).
+/// A declaration being checked (`CheckerInternals::declarations_being_checked`).
 struct Checking {
     definition: DefId,
     /// What its `const` parameters are given, when it is a function that
@@ -158,7 +164,7 @@ pub struct ModuleChecks<'p> {
 /// Where the check of one declaration is.
 #[derive(Clone, Debug)]
 pub enum State<T> {
-    NotStarted, // or being checked: then it is in `Checker::checking`
+    NotStarted, // or being checked: then it is in `CheckerInternals::declarations_being_checked`
     Done(T),
 }
 
@@ -191,14 +197,16 @@ impl<'p> Checker<'p> {
             modules,
             module_checks,
             types: Types::new(target.pointer_bits),
-            implementations: FxHashMap::default(),
             target,
-            record_facts,
-            checking: Vec::new(),
-            bodies: FxHashMap::default(),
-            copies: FxHashMap::default(),
-            unbuilt_copies: Vec::new(),
-            copies_stopped: false,
+            internals: CheckerInternals {
+                known_implementations: FxHashMap::default(),
+                records_editor_facts: record_facts,
+                declarations_being_checked: Vec::new(),
+                built_bodies: FxHashMap::default(),
+                function_copies: FxHashMap::default(),
+                copies_to_build: Vec::new(),
+                copies_too_deep: false,
+            },
         }
     }
 
@@ -272,7 +280,7 @@ impl<'p> Checker<'p> {
         if let State::Done(result) = &table(&mut self.module_checks[module])[index] {
             return result.clone();
         }
-        let mut checking = self.checking.iter();
+        let mut checking = self.internals.declarations_being_checked.iter();
         if let Some(start) = checking.position(|checking| checking.definition == definition) {
             self.report_cycle(start, used_at);
             return on_cycle;
@@ -296,11 +304,11 @@ impl<'p> Checker<'p> {
     }
 
     /// What `check` finds with `checking` the innermost declaration being
-    /// checked (`Checker::checking`).
+    /// checked (`CheckerInternals::declarations_being_checked`).
     fn checking_in<T>(&mut self, checking: Checking, check: impl FnOnce(&mut Self) -> T) -> T {
-        self.checking.push(checking);
+        self.internals.declarations_being_checked.push(checking);
         let result = check(self);
-        self.checking.pop();
+        self.internals.declarations_being_checked.pop();
         result
     }
 
@@ -310,10 +318,13 @@ impl<'p> Checker<'p> {
     /// never built.
     pub(crate) fn in_copy(&self) -> bool {
         let checking = self
-            .checking
+            .internals
+            .declarations_being_checked
             .last()
             .expect("a declaration is being checked");
-        self.copies.contains_key(&checking.copy())
+        self.internals
+            .function_copies
+            .contains_key(&checking.copy())
     }
 
     /// The type `ty` as a message names it (`Types::text`).
@@ -358,7 +369,7 @@ impl<'p> Checker<'p> {
     /// declaration names the next.
     fn report_cycle(&mut self, start: usize, closing: Span) {
         let modules = self.modules;
-        let cycle = &self.checking[start..];
+        let cycle = &self.internals.declarations_being_checked[start..];
         let first = cycle[0].definition;
         let (first_name, first_file) = model::program::declared_name(modules, first);
         let only_aliases = (cycle.iter()).all(|asker| {
@@ -421,7 +432,7 @@ impl<'p> Checker<'p> {
 
     /// The module being checked: the innermost declaration's (`checking`).
     pub(crate) fn current_module(&self) -> ModuleId {
-        let checking = self.checking.last();
+        let checking = self.internals.declarations_being_checked.last();
         checking
             .expect("a declaration is being checked")
             .definition
@@ -457,7 +468,12 @@ impl<'p> Checker<'p> {
     /// are not (`Checking::records_facts`) or it is a copy (`in_copy`),
     /// whose facts are of what it is given only.
     pub(crate) fn record(&mut self, span: Span, kind: FactKind) {
-        let Some(checking) = self.checking.last().filter(|_| self.record_facts) else {
+        let Some(checking) = self
+            .internals
+            .declarations_being_checked
+            .last()
+            .filter(|_| self.internals.records_editor_facts)
+        else {
             return;
         };
         if checking.records_facts && !self.in_copy() {
@@ -474,7 +490,8 @@ impl<'p> Checker<'p> {
     /// the prelude.
     pub(crate) fn resolve_global(&mut self, name: &str) -> Option<Symbol> {
         let checking = self
-            .checking
+            .internals
+            .declarations_being_checked
             .last()
             .expect("a declaration is being checked");
         if checking.arguments != ConstArguments::NONE {

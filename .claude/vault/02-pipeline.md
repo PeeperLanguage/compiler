@@ -63,8 +63,8 @@ reports its diagnostics; a later build drops what it finds again) or `Kept`
 
 ## Per declaration (`check::State`)
 
-`NotStarted` (or being checked: then it is on `Checker::checking`) →
-`Done(T)`. Asking for a declaration that is on `checking` is a cycle,
+`NotStarted` (or being checked: then it is on `CheckerInternals::declarations_being_checked`) →
+`Done(T)`. Asking for a declaration that is on `declarations_being_checked` is a cycle,
 reported once (T0013). Tables: `declared_type(d)`, `function_type(d)`,
 `constant(d)`, `body(d)`, `mir(d)` (`docs/ir-design.md`, Scheduling).
 

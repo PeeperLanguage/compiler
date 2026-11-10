@@ -52,9 +52,9 @@ impl Checker<'_> {
         let module = copy.definition.module.index();
         let ty = self.copy_type(copy, used_at);
         // Decided now: a run at compile time inside this build builds it too.
-        let first = !self.bodies.contains_key(&copy);
+        let first = !self.internals.built_bodies.contains_key(&copy);
         if first {
-            self.bodies.insert(copy, Built::Reported);
+            self.internals.built_bodies.insert(copy, Built::Reported);
         }
         let reported = self.module_checks[module].diagnostics.len();
         let checked = self.check_body(copy, used_at, thir, to_run);
@@ -64,7 +64,7 @@ impl Checker<'_> {
         if !first {
             found.truncate(reported);
         } else if copy.arguments != ConstArguments::NONE {
-            let into = self.copies[&copy].reported_in;
+            let into = self.internals.function_copies[&copy].reported_in;
             self.report_from_copy(copy, reported, into);
         }
         mir.map(|mir| mir.filter(|_| !failed))
@@ -82,21 +82,22 @@ impl Checker<'_> {
         if copy.arguments == ConstArguments::NONE || pattern == TypeId::INVALID {
             return pattern;
         }
-        if let Some(copied) = self.copies.get(&copy) {
+        if let Some(copied) = self.internals.function_copies.get(&copy) {
             return copied.signature;
         }
         let made_inside = self
-            .checking
+            .internals
+            .declarations_being_checked
             .last()
             .expect("a call is being checked")
             .copy();
-        let (depth, reported_in) = match self.copies.get(&made_inside) {
+        let (depth, reported_in) = match self.internals.function_copies.get(&made_inside) {
             Some(inside) => (inside.depth + 1, inside.reported_in),
             None => (1, self.current_module()),
         };
         if depth > COPY_DEPTH_LIMIT {
             // Reported once: the body that made the copy has the error.
-            if std::mem::replace(&mut self.copies_stopped, true) {
+            if std::mem::replace(&mut self.internals.copies_too_deep, true) {
                 return TypeId::INVALID;
             }
             let name = model::program::declared_path(self.modules, copy.definition);
@@ -106,7 +107,7 @@ impl Checker<'_> {
             );
             return self.error(diagnostics::CIRCULAR_DEPENDENCY, message, used_at);
         }
-        self.copies.insert(
+        self.internals.function_copies.insert(
             copy,
             Copied {
                 signature: TypeId::INVALID,
@@ -128,10 +129,14 @@ impl Checker<'_> {
             self.checking_in(checking, |checker| checker.check_function(copy.definition));
         let caller = self.current_module();
         self.report_from_copy(copy, reported, caller);
-        let copied = self.copies.get_mut(&copy).expect("the copy was just made");
+        let copied = self
+            .internals
+            .function_copies
+            .get_mut(&copy)
+            .expect("the copy was just made");
         copied.signature = signature;
         if signature != TypeId::INVALID {
-            self.unbuilt_copies.push(copy);
+            self.internals.copies_to_build.push(copy);
         }
         signature
     }
@@ -140,7 +145,10 @@ impl Checker<'_> {
     /// compile has not built (`build_function`), the newest first; building
     /// one may make more. None once copies nested too deep.
     pub fn next_copy(&mut self) -> Option<FunctionCopy> {
-        self.unbuilt_copies.pop().filter(|_| !self.copies_stopped)
+        self.internals
+            .copies_to_build
+            .pop()
+            .filter(|_| !self.internals.copies_too_deep)
     }
 
     /// Moves what checking `copy` reported in its function's module, past
@@ -159,7 +167,7 @@ impl Checker<'_> {
             called_in,
             called_at,
             ..
-        } = self.copies[&copy];
+        } = self.internals.function_copies[&copy];
         let name = self.types.copy_text(
             model::program::declared_path(modules, definition),
             copy.arguments,
@@ -238,21 +246,28 @@ impl Checker<'_> {
         // cycle, not one that only may.
         let (mut reached, mut pending) = (FxHashSet::default(), vec![function]);
         while let Some(next) = pending.pop() {
-            if self.copies_stopped {
+            if self.internals.copies_too_deep {
                 return None; // reported
             }
             if !reached.insert(next) {
                 continue;
             }
-            if !matches!(self.bodies.get(&next), Some(Built::Kept(_))) {
-                if self.checking.iter().any(|checking| checking.copy() == next) {
+            if !matches!(self.internals.built_bodies.get(&next), Some(Built::Kept(_))) {
+                if self
+                    .internals
+                    .declarations_being_checked
+                    .iter()
+                    .any(|checking| checking.copy() == next)
+                {
                     continue;
                 }
                 let mut thir = thir::Body::default();
                 let mir = self.build_function(next, span, &mut thir, true).flatten();
-                self.bodies.insert(next, Built::Kept(mir.map(Box::new)));
+                self.internals
+                    .built_bodies
+                    .insert(next, Built::Kept(mir.map(Box::new)));
             }
-            let Some(Built::Kept(Some(mir))) = self.bodies.get(&next) else {
+            let Some(Built::Kept(Some(mir))) = self.internals.built_bodies.get(&next) else {
                 continue;
             };
             // A method is called through a table, so each function in one
@@ -281,7 +296,7 @@ impl Checker<'_> {
                 ran.push(copy.definition.module);
             }
         }
-        let mir_of = |copy: FunctionCopy| match self.bodies.get(&copy) {
+        let mir_of = |copy: FunctionCopy| match self.internals.built_bodies.get(&copy) {
             Some(Built::Kept(mir)) => mir.as_deref(),
             None | Some(Built::Reported) => None,
         };
@@ -314,8 +329,8 @@ impl Checker<'_> {
                 None => (function, None),
             };
             // Another copy of a function being checked is no cycle.
-            if let Some(start) =
-                (self.checking.iter()).position(|checking| checking.copy() == callee)
+            if let Some(start) = (self.internals.declarations_being_checked.iter())
+                .position(|checking| checking.copy() == callee)
             {
                 self.report_cycle(start, span);
                 return None;

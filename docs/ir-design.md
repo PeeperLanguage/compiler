@@ -295,7 +295,7 @@ mir(d)            MIR of function d (needs body(d)); also asked for by a call ru
   `Checker::build_function`, for the compile's walk and for a call run at
   compile time; check calls `lower` and `flow` itself (owner, 2026-10-26).
   Its first build reports what its checks find; a later one finds the same
-  and drops it. MIR built for a run is kept in `Checker::bodies` for the
+  and drops it. MIR built for a run is kept in `CheckerInternals::built_bodies` for the
   next run; the compile's walk still hands its MIR on and keeps none. A run
   first builds every function it may reach, except one still being checked,
   then only reads the table. A run that calls a function still being checked
