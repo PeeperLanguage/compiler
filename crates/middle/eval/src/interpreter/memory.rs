@@ -216,15 +216,6 @@ impl Memory {
         let end = rest.iter().position(|&byte| byte == 0)?;
         Some(&rest[..end])
     }
-
-    /// The string at `address`: all of one `string_address` stored, zero bytes in it
-    /// included, else the bytes up to the first zero byte, as C reads it.
-    pub(super) fn string_at(&self, address: u64) -> Option<Box<[u8]>> {
-        if let Some((text, _)) = self.strings.iter().find(|&(_, &start)| start == address) {
-            return Some(text.clone());
-        }
-        self.c_text(address).map(Into::into)
-    }
 }
 
 /// The `length` bytes from `start` of a region, as the host indexes them:
@@ -332,7 +323,7 @@ mod tests {
         let mut memory = Memory::default();
         let address = memory.string_address(b"ab\0cd");
         assert_eq!(memory.string_address(b"ab\0cd"), address);
-        assert_eq!(memory.string_at(address).as_deref(), Some(&b"ab\0cd"[..]));
+        assert_eq!(memory.bytes(address, 5), Some(&b"ab\0cd"[..]));
         assert_eq!(memory.bytes(address + 5, 1), Some(&[0][..]), "C's end");
     }
 }

@@ -33,7 +33,7 @@ fn main() -> i32 {
     let tie: f32 = 224025.625;
     println("ties:", tie, 138813900997328.125);
     let zero = 0.0;
-    println("special:", -0.0, 1.0 / zero, -1.0 / zero, zero / zero);
+    println("special:", -0.0, -zero, 1.0 / zero, -1.0 / zero, zero / zero);
 
     println("bools:", true, 1 > 2);
     println("text:", Name, "100% sure");

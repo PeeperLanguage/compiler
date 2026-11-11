@@ -112,7 +112,8 @@ impl Lowering<'_> {
         }
         if counted_at_run_time {
             let fixed: u64 = lowered.iter().filter_map(|(.., count)| count.ok()).sum();
-            let mut remaining = Operand::integer(wide, length - fixed);
+            let mut remaining =
+                self.class_constant(wide, &Limbs::new(wide.bits(), &[length - fixed]), span);
             let mut failed = Operand::integer(Class::I8, 0);
             for (.., count) in &lowered {
                 let Err(count) = count else { continue };
@@ -120,7 +121,7 @@ impl Lowering<'_> {
                 failed = self.integer(IntegerOp::Or, Class::I8, failed, over, span);
                 remaining = self.integer(IntegerOp::Subtract, wide, remaining, *count, span);
             }
-            let zero = Operand::integer(wide, 0);
+            let zero = self.class_constant(wide, &Limbs::new(wide.bits(), &[]), span);
             let short = self.compare(Comparison::NotEqual, wide, remaining, zero, span);
             let failed = self.integer(IntegerOp::Or, Class::I8, failed, short, span);
             self.emit_check(failed, &array_parts_message(length), span);
@@ -129,23 +130,21 @@ impl Lowering<'_> {
         // counted when the program runs, then a register.
         let mut position: Result<u64, Operand> = Ok(0);
         for (spread, part_type, value, count) in lowered {
-            let at = |lowering: &mut Self, position: &Result<u64, Operand>| match *position {
+            // A position counted when the program runs is already a `usize`.
+            let at = |position: &Result<u64, Operand>| match *position {
                 Ok(index) => Place::whole(slot).then(Step::Offset(index * size)),
-                Err(index) => {
-                    let index = lowering.as_usize(index, wide, span);
-                    Place::whole(slot).then(Step::Index { index, size })
-                }
+                Err(index) => Place::whole(slot).then(Step::Index { index, size }),
             };
             match self.types[part_type] {
                 Type::Slice { .. } if spread => {
-                    let to = at(self, &position);
+                    let to = at(&position);
                     let count = count.expect_err("a slice is counted when the program runs");
                     let count = self.as_usize(count, wide, span);
                     let from = Self::through_slice(value.memory());
                     self.copy_elements(to, from, count, size, span);
                 }
                 Type::Range { .. } if spread => {
-                    let to = at(self, &position);
+                    let to = at(&position);
                     let count = match count {
                         Ok(count) => Operand::integer(self.usize, count),
                         Err(count) => self.as_usize(count, wide, span),
@@ -153,7 +152,7 @@ impl Lowering<'_> {
                     self.fill_range(to, value.memory(), part_type, count, span);
                 }
                 _ => {
-                    let to = at(self, &position);
+                    let to = at(&position);
                     self.put(to, value, part_type, span);
                 }
             }
@@ -246,17 +245,13 @@ impl Lowering<'_> {
             let count = size.count_over(&left, &step, inclusive[0] != 0);
             let count = count.expect("the checker refused a zero step");
             let count = bigint::extend(size.bits + 1, false, &count, wide.bits());
-            let limbs = count.as_slice();
-            return Operand::Constant {
-                class: wide,
-                bits: [limbs[0], limbs.get(1).copied().unwrap_or(0)],
-            };
+            return self.class_constant(wide, &count, span);
         }
         let class = Class::integer(size.bits);
         let whole = self.integer(IntegerOp::UnsignedDivide, class, left, step, span);
         let whole = self.widen_unsigned(whole, class, wide, span);
         let rest = self.integer(IntegerOp::UnsignedRemainder, class, left, step, span);
-        let zero = Operand::integer(class, 0);
+        let zero = self.class_constant(class, &Limbs::new(class.bits(), &[]), span);
         let more = self.compare(Comparison::NotEqual, class, rest, zero, span);
         let last = self.integer(IntegerOp::Or, Class::I8, inclusive, more, span);
         let extra = self.widen_unsigned(last, Class::I8, wide, span);
@@ -482,7 +477,7 @@ impl Lowering<'_> {
             None if up => lowering.convert_integer(step, step_integer, integer, span),
             None => {
                 let delta = lowering.convert_integer(step, step_integer, integer, span);
-                let zero = Operand::integer(class, 0);
+                let zero = lowering.integer_operand(integer, &Limbs::new(integer.bits, &[]), span);
                 lowering.arithmetic(IntegerOp::Subtract, integer, zero, delta, span)
             }
         };
@@ -590,7 +585,8 @@ impl Lowering<'_> {
         let first = if included == Some(true) {
             inclusive
         } else {
-            let zero = Operand::integer(size_class, 0);
+            let zero =
+                self.class_constant(size_class, &Limbs::new(size_class.bits(), &[]), range_span);
             let away = self.compare(
                 Comparison::NotEqual,
                 size_class,
@@ -617,7 +613,11 @@ impl Lowering<'_> {
         self.store(size_class, Place::whole(left), left_first, range_span);
         self.store(Class::I8, Place::whole(going), first, range_span);
         if let (Some(passes), Some(passes_class)) = (passes, passes_class) {
-            let zero = Operand::integer(passes_class, 0);
+            let zero = self.class_constant(
+                passes_class,
+                &Limbs::new(passes_class.bits(), &[]),
+                range_span,
+            );
             self.store(passes_class, Place::whole(passes), zero, range_span);
         }
         let test = self.new_block(span);
@@ -654,7 +654,11 @@ impl Lowering<'_> {
                 index_span,
             );
             self.declare(index_slot);
-            let one = Operand::integer(passes_class, 1);
+            let one = self.class_constant(
+                passes_class,
+                &Limbs::new(passes_class.bits(), &[1]),
+                range_span,
+            );
             let next = self.integer(IntegerOp::Add, passes_class, passes_now, one, range_span);
             self.store(passes_class, Place::whole(passes), next, range_span);
         }

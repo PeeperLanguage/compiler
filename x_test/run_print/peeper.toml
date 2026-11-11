@@ -11,7 +11,7 @@ stdout_contains = [
     "padded: 1000000000000000000000 -1000000000000000000001\n",
     "floats: 0.1 0.30000000000000004 1.0 1e+16 1e-05 3.14159265\n",
     "ties: 224025.63 138813900997328.13\n",
-    "special: -0.0 inf -inf nan\n",
+    "special: -0.0 -0.0 inf -inf nan\n",
     "bools: true false\n",
     "text: peeper 100% sure\n",
     "structs: Point { x: 3, y: 4 } Line { from: Point { x: 3, y: 4 }, to: Point { x: 5, y: 6 }, weight: 1.5 } Empty {}\n",

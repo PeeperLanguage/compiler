@@ -12,6 +12,7 @@ model.workspace = true
 check.workspace = true
 flow.workspace = true
 eval.workspace = true
+lower.workspace = true
 runtime_abi.workspace = true
 source.workspace = true
 

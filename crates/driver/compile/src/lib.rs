@@ -27,6 +27,7 @@ use model::FunctionCopy;
 use model::ModuleId;
 use model::ast;
 use model::constant::Constant;
+use model::core_mir::DebugTypes;
 use model::machine::Machine;
 use model::mir;
 use model::semantic_types::ConstArguments;
@@ -129,6 +130,7 @@ pub enum Output<'c> {
 /// after, except its MIR, which is handed over (`into_mir`).
 pub struct CheckedFunction<'c> {
     pub function: FunctionCopy,
+    pub ty: TypeId, // its function type, or its copy's
     /// The module whose compile built it: its own, or, for a copy, the one
     /// that first called it.
     pub module: ModuleId,
@@ -171,41 +173,24 @@ pub fn interpret(
 ) -> (Results, Option<Interpreted>) {
     let modules = program.modules.as_slice();
     let mut bodies = HashMap::new();
-    let mut last_types = None;
-    let results = run(
-        program,
-        target,
-        Results::default(),
-        true,
-        false,
-        |output| match output {
-            Output::Function(checked) => {
-                let function = checked.function;
-                if let Some(mir) = checked.into_mir() {
-                    bodies.insert(function, mir);
-                }
+    // shortcut: the run reads no debug type, but lowering makes them; the
+    // table goes once lowering stops making what nothing reads.
+    let mut debug_types = DebugTypes::default();
+    let results = run(program, target, Results::default(), true, false, |output| {
+        if let Output::Function(checked) = output {
+            let (thir, ty, types) = (checked.thir, checked.ty, checked.types);
+            let lowered = lower::core::lower(thir, ty, types, target, modules, &mut debug_types);
+            if let Some(body) = lowered {
+                bodies.insert(checked.function, body);
             }
-            // Nothing here is reused, so the last module's facts come last,
-            // with every type.
-            Output::Facts { module, types, .. } if module.index() + 1 == modules.len() => {
-                last_types = Some(types.clone());
-            }
-            _ => {}
-        },
-    );
-    let (Some((main, _)), Some(types)) = (results.entry_point(), last_types) else {
+        }
+    });
+    let Some((main, _)) = results.entry_point() else {
         return (results, None);
     };
     let extern_symbol = |function| model::program::c_symbol(modules, function);
-    let struct_name = |definition| model::program::declared_text(modules, definition).to_string();
-    let field_names = |definition| {
-        let names = model::program::field_names(modules, definition);
-        names.map(str::to_string).collect()
-    };
     let facts = ProgramFacts {
         extern_symbol: &extern_symbol,
-        struct_name: &struct_name,
-        field_names: &field_names,
     };
     let main_function = FunctionCopy {
         definition: main,
@@ -214,7 +199,6 @@ pub fn interpret(
     let outcome = eval::interpreter::program::run(
         main,
         &bodies[&main_function],
-        &types,
         target,
         &|function| bodies.get(&function),
         &facts,
@@ -486,9 +470,11 @@ fn build_function(
     let Some(mir) = checker.build_function(function, span, thir, false) else {
         return;
     };
+    let ty = checker.copy_type(function, span); // made by the build
     let facts = std::mem::take(&mut checker.module_checks[module.index()].facts);
     use_output(Output::Function(CheckedFunction {
         function,
+        ty,
         module,
         thir,
         facts: &facts,

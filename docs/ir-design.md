@@ -154,7 +154,8 @@ what the other cannot do:
   reads: a value has no struct or array form yet). A `const`
   declaration's value comes from this today.
 - **The interpreter** (`eval::interpreter::run_function`) runs what folding cannot: calls and control
-  flow, over MIR. In a constant's value (a module `const` or one in a body), a
+  flow, over the MIR of core concepts (`model::core_mir`,
+  `docs/feature-free-mir.md`). In a constant's value (a module `const` or one in a body), a
   call whose arguments are all constants is run at once
   (`Checker::evaluate_call`), so its result folds on (`f(3) + 2`). It keeps
   variables and values in memory (structs, arrays, ranges) in bytes laid out
@@ -163,8 +164,8 @@ what the other cannot do:
   a `&cstr`. `print` and `extern` functions are errors at compile time (T0044),
   as are a `panic`, a failed check, a bad address, running out of stack,
   100,000 calls at once and more than 1,000,000 steps (owner, 2026-10-26: a
-  fixed limit, no setting until a program needs one), where each 256 bytes
-  copied and each value of a filled range count as a step too. The error is
+  fixed limit, no setting until a program needs one), where each
+  instruction is a step and each 256 bytes copied count as a step too. The error is
   at the call, with a label where the run stopped. A constant's value goes into
   the program, and only the running program knows an address, so a constant may
   use an address but not read it (owner, 2026-11-01). `@`, storing a pointer,
@@ -175,12 +176,11 @@ what the other cannot do:
   such casts and reads the bytes behind them; Peeper's addresses are plain
   numbers, so it stops at the cast.
   Memory is stricter here too, as in Rust, where each thing is its own
-  allocation. Each call's frame and each variable, each time it starts, is a
-  block of memory never used before (256 MiB in all), and `scope end` ends a
-  variable's block. So a pointer to what ended stops the run at its next use,
-  and one from an earlier pass of a loop cannot reach this pass's variable. So
-  a body built for this run keeps its `scope end`s, unlike a compiled one
-  (`flow::cleanup`).
+  allocation. Each call's frame and each slot (a variable or a temporary),
+  each time it starts, is a block of memory never used before (256 MiB in
+  all), and a slot's `dead` ends its block. So a pointer to what ended stops
+  the run at its next use, and one from an earlier pass of a loop cannot
+  reach this pass's variable.
 - **A whole program** runs on the same interpreter (`interpreter::program::run`,
   through `compile::interpret`), which is how a web page runs code with no
   clang or LLVM, and what the experimental `peeper run -interpret` does in a
@@ -435,8 +435,8 @@ that starts with a `Phi` stays, as the `Phi` names its predecessors, and a
 `Phi` drops the arms of removed blocks. The instructions of removed blocks stay
 in `Body::instructions`, unused: renumbering them costs more than they do.
 Only what reads a compiled body runs this: the driver, for the backend and
-dumps, and `compile::interpret`. `peeper check` and the language server read
-no MIR after the checks, and a constant's run needs its `scope end`s.
+dumps. `peeper check` and the language server read no MIR after the checks,
+and the interpreter reads the MIR of core concepts instead.
 
 The missing-return check (T0017, `flow`) reports a function whose
 `fall off` block is reachable. It walks back from that block through blocks

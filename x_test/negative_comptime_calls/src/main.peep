@@ -122,7 +122,7 @@ const WIDE_CALLS = wide_calls(0);
 // One instruction can do a lot of work, and it counts: these stop soon, not
 // after a million copies of a large array.
 fn copies() -> i32 {
-    let mut values = [400000]i32{(0..400000)...};
+    let mut values = [50000]i32{(0..50000)...};
     for 0..190000 {
         let held = values;
         values = held;

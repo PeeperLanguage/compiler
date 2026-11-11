@@ -30,6 +30,9 @@ fn float_to_i64(value: f64) -> i64 { return value as i64; }
 fn single_to_i8(value: f32) -> i8 { return value as i8; }
 fn single_to_u128(value: f32) -> u128 { return value as u128; }
 fn to_i200(value: f64) -> i200 { return value as i200; }
+// Below its register's width: the ends are the type's own.
+fn to_i7(value: f64) -> i7 { return value as i7; }
+fn to_u3(value: f64) -> u3 { return value as u3; }
 fn flag(value: bool) -> u8 { return value as u8; }
 
 fn main() -> i32 {
@@ -56,8 +59,12 @@ fn main() -> i32 {
     if to_i200(1e300) == 1e300 as i200 { same = same + 1; } // maximum
     if to_i200(-1e300) == -1e300 as i200 { same = same + 1; } // minimum
     if to_i200(-2.5e40) == -2.5e40 as i200 { same = same + 1; }
+    if to_i7(Huge) == Huge as i7 { same = same + 1; } // 63
+    if to_i7(-Huge) == -Huge as i7 { same = same + 1; } // -64
+    if to_u3(9.0) == 9.0 as u3 { same = same + 1; } // 7
     let checks = (Big as u8 == 44) && (Huge as i32 == 2147483647) && (Half as i32 == -2)
-        && (NotANumber as i32 == 0) && (Large as i8 == 127) && (-Infinite as i8 == -128);
+        && (NotANumber as i32 == 0) && (Large as i8 == 127) && (-Infinite as i8 == -128)
+        && (to_i7(Huge) == 63) && (to_u3(9.0) == 7);
     if checks { same = same + 1; }
-    return same + 19; // 23 + 19
+    return same + 16; // 26 + 16
 }

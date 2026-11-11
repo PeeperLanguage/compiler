@@ -98,6 +98,7 @@ dependencies = [
  "diagnostics",
  "eval",
  "flow",
+ "lower",
  "model",
  "project",
  "runtime_abi",
@@ -197,6 +198,7 @@ dependencies = [
  "llvm",
  "model",
  "runtime_abi",
+ "rustc-hash",
  "source",
 ]
 

@@ -300,8 +300,13 @@ pub enum Operand {
 }
 
 impl Operand {
-    /// The integer `value` as a constant of `class`.
+    /// The integer `value` as a constant of `class`, which is not `Wide`:
+    /// lowering keeps a wide constant as read-only data.
     pub fn integer(class: Class, value: u64) -> Operand {
+        assert!(
+            !matches!(class, Class::Wide(_)),
+            "a wide constant is read-only data"
+        );
         Operand::Constant {
             class,
             bits: [value, 0],
@@ -406,12 +411,20 @@ pub enum Conversion {
     Truncate,
     SignedToFloat,
     UnsignedToFloat,
-    /// Toward zero; a value outside the integer's range gives its nearest
-    /// end, NaN gives 0.
-    FloatToSigned,
-    FloatToUnsigned,
+    /// Toward zero, to an integer of `bits` bits kept extended in its
+    /// class; a value outside that range gives its nearest end, NaN gives 0.
+    FloatToSigned {
+        bits: u32,
+    },
+    FloatToUnsigned {
+        bits: u32,
+    },
     FloatWiden,
     FloatNarrow,
+    /// The same address, as a pointer to other bytes: the way to the bytes
+    /// of a value, and so to those of an address kept in memory, which a
+    /// constant's run cannot know.
+    PointerCast,
 }
 
 #[derive(Clone, Debug)]
@@ -683,14 +696,20 @@ impl Printer<'_> {
                     Conversion::Truncate => "trunc",
                     Conversion::SignedToFloat => "sitofp",
                     Conversion::UnsignedToFloat => "uitofp",
-                    Conversion::FloatToSigned => "fptosi",
-                    Conversion::FloatToUnsigned => "fptoui",
+                    Conversion::FloatToSigned { .. } => "fptosi",
+                    Conversion::FloatToUnsigned { .. } => "fptoui",
                     Conversion::FloatWiden => "fpext",
                     Conversion::FloatNarrow => "fptrunc",
+                    Conversion::PointerCast => "bitcast",
                 };
                 _ = write!(self.out, "{name} {from} ");
                 self.write_operand(value);
                 _ = write!(self.out, " to {to}");
+                if let Conversion::FloatToSigned { bits } | Conversion::FloatToUnsigned { bits } =
+                    conversion
+                {
+                    _ = write!(self.out, " at {bits} bits");
+                }
             }
             InstructionKind::Load { class, place } => {
                 _ = write!(self.out, "load {class} ");

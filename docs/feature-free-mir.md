@@ -119,7 +119,7 @@ Those that run:
 | `Integer { operation, class, left, right }` | add, subtract, multiply, signed and unsigned divide and remainder, shift left, signed and unsigned shift right, and, or, xor; wraps at the class |
 | `Float { operation, class, left, right }` | add, subtract, multiply, divide, remainder on `F32`/`F64` |
 | `Compare { comparison, class, left, right }` | equal, not equal, signed less, unsigned less, float less, and their or-equal forms; gives an `I8` |
-| `Convert { kind, from, to, value }` | sign extend, zero extend, truncate, integer to float (signed or unsigned), float to integer, float widen or narrow |
+| `Convert { kind, from, to, value }` | sign extend, zero extend, truncate, integer to float (signed or unsigned), float to integer (saturated at the integer's own width, which may be below its class's), float widen or narrow, pointer cast (a raw pointer as one to other bytes) |
 | `Load { class, place }` | one register from memory |
 | `Store { class, place, value }` | one register to memory |
 | `Copy { to, from, size }` | `size` bytes between two places that do not overlap |
@@ -214,8 +214,8 @@ gone.
 place bigint stays. Every rule of a constant's run stays a
 rule at its operation, as today (`eval/src/interpreter/instructions.rs:61,
 73, 102, 144`, `places.rs:39`, `calls.rs:233`): `Integer` on the pointer
-class, `Compare` of two non-null pointers, `Convert` of a pointer to an
-integer, a runtime call, a call of a function with no body, each refused
+class, `Compare` of two non-null pointers, a pointer cast of a non-null
+pointer, a runtime call, a call of a function with no body, each refused
 with today's message; per-variable blocks stay. Estimate: 800 to 1,000
 lines.
 

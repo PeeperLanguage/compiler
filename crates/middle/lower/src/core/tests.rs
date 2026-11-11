@@ -104,6 +104,23 @@ fn a_narrow_integer_is_cut_back_to_its_width() {
 }
 
 #[test]
+fn a_constant_shift_count_is_widened_by_lowering_not_by_the_run() {
+    let text = lowered("fn main() -> i64 { let a: i64 = 5; return a << 3; }");
+    assert!(text.contains("= shl i64 %1, 3\n"), "{text}");
+    assert!(!text.contains("zext"), "{text}");
+}
+
+#[test]
+fn a_wide_constant_is_loaded_from_read_only_data() {
+    let text = lowered("fn main() { let a: u256 = 5; let b = -(a as i256); let c = ~a; }");
+    // The zero of `-x` and the ones of `~x`: an operand holds 128 bits.
+    let zero = "%3 = load i256 at global 1\n    %4 = sub i256 %3, %2\n";
+    assert!(text.contains(zero), "{text}");
+    let ones = "%7 = load i256 at global 2\n    %8 = xor i256 %6, %7\n";
+    assert!(text.contains(ones), "{text}");
+}
+
+#[test]
 fn a_division_is_checked_unless_by_a_constant() {
     let text = lowered("fn main() -> i32 { let a = 7; let b = a / 2; return b / a; }");
     assert!(text.contains("%2 = sdiv i32 %1, 2\n"), "{text}");
@@ -252,11 +269,11 @@ fn print_writes_text_once_and_each_value_by_its_kind() {
         "{text}"
     );
     assert!(
-        text.contains("call peeper_rt_v1_print_bytes(%3, %4)\n"),
+        text.contains("call peeper_rt_v1_print_bytes(%5, %6)\n"),
         "{text}"
     );
     assert!(
-        text.contains("call peeper_rt_v2_print_int(1, 1, %9)\n"),
+        text.contains("call peeper_rt_v2_print_int(1, 1, %10)\n"),
         "{text}"
     );
     assert!(

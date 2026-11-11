@@ -48,7 +48,7 @@ stderr_contains = [
     "this value cannot be worked out at compile time yet",
     "src/main.peep:178:16",
     "return wide_calls(n + 1) + 1;\n    |            ----------------- this ran out of stack",
-    "        values = held;\n    |                  ---- this ran more than 1000000 steps",
+    "        values = held;\n    |         -------------- this ran more than 1000000 steps",
     "let values = [400000]i32{(0..400000)...};\n    |                      --------------------------- this ran more than 1000000 steps",
     "Compilation failed with 42 error(s)",
 ]

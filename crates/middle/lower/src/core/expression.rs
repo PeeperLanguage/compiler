@@ -154,8 +154,7 @@ impl Lowering<'_> {
 
     /// The integer `value` of the type `integer` as an operand of its
     /// class: a type narrower than its class is extended to it, as every
-    /// register of a narrow type holds its value (`narrow`); a wide one is
-    /// read-only data, loaded here.
+    /// register of a narrow type holds its value (`narrow`).
     pub(super) fn integer_operand(
         &mut self,
         integer: Integer,
@@ -164,9 +163,16 @@ impl Lowering<'_> {
     ) -> Operand {
         let class = Class::integer(integer.bits);
         let extended = bigint::extend(integer.bits, integer.signed, value, class.bits());
+        self.class_constant(class, &extended, span)
+    }
+
+    /// The integer `value`, of `class`'s width, as an operand: a wide one is
+    /// read-only data, loaded here, as a constant operand holds at most 128
+    /// bits.
+    pub(super) fn class_constant(&mut self, class: Class, value: &Limbs, span: Span) -> Operand {
         if let Class::Wide(_) = class {
             let mut bytes = vec![0; class.bytes(self.pointer_bytes) as usize];
-            extended.write_le_bytes(&mut bytes);
+            value.write_le_bytes(&mut bytes);
             let global = self.global(Global::Bytes(bytes.into()));
             let place = Place {
                 root: Root::At(global),
@@ -174,7 +180,7 @@ impl Lowering<'_> {
             };
             return self.load(class, place, span);
         }
-        let limbs = extended.as_slice();
+        let limbs = value.as_slice();
         Operand::Constant {
             class,
             bits: [limbs[0], limbs.get(1).copied().unwrap_or(0)],
@@ -514,7 +520,8 @@ impl Lowering<'_> {
                     BinaryOp::Multiply => IntegerOp::Multiply,
                     BinaryOp::Divide | BinaryOp::Remainder => {
                         if !right_constant {
-                            let zero = Operand::integer(class, 0);
+                            let zero =
+                                self.class_constant(class, &Limbs::new(class.bits(), &[]), span);
                             let failed =
                                 self.compare(Comparison::Equal, class, right_value, zero, span);
                             self.emit_check(failed, DIVISION_BY_ZERO, span);
@@ -719,6 +726,10 @@ impl Lowering<'_> {
             return count;
         }
         // Inside the width, so it fits any class.
+        if let Operand::Constant { bits, .. } = count {
+            let count = Limbs::new(shifted.bits, &bits);
+            return self.integer_operand(shifted, &count, span);
+        }
         let conversion = if count_class.bits() > shifted_class.bits() {
             Conversion::Truncate
         } else {
@@ -745,7 +756,7 @@ impl Lowering<'_> {
         let operand = self.lower_expr(value)?.register();
         let result = match (op, &self.types[ty]) {
             (UnaryOp::Negate, &Type::Integer(integer)) => {
-                let zero = Operand::integer(Class::integer(integer.bits), 0);
+                let zero = self.integer_operand(integer, &Limbs::new(integer.bits, &[]), span);
                 self.arithmetic(IntegerOp::Subtract, integer, zero, operand, span)
             }
             (UnaryOp::Negate, &Type::Float(float)) => {
@@ -754,7 +765,13 @@ impl Lowering<'_> {
                 } else {
                     Class::F64
                 };
-                let zero = Operand::integer(class, 0);
+                // From -0.0, so that -(0.0) is -0.0 and -(-0.0) is 0.0.
+                let sign = if float == Float::F32 {
+                    1 << 31
+                } else {
+                    1 << 63
+                };
+                let zero = Operand::integer(class, sign);
                 let kind = InstructionKind::Float {
                     operation: model::core_mir::FloatOp::Subtract,
                     class,
@@ -767,7 +784,8 @@ impl Lowering<'_> {
             // above the width flip to what they should be.
             (UnaryOp::BitNot, &Type::Integer(integer)) => {
                 let class = Class::integer(integer.bits);
-                let ones = Limbs::new(integer.bits, &[u64::MAX, u64::MAX]);
+                let ones = vec![u64::MAX; integer.bits.div_ceil(64) as usize];
+                let ones = Limbs::new(integer.bits, &ones);
                 let ones = self.integer_operand(integer, &ones, span);
                 self.integer(IntegerOp::Xor, class, operand, ones, span)
             }
@@ -811,18 +829,12 @@ impl Lowering<'_> {
             }
             (&Type::Float(from), &Type::Integer(to)) => {
                 let conversion = if to.signed {
-                    Conversion::FloatToSigned
+                    Conversion::FloatToSigned { bits: to.bits }
                 } else {
-                    Conversion::FloatToUnsigned
+                    Conversion::FloatToUnsigned { bits: to.bits }
                 };
-                let converted = self.convert(
-                    conversion,
-                    float_class(from),
-                    Class::integer(to.bits),
-                    operand,
-                    span,
-                );
-                self.narrow(converted, to, span)
+                let class = Class::integer(to.bits);
+                self.convert(conversion, float_class(from), class, operand, span)
             }
             (Type::Float(Float::F32), Type::Float(Float::F64)) => self.convert(
                 Conversion::FloatWiden,
@@ -838,8 +850,13 @@ impl Lowering<'_> {
                 operand,
                 span,
             ),
-            // The same address, read as another pointer type.
-            (Type::RawPointer { .. }, Type::RawPointer { .. }) => operand,
+            (Type::RawPointer { .. }, Type::RawPointer { .. }) => self.convert(
+                Conversion::PointerCast,
+                Class::Pointer,
+                Class::Pointer,
+                operand,
+                span,
+            ),
             _ => unreachable!("the checker converts numbers, `bool`s and raw pointers only"),
         };
         Some(Value::Register(converted))
@@ -890,20 +907,19 @@ impl Lowering<'_> {
             }
             _ => None,
         };
-        let arguments: Vec<Id<thir::Expr>> = self.thir.children.lists.items(arguments).collect();
-        let mut given = Vec::with_capacity(arguments.len());
-        for &argument in &arguments {
+        // Each argument is passed as it is when lowered, before the next
+        // one runs: a value in memory is copied then.
+        let mut target = match callee {
+            Callee::Function(function) => Some(CoreCallee::Function(function)),
+            Callee::Method(_) => None, // read from the receiver, the first argument
+        };
+        for argument in self.thir.children.lists.items(arguments) {
             let argument_type = self.types.real(self.thir.exprs[argument].ty);
             let value = self.lower_expr(argument)?;
-            given.push((argument_type, value));
-        }
-        let (callee, first) = match callee {
-            Callee::Function(function) => (CoreCallee::Function(function), 0),
             // The interface value's address is the receiver, and its table
             // holds the method at `slot`.
-            Callee::Method(slot) => {
-                let (_, view) = given[0].clone();
-                let view = view.memory();
+            if let (None, Callee::Method(slot)) = (target, callee) {
+                let view = value.memory();
                 let address = self.load(Class::Pointer, view.clone(), span);
                 let table_place = view.then(Step::Offset(self.pointer_bytes));
                 let table = self.load(Class::Pointer, table_place, span);
@@ -911,16 +927,18 @@ impl Lowering<'_> {
                     root: Root::At(table),
                     steps: Box::new([Step::Offset(u64::from(slot) * self.pointer_bytes)]),
                 };
-                let method = self.load(Class::Pointer, method_place, span);
+                target = Some(CoreCallee::Pointer(self.load(
+                    Class::Pointer,
+                    method_place,
+                    span,
+                )));
                 passed.push(address);
                 parameters.push(Passing::Register {
                     class: Class::Pointer,
                     signed: false,
                 });
-                (CoreCallee::Pointer(method), 1)
+                continue;
             }
-        };
-        for (argument_type, value) in given.into_iter().skip(first) {
             let passing = self.passing(argument_type);
             parameters.push(passing);
             match (passing, value) {
@@ -933,6 +951,7 @@ impl Lowering<'_> {
                 _ => unreachable!("a register's value is a register"),
             }
         }
+        let callee = target.expect("a method call has its receiver");
         self.mir.signatures.push(Signature {
             parameters: parameters.into(),
             result,

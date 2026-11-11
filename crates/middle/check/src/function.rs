@@ -5,12 +5,13 @@ use std::sync::Arc;
 
 use diagnostics::Diagnostic;
 use eval::interpreter::Failure;
-use model::Callee;
 use model::DefId;
 use model::FunctionCopy;
 use model::ModuleId;
 use model::ast;
 use model::constant::Value;
+use model::core_mir;
+use model::core_mir::DebugTypes;
 use model::mir;
 use model::semantic_types::ConstArguments;
 use model::semantic_types::Type;
@@ -29,9 +30,9 @@ use crate::Copied;
 pub(crate) enum Built {
     /// Built once, so what its checks found is reported.
     Reported,
-    /// Built for a run at compile time and kept for the next run: its MIR,
-    /// `None` when it has no body or had an error.
-    Kept(Option<Box<mir::Body>>),
+    /// Built for a run at compile time and kept for the next run: its MIR
+    /// of core concepts, `None` when it has no body or had an error.
+    Kept(Option<Box<core_mir::Body>>),
 }
 
 impl Checker<'_> {
@@ -262,30 +263,43 @@ impl Checker<'_> {
                     continue;
                 }
                 let mut thir = thir::Body::default();
-                let mir = self.build_function(next, span, &mut thir, true).flatten();
+                let checked = self.build_function(next, span, &mut thir, true).flatten();
+                // shortcut: the run reads no debug type, but lowering makes
+                // them; the table goes once lowering stops making what
+                // nothing reads.
+                let body = checked.and_then(|_| {
+                    let ty = self.copy_type(next, span); // made by the build
+                    let debug_types = &mut DebugTypes::default();
+                    lower::core::lower(
+                        &thir,
+                        ty,
+                        &self.types,
+                        self.target,
+                        self.modules,
+                        debug_types,
+                    )
+                });
                 self.internals
                     .built_bodies
-                    .insert(next, Built::Kept(mir.map(Box::new)));
+                    .insert(next, Built::Kept(body.map(Box::new)));
             }
-            let Some(Built::Kept(Some(mir))) = self.internals.built_bodies.get(&next) else {
+            let Some(Built::Kept(Some(body))) = self.internals.built_bodies.get(&next) else {
                 continue;
             };
+            for id in body.instructions.ids() {
+                if let core_mir::InstructionKind::Call {
+                    callee: core_mir::Callee::Function(function),
+                    ..
+                } = body.instructions[id].kind
+                {
+                    pending.push(function);
+                }
+            }
             // A method is called through a table, so each function in one
             // may run.
-            for id in mir.instructions.ids() {
-                match mir.instructions[id].kind {
-                    mir::InstructionKind::Call {
-                        callee: Callee::Function(function),
-                        ..
-                    } => pending.push(function),
-                    mir::InstructionKind::ToInterface { implementation, .. } => {
-                        let methods = self.types.implementation(implementation).iter();
-                        pending.extend(methods.map(|&definition| FunctionCopy {
-                            definition,
-                            arguments: ConstArguments::NONE,
-                        }));
-                    }
-                    _ => {}
+            for global in &body.globals {
+                if let core_mir::Global::Functions(functions) = global {
+                    pending.extend(functions.iter().copied());
                 }
             }
         }
@@ -296,6 +310,7 @@ impl Checker<'_> {
                 ran.push(copy.definition.module);
             }
         }
+        let ty = self.copy_type(function, span);
         let mir_of = |copy: FunctionCopy| match self.internals.built_bodies.get(&copy) {
             Some(Built::Kept(mir)) => mir.as_deref(),
             None | Some(Built::Reported) => None,
@@ -308,6 +323,7 @@ impl Checker<'_> {
                         function.definition,
                         body,
                         arguments,
+                        ty,
                         &self.types,
                         self.target,
                         &mir_of,

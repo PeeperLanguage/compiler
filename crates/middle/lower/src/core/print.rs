@@ -48,13 +48,28 @@ impl Lowering<'_> {
         values: List<thir::Expr>,
         span: Span,
     ) -> Option<()> {
+        // Every value is worked out before any is written, as a value's
+        // code may print too; one in memory is copied when code follows
+        // that could change it.
+        let values: Vec<_> = self.thir.children.lists.items(values).collect();
+        let mut lowered = Vec::with_capacity(values.len());
+        for (index, &value) in values.iter().enumerate() {
+            let ty = self.types.real(self.thir.exprs[value].ty);
+            let value = match self.lower_expr(value)? {
+                Value::Memory(place) if index + 1 < values.len() => {
+                    let copy = self.temporary(ty, span);
+                    self.put(Place::whole(copy), Value::Memory(place), ty, span);
+                    Value::Memory(Place::whole(copy))
+                }
+                value => value,
+            };
+            lowered.push((value, ty));
+        }
         let mut text = Vec::new();
-        for (index, value) in self.thir.children.lists.items(values).enumerate() {
+        for (index, (value, ty)) in lowered.into_iter().enumerate() {
             if index > 0 {
                 text.push(b' ');
             }
-            let ty = self.types.real(self.thir.exprs[value].ty);
-            let value = self.lower_expr(value)?;
             self.print_value(&mut text, value, ty, span);
         }
         if newline {
