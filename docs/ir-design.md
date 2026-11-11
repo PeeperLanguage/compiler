@@ -780,13 +780,9 @@ classes, sizes, how each value is passed and the debug types lowering made.
   `@.str.N` globals of their exact bytes (a `&cstr` literal's include its
   zero), one per distinct bytes in a module.
 - `print` and `println` are runtime calls lowering emits: one per number,
-  `bool`, `&cstr` or pointer, with the text known at compile time (spaces,
-  struct names, brackets) gathered into one string between them. An array
-  prints in a loop, so the code does not grow with its length; a struct
-  prints inline, field by field. shortcut: a struct that holds the one
-  before it twice, nested deep, doubles the code at each level (the writer
-  before 2026-11-11 had a printer function per type); this waits on how a
-  type will say how it prints (`check` `printable`).
+  `bool`, `&cstr`, `&str` or pointer, with the spaces and the newline
+  gathered into strings between them. A struct or an array does not print
+  (`check` `printable`); a program prints its fields or elements.
 
 `peeper build [-o program] [path]` and `peeper run [path] [-- arguments...]`
 work as the Go compiler's did, except that `run` takes the program's

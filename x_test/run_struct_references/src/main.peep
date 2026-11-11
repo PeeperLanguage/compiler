@@ -216,7 +216,9 @@ fn main() {
     let part = &mut grid.cells[1..];
     part[0] = 5;
     let element = &grid.cells[1];
-    println(element.*, [3]i32{&grid.cells[0..]...}, [4]u8{text.bytes...});
+    let spread_cells = [3]i32{&grid.cells[0..]...};
+    let spread_bytes = [4]u8{text.bytes...};
+    println(element.*, spread_cells[0], spread_cells[1], spread_cells[2], spread_bytes[0], spread_bytes[1], spread_bytes[2], spread_bytes[3]);
     println(view(Text.{ bytes = &text.bytes[2..] })[0]);
     println(cells[0], cells[1], cells[2]);
     let mut lent = [2]i32{1, 2};
@@ -225,7 +227,8 @@ fn main() {
     println(total_through(&lent_grid));
     let mut seven = 7;
     let shown = Pair.{ first = &a, second = &b };
-    println(shown, Counter.{ value = &mut seven, steps = 1 });
+    let shown_counter = Counter.{ value = &mut seven, steps = 1 };
+    println(shown.first, shown.second, shown_counter.value, shown_counter.steps);
 
     // A `&mut` field of a call's result.
     bump(counter_of(&mut number).value);

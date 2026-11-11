@@ -23,7 +23,6 @@ use model::thir::Expr;
 use model::thir::ExprKind;
 use model::thir::Local;
 use model::thir::Symbol;
-use rustc_hash::FxHashSet;
 use source::Span;
 
 use crate::builder::ThirBuilder;
@@ -59,17 +58,17 @@ impl ThirBuilder<'_, '_> {
                 continue;
             }
             let mut printed = self.body.add(expr, span);
-            // Printing reads a value, never takes it: one that moves, in a
-            // place, is lent instead, a `&mut` reference as `&`.
-            if !types.is_copy(ty) && self.start_variable(self.place_root(printed).0).is_some() {
-                let lent = match types[ty] {
-                    Type::Reference { target, .. } => {
-                        let reference = self.body.exprs[printed].clone();
-                        let shared = self.checker.reference_type(false, target);
-                        self.reborrow(reference, span, shared)
-                    }
-                    _ => self.check_borrow(false, printed),
-                };
+            // Printing reads a value, never takes it: a `&mut` reference in
+            // a place, the one printable value that moves, is lent as `&`.
+            if let Type::Reference {
+                mutable: true,
+                target,
+            } = types[ty]
+                && self.start_variable(self.place_root(printed).0).is_some()
+            {
+                let reference = self.body.exprs[printed].clone();
+                let shared = self.checker.reference_type(false, target);
+                let lent = self.reborrow(reference, span, shared);
                 printed = self.body.add(lent, span);
             }
             checked.push(printed.into());
@@ -573,30 +572,22 @@ fn constant_expr(constant: Option<Constant>) -> Expr {
 }
 
 /// Whether `print` writes a value of the type `ty`: a number, `bool`,
-/// `&cstr` or raw pointer, a struct or array of such values, or a reference
-/// to one.
-// shortcut: structs and arrays print built in until a trait or interface
-// lets each type say how it prints; then this rule and the backend's struct
-// and array printing (`llvm` `write_printed`, `printer`) go.
-fn printable(types: &Types, ty: TypeId) -> bool {
-    // A list, not recursion, with each struct looked at once: structs hold
-    // structs as deep as the declarations nest, and can hold one many times.
-    let (mut reached, mut pending) = (FxHashSet::default(), vec![ty]);
-    while let Some(ty) = pending.pop() {
+/// `&cstr`, `&str` or raw pointer, or a reference to one. A struct or array
+/// prints only once a trait or interface lets its type say how.
+fn printable(types: &Types, mut ty: TypeId) -> bool {
+    // A loop, not recursion: references nest as deep as the source writes.
+    loop {
         match &types[ty] {
-            Type::Integer(_) | Type::Float(_) | Type::Bool | Type::CString | Type::Str => {}
-            Type::RawPointer { .. } => {}
-            Type::Reference { target, .. } => pending.push(*target),
-            Type::Struct { fields, .. } => {
-                if reached.insert(ty) {
-                    pending.extend(fields);
-                }
-            }
-            Type::Array { internals, .. } => pending.push(internals.base),
+            Type::Integer(_)
+            | Type::Float(_)
+            | Type::Bool
+            | Type::CString
+            | Type::Str
+            | Type::RawPointer { .. } => return true,
+            Type::Reference { target, .. } => ty = *target,
             _ => return false,
         }
     }
-    true
 }
 
 /// Why a call of `callee` with `given` arguments is wrong, when it takes

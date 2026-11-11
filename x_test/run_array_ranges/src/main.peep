@@ -75,7 +75,7 @@ fn main() {
             }
             passes = passes + 1;
         }
-        println("250..255:10:", constant, runtime, passes);
+        println("250..255:10:", constant[0], runtime[0], passes);
     }
     {
         let constant = [_]u8{(5..=0:2)...};
@@ -87,7 +87,7 @@ fn main() {
             }
             passes = passes + 1;
         }
-        println("5..=0:2:", constant, runtime, passes);
+        println("5..=0:2:", constant[0], constant[1], constant[2], runtime[0], runtime[1], runtime[2], passes);
     }
     {
         let constant = [_]i32{(0..3:5)...};
@@ -99,7 +99,7 @@ fn main() {
             }
             passes = passes + 1;
         }
-        println("0..3:5:", constant, runtime, passes);
+        println("0..3:5:", constant[0], runtime[0], passes);
     }
     {
         let constant = [_]i32{(0..0)...};
@@ -108,7 +108,7 @@ fn main() {
         for v in 0..0 {
             passes = passes + 1;
         }
-        println("0..0:", constant, runtime, passes);
+        println("0..0:", passes);
     }
     {
         let constant = [_]i32{(5..2)...};
@@ -120,21 +120,25 @@ fn main() {
             }
             passes = passes + 1;
         }
-        println("5..2:", constant, runtime, passes);
+        println("5..2:", constant[0], constant[1], constant[2], runtime[0], runtime[1], runtime[2], passes);
     }
-    println("mixed:", [_]i32{1, (10..=12)..., 20}, mixed(10));
+    let constant = [_]i32{1, (10..=12)..., 20};
+    let runtime = mixed(10);
+    println("mixed:", constant[0], constant[1], constant[2], constant[3], constant[4], runtime[0], runtime[1], runtime[2], runtime[3], runtime[4]);
 
     // Built in place: inside another literal, a field, an argument, and an
     // element or a variable set again.
     let n = 7;
     let grid = [_][3]i32{[3]i32{(0..3)...}, [3]i32{(n..n + 3)...}};
     let holder = Holder.{ values = [3]i32{(n..n + 3)...}, tag = 5 };
-    println("places:", grid[0], grid[1], holder.values, holder.tag, total([3]i32{(n..n + 3)...}));
+    println("places:", grid[0][0], grid[0][1], grid[0][2], grid[1][0], grid[1][1], grid[1][2], holder.values[0], holder.values[1], holder.values[2], holder.tag, total([3]i32{(n..n + 3)...}));
     let mut rows = [2][3]i32{[3]i32{0, 0, 0}, [3]i32{0, 0, 0}};
     let i: usize = 1;
     rows[i] = [3]i32{(n..n + 3)...};
     let mut v = [3]i32{1, 2, 3};
     v = [3]i32{(n..=n + 2)...};
-    println("set:", rows[0], rows[1], v);
-    println("sizes:", [_]usize{(0..3)...}, [2]isize{(n as isize - 9..n as isize - 7)...});
+    println("set:", rows[0][0], rows[0][1], rows[0][2], rows[1][0], rows[1][1], rows[1][2], v[0], v[1], v[2]);
+    let sizes = [_]usize{(0..3)...};
+    let offsets = [2]isize{(n as isize - 9..n as isize - 7)...};
+    println("sizes:", sizes[0], sizes[1], sizes[2], offsets[0], offsets[1]);
 }

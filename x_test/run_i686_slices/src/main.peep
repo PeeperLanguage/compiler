@@ -28,13 +28,13 @@ fn main() {
         v.* = v.* + i as i64;
     }
     let copied = [6]i64{&all[1..]..., 7, 8};
-    println("slices:", all.len, total(all), copied);
+    println("slices:", all.len, total(all), copied[0], copied[1], copied[2], copied[3], copied[4], copied[5]);
 
     // Copied whole, at the size LLVM gives `Pair` here: 12 bytes, not 16.
     let pairs = [2]Pair{Pair.{ tag = 1, value = 10 }, Pair.{ tag = 2, value = 20 }};
     let moved = pairs;
     let view: &[]Pair = &moved;
-    println("pairs:", view[1].tag, view[1].value, moved);
+    println("pairs:", view[1].tag, view[1].value, moved[0].tag, moved[0].value, moved[1].tag, moved[1].value);
     println("passed:", value_of(Pair.{ tag = 3, value = 6000000000 }));
     println("wide:", 340282366920938463463374607431768211455u128, -9223372036854775807i64);
 

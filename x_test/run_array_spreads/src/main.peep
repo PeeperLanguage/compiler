@@ -15,15 +15,23 @@ fn shift(view: &[]i32) -> [4]i32 {
 
 fn main() {
     let a = [_]i32{1, 2, 3};
-    println("ranges:", [_]i32{(0..3)..., 9}, [_]i32{0..3..., 9}, [_]i32{0..10:3...});
-    println("arrays:", [_]i32{a..., 4}, [_]i32{a..., a...}, [_]i32{0, a..., (5..2)...});
+    let wrapped = [_]i32{(0..3)..., 9};
+    let bare = [_]i32{0..3..., 9};
+    let stepped = [_]i32{0..10:3...};
+    println("ranges:", wrapped[0], wrapped[1], wrapped[2], wrapped[3], bare[0], bare[1], bare[2], bare[3], stepped[0], stepped[1], stepped[2], stepped[3]);
+    let longer = [_]i32{a..., 4};
+    let twice = [_]i32{a..., a...};
+    let both = [_]i32{0, a..., (5..2)...};
+    println("arrays:", longer[0], longer[1], longer[2], longer[3], twice[0], twice[1], twice[2], twice[3], twice[4], twice[5], both[0], both[1], both[2], both[3], both[4], both[5], both[6]);
     let points = [_]Point{Point.{ x = 1, y = 2 }};
     let more = [_]Point{Point.{ x = 0, y = 0 }, points..., Point.{ x = 3, y = 4 }};
     println("moved:", more[0].x, more[1].y, more[2].x, more.len);
     let grid = [_][2]i32{[2]i32{1, 2}};
     let rows = [_][2]i32{grid..., [2]i32{(5..7)...}};
     let empty = [0]i32{};
-    println("nested:", rows[0], rows[1], [_]i32{empty..., 7, empty...}, tail(1));
+    let around = [_]i32{empty..., 7, empty...};
+    let tailed = tail(1);
+    println("nested:", rows[0][0], rows[0][1], rows[1][0], rows[1][1], around[0], tailed[0], tailed[1], tailed[2], tailed[3]);
 
     let mut b = [4]i32{1, 2, 3, 4};
     let edit: &mut []i32 = &mut b;
@@ -35,7 +43,10 @@ fn main() {
     let wide = [3]i64{10, 20, 30};
     let slices: &[][2]i32 = &grid;
     let mixed = [5]i64{&wide[1..]..., 0..3...};
-    println("slices:", copy, b, mixed, [2][2]i32{slices..., [2]i32{3, 4}}, [2]i32{&b[1..1]..., 8, 9});
+    let joined = [2][2]i32{slices..., [2]i32{3, 4}};
+    let after = [2]i32{&b[1..1]..., 8, 9};
+    println("slices:", copy[0], copy[1], copy[2], copy[3], copy[4], b[0], b[1], b[2], b[3], mixed[0], mixed[1], mixed[2], mixed[3], mixed[4]);
+    println("more slices:", joined[0][0], joined[0][1], joined[1][0], joined[1][1], after[0], after[1]);
     b = shift(&b);
-    println("shifted:", b);
+    println("shifted:", b[0], b[1], b[2], b[3]);
 }

@@ -15,7 +15,7 @@ stdout_contains = [
     "7. a length and a sum:\n2\n12\n",
     "8. for over a temporary:\n  make\n10\n20\n30\n  make\n11\n21\n31\n",
     "9. conditions:\n  make\n  look\n  then\n  make\n  look\n1\n  make\n  look\n2\n  make\n  look\n10.",
-    "10. print an element of a temporary:\nPoint { row: 3, col: 4 }\n",
+    "10. print an element of a temporary:\n3 4\n",
     "11. field of a kept temporary:\n1\n",
     "12. slice of a kept temporary:\n  make\n30\n",
     "13. a call's `&mut` result lent as shared:\n7\n6\n",

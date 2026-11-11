@@ -11,7 +11,10 @@ fn join(n: i32) -> [5]i32 {
 }
 
 fn main() {
-    println("first:", make(3));
-    println("joined:", join(2));
-    println("short:", join(3));
+    let first = make(3);
+    println("first:", first[0], first[1], first[2], first[3]);
+    let joined = join(2);
+    println("joined:", joined[0], joined[1], joined[2], joined[3], joined[4]);
+    let short = join(3);
+    println("short:", short[0]);
 }

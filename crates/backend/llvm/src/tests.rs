@@ -394,44 +394,19 @@ fn debug_types_stop_at_deep_pointers() {
     assert!(text.contains("DW_TAG_pointer_type, baseType: null"));
 }
 
-/// Printing and debug info go through every struct in a chain: the names
-/// around the one field print as one text before it and one after, and the
-/// debug types stop where clang would run out of stack on them.
+/// Debug info goes through every struct in a chain, and the debug types stop
+/// where clang would run out of stack on them.
 #[test]
-fn deep_structs_print_and_have_debug_types() {
+fn deep_structs_have_debug_types() {
     const DEPTH: usize = 20_000;
     let chain: String = (1..DEPTH)
         .map(|i| format!("struct S{i} {{ s: S{} }}\n", i - 1))
         .collect();
     let last = DEPTH - 1;
-    let source = format!("struct S0 {{ n: i32 }}\n{chain}fn f(a: &S{last}) {{ println(a); }}");
+    let source = format!("struct S0 {{ n: i32 }}\n{chain}fn f(a: &S{last}) {{}}");
     let text = ll(&source, "x86_64-linux");
-    let opening = format!("c\"S{last} {{ s: S{} {{ s: ", last - 1);
-    assert!(text.contains(&opening), "{opening}");
-    assert!(text.contains("S1 { s: S0 { n: \""));
-    assert_eq!(
-        text.matches("call void @\"peeper_rt_v2_print_int\"")
-            .count(),
-        1
-    );
     let members = text.matches("DW_TAG_member").count();
     assert!((4_900..5_100).contains(&members), "{members}");
-}
-
-/// Each struct holds the last twice, so code for each field at each `print`
-/// would be 2^40 fields' worth. One printer per struct is 40 functions.
-#[test]
-#[ignore = "core lowering prints a struct inline, field by field (2^40 \
-            fields here, which runs out of memory); waits on the owner's \
-            decision on how a struct prints"]
-fn structs_holding_structs_twice_print_in_one_function_each() {
-    let chain: String = (1..40)
-        .map(|i| format!("struct S{i} {{ a: S{0}, b: S{0} }}\n", i - 1))
-        .collect();
-    let source = format!("struct S0 {{ n: i32 }}\n{chain}fn f(a: &S39) {{ println(a); }}");
-    let text = ll(&source, "x86_64-linux");
-    assert_eq!(text.matches("define private void @print.").count(), 40);
-    assert_eq!(text.matches("call void @print.").count(), 2 * 39 + 1);
 }
 
 /// LLVM refuses a column past 16 bits, so a location or a block further along

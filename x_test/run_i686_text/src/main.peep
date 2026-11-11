@@ -14,7 +14,6 @@ fn main() {
     greet("Ada");
     let pet = Pet.{ name = "Rex", legs = 4 };
     println("field:", pet.name, pet.legs);
-    println(pet);
     let mut word = "a";
     word = "bcd";
     let seen = &word;
@@ -22,7 +21,7 @@ fn main() {
     println("returned:", pick(true), pick(false));
     let names = [3]&str{"x", "yz", ""};
     println("array:", names[1], names[2].len);
-    println(names);
+    println(names[0], names[1], names[2]);
     println("through:", seen);
     println("zero:", "a\0b", "a\0b".len);
     print("no newline");

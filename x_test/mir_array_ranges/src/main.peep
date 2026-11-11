@@ -10,5 +10,7 @@ fn join(pair: [2]i32) -> [3]i32 {
 }
 
 fn main() {
-    println(make(1, 2), join([2]i32{5, 6}));
+    let made = make(1, 2);
+    let joined = join([2]i32{5, 6});
+    println(made[0], made[1], made[2], made[3], joined[0], joined[1], joined[2]);
 }

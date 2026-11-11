@@ -7,9 +7,9 @@ outcome = "exit_code"
 exit_code = 0
 stdout_contains = [
     "literal: 7\n",
-    "field: Line { start: Point { x: 1, y: 2 }, length: 2.5 }\n",
+    "field: 1 2 2.5\n",
     "alias: 2.5\n",
-    "result: Point { x: 4, y: 5 }\n",
+    "result: 4 5\n",
     "parameter: 9\n",
     "reference: 2\n",
     "slice: 3\n",

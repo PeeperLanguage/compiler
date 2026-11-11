@@ -138,7 +138,7 @@ fn main() -> i32 {
     let mut row = [4]i32{1, 2, 3, 4};
     let seen = shift(&mut row[1..]);
     let found = first_big_in(&row);
-    println("slices:", seen, row, looped(&row), looped(&row[2..2]), found.*);
+    println("slices:", seen, row[0], row[1], row[2], row[3], looped(&row), looped(&row[2..2]), found.*);
 
     for _, value in [0]i32{} {
         println("never", value);

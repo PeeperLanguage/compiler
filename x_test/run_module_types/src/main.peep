@@ -24,10 +24,11 @@ fn main() {
     let literal = geometry::Point.{ x = 7, y = 8 };
     println("literal:", literal.x);
     let line = Line.{ start = .{ x = 1, y = 2 }, length = 2.5 };
-    println("field:", line);
+    println("field:", line.start.x, line.start.y, line.length);
     let length: geometry::Meters = 2.5;
     println("alias:", length);
-    println("result:", moved(geometry::Origin()));
+    let result = moved(geometry::Origin());
+    println("result:", result.x, result.y);
     println("parameter:", geometry::Sum(geometry::Origin()));
     println("reference:", second(&line.start));
     let points = [3]geometry::Point{ .{ x = 1, y = 2 }, .{ x = 3, y = 4 }, .{ x = 5, y = 6 } };

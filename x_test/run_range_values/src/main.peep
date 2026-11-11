@@ -62,7 +62,11 @@ fn main() {
         again = false;
     }
     println("counted:", count(r), count(evens(9)), count(3..=0), counted, again);
-    println("filled:", fill(0..4), fill(7..=4), fill(evens(8)));
+    let forward = fill(0..4);
+    let backward = fill(7..=4);
+    let stepped = fill(evens(8));
+    println("filled:", forward[0], forward[1], forward[2], forward[3], backward[0], backward[1], backward[2], backward[3], stepped[0], stepped[1], stepped[2], stepped[3]);
     let down: range[i32] = 9..=0:3;
-    println("spread:", [5]i32{100, down...});
+    let spread = [5]i32{100, down...};
+    println("spread:", spread[0], spread[1], spread[2], spread[3], spread[4]);
 }

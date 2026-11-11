@@ -1,6 +1,0 @@
-name = "ll_print_arrays"
-build = "program"
-
-[test]
-mode = "ll"
-outcome = "success"

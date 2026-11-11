@@ -5,6 +5,8 @@ fn make(step: u32) -> [2]i32 {
 }
 
 fn main() {
-    println("first:", make(2));
-    println("second:", make(0));
+    let first = make(2);
+    println("first:", first[0], first[1]);
+    let second = make(0);
+    println("second:", second[0]);
 }

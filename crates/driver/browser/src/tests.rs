@@ -455,16 +455,6 @@ fn exit_ends_a_program_with_its_code_and_keeps_its_output() {
 }
 
 #[test]
-fn printing_a_huge_value_stops_before_its_text_is_built() {
-    let run = interpreted(
-        "#[extern(\"malloc\")]\nfn malloc(size: usize) -> *[64000000]u8;\nfn main() {\n    let block = malloc(64000000);\n    println(&block.*);\n}\n",
-    );
-    assert_eq!(run.exit_code, 101);
-    assert!(written(&run, Stream::Stdout).is_empty());
-    assert!(written(&run, Stream::Stderr).starts_with(b"panic: this printed more than"));
-}
-
-#[test]
 fn a_size_past_any_block_gives_null_and_a_negative_length_fails() {
     let run = interpreted(
         "#[extern(\"malloc\")]\nfn allocate(size: i64) -> *u8;\n\

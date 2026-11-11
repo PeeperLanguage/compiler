@@ -132,7 +132,7 @@ fn main() {
         println(passes);
     }
     println("10. print an element of a temporary:");
-    println(points()[1]);
+    println(points()[1].row, points()[1].col);
     println("11. field of a kept temporary:");
     let r = &point().row;
     println(r.*);

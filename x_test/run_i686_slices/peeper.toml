@@ -7,8 +7,8 @@ target = "i686-linux"
 outcome = "exit_code"
 exit_code = 101
 stdout_contains = [
-    "slices: 5 5000000020 [3, 5, 7, 5000000004, 7, 8]\n",
-    "pairs: 2 20 [Pair { tag: 1, value: 10 }, Pair { tag: 2, value: 20 }]\n",
+    "slices: 5 5000000020 3 5 7 5000000004 7 8\n",
+    "pairs: 2 20 1 10 2 20\n",
     "passed: 6000000000\n",
     "wide: 340282366920938463463374607431768211455 -9223372036854775807\n",
     "tail: 5000000019\n",

@@ -1,28 +1,19 @@
 //! Lowering `print` and `println`: the text between the values is
 //! gathered and written in one runtime call; each value is written by the
-//! runtime function for its kind, a struct field by field and an array
-//! element by element.
-//!
-//! shortcut: structs and arrays print built in until a trait or interface
-//! lets each type say how it prints (`check` `printable`).
+//! runtime function for its kind.
 
 use arena::List;
 use model::core_mir::Callee;
 use model::core_mir::Class;
-use model::core_mir::Comparison;
 use model::core_mir::Conversion;
 use model::core_mir::Global;
 use model::core_mir::InstructionKind;
-use model::core_mir::IntegerOp;
 use model::core_mir::Operand;
 use model::core_mir::Passing;
 use model::core_mir::Place;
 use model::core_mir::Root;
 use model::core_mir::Signature;
-use model::core_mir::Step;
 use model::core_mir::Terminator;
-use model::layout::in_memory;
-use model::layout::layout;
 use model::semantic_types::Float;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
@@ -185,96 +176,17 @@ impl Lowering<'_> {
                 let referred = self.read_for_print(at, target, span);
                 self.print_value(text, referred, target, span);
             }
-            Type::Array { length: 0, .. } => text.extend_from_slice(b"[]"),
-            Type::Array {
-                element, length, ..
-            } => {
-                let element = self.types.real(element);
-                let (size, _) = layout(self.types, element, self.target);
-                let place = value.memory();
-                text.push(b'[');
-                self.print_text(text, span);
-                // A loop, so the code does not grow with the length.
-                let index = self.register_slot(self.usize, span);
-                let zero = Operand::integer(self.usize, 0);
-                self.store(self.usize, Place::whole(index), zero, span);
-                let (body, between, element_block, done) = (
-                    self.new_block(span),
-                    self.new_block(span),
-                    self.new_block(span),
-                    self.new_block(span),
-                );
-                self.finish(Terminator::Jump(body));
-                self.block = body;
-                let at = self.load(self.usize, Place::whole(index), span);
-                let first = self.compare(Comparison::Equal, self.usize, at, zero, span);
-                self.finish(Terminator::Branch {
-                    condition: first,
-                    span,
-                    then: element_block,
-                    otherwise: between,
-                });
-                self.block = between;
-                let mut separator = b", ".to_vec();
-                self.print_text(&mut separator, span);
-                self.finish(Terminator::Jump(element_block));
-                self.block = element_block;
-                let count = Some(length);
-                let at_element = place.then(Step::Index {
-                    index: at,
-                    size,
-                    count,
-                });
-                let value = self.read_for_print(at_element, element, span);
-                let mut piece = Vec::new();
-                source::grow_stack(|| self.print_value(&mut piece, value, element, span));
-                self.print_text(&mut piece, span);
-                let one = Operand::integer(self.usize, 1);
-                let next = self.integer(IntegerOp::Add, self.usize, at, one, span);
-                self.store(self.usize, Place::whole(index), next, span);
-                let limit = Operand::integer(self.usize, length);
-                let more = self.compare(Comparison::UnsignedLess, self.usize, next, limit, span);
-                self.finish(Terminator::Branch {
-                    condition: more,
-                    span,
-                    then: body,
-                    otherwise: done,
-                });
-                self.block = done;
-                text.push(b']');
-            }
-            Type::Struct { definition, .. } => {
-                let place = value.memory();
-                text.extend_from_slice(
-                    model::program::declared_text(self.modules, definition).as_bytes(),
-                );
-                let names: Vec<String> = model::program::field_names(self.modules, definition)
-                    .map(str::to_string)
-                    .collect();
-                for (index, name) in names.iter().enumerate() {
-                    text.extend_from_slice(if index == 0 { b" { " } else { b", " });
-                    text.extend_from_slice(name.as_bytes());
-                    text.extend_from_slice(b": ");
-                    let (at, field) = self.field(place.clone(), ty, index);
-                    let value = self.read_for_print(at, field, span);
-                    source::grow_stack(|| self.print_value(text, value, field, span));
-                }
-                text.extend_from_slice(if names.is_empty() { b" {}" } else { b" }" });
-            }
-            _ => unreachable!(
-                "check prints only numbers, `bool`, `&cstr`, `&str`, pointers, structs and arrays"
-            ),
+            _ => unreachable!("check prints only numbers, `bool`, `&cstr`, `&str` and pointers"),
         }
     }
 
     /// The value of the type `ty` at `place`, to print: loaded, or the
-    /// place itself for a value kept in memory. Nothing is moved.
+    /// place itself for a `&str`, kept in memory. Nothing is moved.
     fn read_for_print(&mut self, place: Place, ty: TypeId, span: Span) -> Value {
-        if let Some(class) = self.class(ty) {
-            return Value::Register(self.load(class, place, span));
+        match self.class(ty) {
+            Some(class) => Value::Register(self.load(class, place, span)),
+            None => Value::Memory(place),
         }
-        debug_assert!(in_memory(self.types, ty) || self.types[ty].is_slice_shaped());
-        Value::Memory(place)
     }
 
     /// Writes `text`, if any, in one runtime call, and empties it.

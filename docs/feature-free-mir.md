@@ -195,7 +195,7 @@ LLVM writer reads the table and never sees a language type.
 | `ToInterface { reference, implementation }` | two `Store`s into the interface slot: the address, and `Global(table)` |
 | `Aggregate(parts)` | a `Store` or `Copy` per part at its field offset |
 | `ArrayParts(parts)` | the length `Check` from `Integer` sums, then a `Store` or `Copy` per element; a spread of a slice or range is a counted loop of blocks |
-| `Print { values }` | `Call`s of the runtime's print symbols per class; a struct or array is printed field by field inline. `shortcut:` struct and array printing is a temporary feature and becomes an interface method later (memory: "Array .len and print are temporary") |
+| `Print { values }` | a `Call` of the runtime's print symbol for each value's class; a struct or array does not print (section 11) |
 | `Field { value, fields }` | the aggregate temporary is a slot, so a `Load` at the field's offset |
 | `Phi` | a hidden `I8` slot (3.5) |
 | `Check` | `Check` |
@@ -286,6 +286,7 @@ first commit.
 
 1. `&&` and `||` lower to a hidden `I8` slot; the MIR has no `Phi`.
 2. Struct and array printing is written inline at each `print`.
+   Replaced by section 11: structs and arrays do not print.
 3. The name stays `mir`; the crate layout stays `middle/model`,
    `middle/lower`, `middle/flow`, `middle/eval`, `backend/llvm`.
 4. Order B: two MIRs alive for a few steps, the interpreter switched
@@ -301,3 +302,17 @@ first commit.
   this MIR and should need nothing new in it. That is the test of the
   design; the first of them to need a new instruction says where the line
   was drawn wrong.
+
+## 11. Decided (2026-11-11): structs and arrays do not print
+
+This changes decision 9.2. Printing a struct inline at each `print`
+writes one print per number in it, so a struct that holds another twice
+doubles the code at each level (`peeper build` at depth 18: 1.4 s and
+400 MB). A printer function per type would fix the size, but printing
+aggregates was only a stopgap for a language without interfaces.
+
+So `print` and `println` take numbers, `bool`, `&cstr`, `&str`, raw
+pointers and references to them (`printable` in `check`), and `Print`
+lowers to one runtime call per value. A program prints a struct's
+fields or an array's elements one by one. Later, `print` becomes a
+library function and a type prints by meeting an interface.

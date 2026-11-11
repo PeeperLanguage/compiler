@@ -290,8 +290,9 @@ fn checks_deeply_nested_statements() {
     let codes: Vec<&str> = found.iter().map(|&(code, ..)| code).collect();
     assert_eq!(codes, ["T0001"], "{found:?}");
     let arrays = format!(
-        "fn f(a: {}i32) {{ println(a); }}\nfn main() {{}}",
-        "[1]".repeat(DEPTH)
+        "fn f(a: {}i32) {{ println(a{}); }}\nfn main() {{}}",
+        "[1]".repeat(DEPTH),
+        "[0]".repeat(DEPTH)
     );
     assert_eq!(diagnostics(&[("app:main", &arrays)]), []);
     // A pointer breaks a flat array, so an error's type text recurses.
@@ -324,8 +325,9 @@ fn checks_structs_holding_structs_twice() {
     let chain: String = (1..40)
         .map(|i| format!("struct S{i} {{ a: S{0}, b: S{0} }}\n", i - 1))
         .collect();
+    let leaf = ".a".repeat(39);
     let text = format!(
-        "struct S0 {{ n: i32 }}\n{chain}fn show(s: &S39) {{ println(s.*); }}
+        "struct S0 {{ n: i32 }}\n{chain}fn show(s: &S39) {{ println(s{leaf}.n); }}
         fn same(s: S39) -> S39 {{ return s; }}
         fn replace(to: &mut S39, s: S39) {{ to.* = s; }}
         fn borrowing(s: S39) -> S39 {{ let n = 1; let r = &n; println(r); return s; }}"

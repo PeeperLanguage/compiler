@@ -144,3 +144,14 @@
   check.sh: only `ll_array_ranges` fails, waiting on review.
 - `ll_array_ranges` blessed (2026-11-11), comment rewritten. All 13 `ll_`
   fixtures blessed; `bash scripts/check.sh` exits 0, every gate ok.
+- Struct and array printing removed (2026-11-11, Fuad: "keep only scalar
+  type printing"). Inline printing of a struct that holds another twice
+  grew 2^depth (`peeper build` at depth 18: 1.4 s, 400 MB). `check`
+  `printable` takes numbers, `bool`, `&cstr`, `&str`, raw pointers and
+  references to them; core `print.rs` lost its struct and array arms.
+  20 fixtures print element by element, values checked against the old
+  output (`target/step12-probes/step14/verify_prints.py`);
+  `run_print_arrays`, `run_print_deep_struct`, `ll_print_arrays` and two
+  tests that printed a whole aggregate deleted; `negative_print` refuses a
+  struct, an array and `&Point`. Design page section 11 records it.
+  Later (Fuad): `print` a library function, a type prints by an interface.

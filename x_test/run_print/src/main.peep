@@ -1,11 +1,9 @@
 // `print` writes its values with a space between each; `println` adds a
-// newline. It takes numbers of any width, `bool`, `&cstr`, raw pointers,
-// structs, references to them, and plain string literals. Floats print as
-// the fewest digits that read back as the same number.
+// newline. It takes numbers of any width, `bool`, `&cstr`, `&str`, raw
+// pointers and references to them. Floats print as the fewest digits that
+// read back as the same number.
 type Meters = f64;
 struct Point { x: i32, y: i32 }
-struct Line { from: Point, to: Point, weight: f32 }
-struct Empty {}
 
 const Name = c"peeper";
 
@@ -39,15 +37,14 @@ fn main() -> i32 {
     println("text:", Name, "100% sure");
 
     let mut point = Point.{ x = 3, y = 4 };
-    let line = Line.{ from = Point.{ x = 3, y = 4 }, to = Point.{ x = 5, y = 6 }, weight = 1.5 };
-    println("structs:", point, line, Empty.{});
-    let shared = &point;
-    println("shared:", shared, shared.y);
+    println("fields:", point.x, point.y);
+    let shared = &point.y;
+    println("shared:", shared, shared.*);
     let raw = @point;
-    println("raw:", raw.*);
-    let changed = &mut point;
+    println("raw:", raw.*.x, raw.*.y);
+    let changed = &mut point.x;
     println("changed:", changed);
-    changed.x = 30;
+    changed.* = 30;
     println("after:", point.x + point.y, twice(5));
 
     print("no newline");

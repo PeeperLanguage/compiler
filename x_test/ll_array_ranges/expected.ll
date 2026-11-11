@@ -1,8 +1,7 @@
 source_filename = "<fixture>/src/main.peep"
 
-@.str.0 = private unnamed_addr constant [1 x i8] c"["
-@.str.1 = private unnamed_addr constant [2 x i8] c", "
-@.str.2 = private unnamed_addr constant [2 x i8] c"]\0A"
+@.str.0 = private unnamed_addr constant [1 x i8] c" "
+@.str.1 = private unnamed_addr constant [1 x i8] c"\0A"
 
 define void @"ll_array_ranges:main.known"(ptr %a0) !dbg !7 {
 entry:
@@ -58,35 +57,53 @@ bb6:
 define void @"ll_array_ranges:main.main"() !dbg !15 {
 entry:
   %s0 = alloca [24 x i8], align 4
+  call void @llvm.dbg.declare(metadata ptr %s0, metadata !17, metadata !DIExpression()), !dbg !18
   %s1 = alloca [8 x i8], align 8
   %s2 = alloca [8 x i8], align 8
+  %s3 = alloca [8 x i8], align 8
+  %s4 = alloca [8 x i8], align 8
+  %s5 = alloca [8 x i8], align 8
+  %s6 = alloca [8 x i8], align 8
   br label %bb0
 bb0:
-  call void @"ll_array_ranges:main.known"(ptr %s0), !dbg !16
-  call void @"peeper_rt_v1_print_bytes"(ptr @.str.0, i64 1), !dbg !17
-  store i64 0, ptr %s1, !dbg !17
-  br label %bb1
-bb1:
-  %i4 = load i64, ptr %s1, !dbg !17
-  %i5.c = icmp eq i64 %i4, 0, !dbg !17
-  br i1 %i5.c, label %bb3, label %bb2, !dbg !17
-bb2:
-  call void @"peeper_rt_v1_print_bytes"(ptr @.str.1, i64 2), !dbg !17
-  br label %bb3
-bb3:
-  %i7.a = getelementptr inbounds [4 x i8], ptr %s0, i64 %i4, !dbg !17
-  %i7 = load i32, ptr %i7.a, !dbg !17
-  %i8 = sext i32 %i7 to i64, !dbg !17
-  store i64 %i8, ptr %s2, !dbg !17
-  call void @"peeper_rt_v2_print_int"(i32 1, i32 1, ptr %s2), !dbg !17
-  %i12 = add i64 %i4, 1, !dbg !17
-  store i64 %i12, ptr %s1, !dbg !17
-  %i14.c = icmp ult i64 %i12, 6, !dbg !17
-  br i1 %i14.c, label %bb1, label %bb4, !dbg !17
-bb4:
-  call void @"peeper_rt_v1_print_bytes"(ptr @.str.2, i64 2), !dbg !17
-  call void @"peeper_rt_v1_flush"(), !dbg !17
-  ret void, !dbg !18
+  call void @"ll_array_ranges:main.known"(ptr %s0), !dbg !19
+  %i2 = load i32, ptr %s0, !dbg !20
+  %i3.a = getelementptr inbounds i8, ptr %s0, i64 4, !dbg !21
+  %i3 = load i32, ptr %i3.a, !dbg !21
+  %i4.a = getelementptr inbounds i8, ptr %s0, i64 8, !dbg !22
+  %i4 = load i32, ptr %i4.a, !dbg !22
+  %i5.a = getelementptr inbounds i8, ptr %s0, i64 12, !dbg !23
+  %i5 = load i32, ptr %i5.a, !dbg !23
+  %i6.a = getelementptr inbounds i8, ptr %s0, i64 16, !dbg !24
+  %i6 = load i32, ptr %i6.a, !dbg !24
+  %i7.a = getelementptr inbounds i8, ptr %s0, i64 20, !dbg !25
+  %i7 = load i32, ptr %i7.a, !dbg !25
+  %i8 = sext i32 %i2 to i64, !dbg !26
+  store i64 %i8, ptr %s1, !dbg !26
+  call void @"peeper_rt_v2_print_int"(i32 1, i32 1, ptr %s1), !dbg !26
+  %i12 = sext i32 %i3 to i64, !dbg !26
+  store i64 %i12, ptr %s2, !dbg !26
+  call void @"peeper_rt_v1_print_bytes"(ptr @.str.0, i64 1), !dbg !26
+  call void @"peeper_rt_v2_print_int"(i32 1, i32 1, ptr %s2), !dbg !26
+  %i17 = sext i32 %i4 to i64, !dbg !26
+  store i64 %i17, ptr %s3, !dbg !26
+  call void @"peeper_rt_v1_print_bytes"(ptr @.str.0, i64 1), !dbg !26
+  call void @"peeper_rt_v2_print_int"(i32 1, i32 1, ptr %s3), !dbg !26
+  %i22 = sext i32 %i5 to i64, !dbg !26
+  store i64 %i22, ptr %s4, !dbg !26
+  call void @"peeper_rt_v1_print_bytes"(ptr @.str.0, i64 1), !dbg !26
+  call void @"peeper_rt_v2_print_int"(i32 1, i32 1, ptr %s4), !dbg !26
+  %i27 = sext i32 %i6 to i64, !dbg !26
+  store i64 %i27, ptr %s5, !dbg !26
+  call void @"peeper_rt_v1_print_bytes"(ptr @.str.0, i64 1), !dbg !26
+  call void @"peeper_rt_v2_print_int"(i32 1, i32 1, ptr %s5), !dbg !26
+  %i32 = sext i32 %i7 to i64, !dbg !26
+  store i64 %i32, ptr %s6, !dbg !26
+  call void @"peeper_rt_v1_print_bytes"(ptr @.str.0, i64 1), !dbg !26
+  call void @"peeper_rt_v2_print_int"(i32 1, i32 1, ptr %s6), !dbg !26
+  call void @"peeper_rt_v1_print_bytes"(ptr @.str.1, i64 1), !dbg !26
+  call void @"peeper_rt_v1_flush"(), !dbg !26
+  ret void, !dbg !27
 }
 
 declare void @llvm.memcpy.p0.p0.i64(ptr, ptr, i64, i1)
@@ -100,7 +117,7 @@ declare void @"peeper_rt_v2_print_int"(i32, i32, ptr)
 declare void @llvm.dbg.declare(metadata, metadata, metadata)
 
 !llvm.dbg.cu = !{!1}
-!llvm.module.flags = !{!19, !20}
+!llvm.module.flags = !{!28, !29}
 !0 = !DIFile(filename: "main.peep", directory: "<fixture>/src")
 !1 = distinct !DICompileUnit(language: DW_LANG_C, file: !0, producer: "peeper", isOptimized: false, runtimeVersion: 0, emissionKind: FullDebug)
 !4 = !DISubrange(count: 6)
@@ -117,8 +134,17 @@ declare void @llvm.dbg.declare(metadata, metadata, metadata)
 !13 = !DILocation(line: 5, column: 5, scope: !8)
 !14 = !DISubroutineType(types: !{null})
 !15 = distinct !DISubprogram(name: "main", linkageName: "ll_array_ranges:main.main", scope: !0, file: !0, line: 8, type: !14, scopeLine: 8, spFlags: DISPFlagDefinition, unit: !1)
-!16 = !DILocation(line: 9, column: 13, scope: !15)
-!17 = !DILocation(line: 9, column: 5, scope: !15)
-!18 = !DILocation(line: 10, column: 1, scope: !15)
-!19 = !{i32 7, !"Dwarf Version", i32 4}
-!20 = !{i32 2, !"Debug Info Version", i32 3}
+!16 = !DILexicalBlock(scope: !15, file: !0, line: 8, column: 11)
+!17 = !DILocalVariable(name: "arr", scope: !16, file: !0, line: 9, type: !2)
+!18 = !DILocation(line: 9, column: 9, scope: !16)
+!19 = !DILocation(line: 9, column: 15, scope: !16)
+!20 = !DILocation(line: 10, column: 13, scope: !16)
+!21 = !DILocation(line: 10, column: 21, scope: !16)
+!22 = !DILocation(line: 10, column: 29, scope: !16)
+!23 = !DILocation(line: 10, column: 37, scope: !16)
+!24 = !DILocation(line: 10, column: 45, scope: !16)
+!25 = !DILocation(line: 10, column: 53, scope: !16)
+!26 = !DILocation(line: 10, column: 5, scope: !16)
+!27 = !DILocation(line: 11, column: 1, scope: !16)
+!28 = !{i32 7, !"Dwarf Version", i32 4}
+!29 = !{i32 2, !"Debug Info Version", i32 3}

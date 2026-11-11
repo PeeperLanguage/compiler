@@ -7,5 +7,11 @@ outcome = "failure"
 stderr_contains = [
     "`void` cannot be printed",
     "`none` needs its type from where it is used",
-    "Compilation failed with 2 error(s)",
+    "`Point` cannot be printed",
+    "main.peep:11:13\n",
+    "`[2]i32` cannot be printed",
+    "main.peep:12:13\n",
+    "`&Point` cannot be printed",
+    "main.peep:13:13\n",
+    "Compilation failed with 5 error(s)",
 ]
