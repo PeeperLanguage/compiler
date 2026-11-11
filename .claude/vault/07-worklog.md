@@ -220,6 +220,15 @@
   them), found once from its own `defines`/`uses`/`accesses`: 1,196 M,
   0.33 s (was 0.40); building that set costs 172 M. A line is 96 bytes
   (old 48): `Operand` 24 (old 8), constants inline.
+- Fix 1 applied (2026-11-11, Fuad: "yes apply fix 1"): `Loans::matters`,
+  found once by `instructions_that_matter` from `defines`, `uses`,
+  `accesses` and the places written; every walk skips the rest. `check
+  mixed` 1,378 -> 1,194 M instructions, 0.40 -> 0.34 s (old 0.27).
+  Mutation: without the borrowed-slot access part `negative_array_flow`
+  fails; without the uses part `negative_loans`(`_i686`); the defines and
+  holder-write parts are caught by no test (with today's lowering each
+  such line also uses a holder or holds no loan), kept as the walks'
+  mirror. check.sh ok.
 - Untangle (2026-11-11, Fuad: "use untangled to fix all issues including
   past commits", "ok go on"); decision log
   `target/step12-probes/untangle/decisions.md`, fixes 1-11, then

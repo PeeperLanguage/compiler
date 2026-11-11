@@ -17,7 +17,8 @@
 //! offset is in its first range. An index only the program knows may be any
 //! element, so its range covers all of them.
 //!
-//! Two dataflow passes, then one walk:
+//! Two dataflow passes, then one walk, each over only the instructions that
+//! can give, use or break a loan:
 //!
 //! 1. Backward: the holders used again later (liveness).
 //! 2. Forward: the loans each holder may hold. A `Borrow` holds its own
@@ -146,8 +147,10 @@ pub fn report_loan_errors(
         borrows,
         holder_starts,
         loans_through,
+        matters: Bits::new(0), // found below: it needs `Loans::uses`
     };
     loans.reserved = loans.reserved_loans();
+    loans.matters = loans.instructions_that_matter();
     loans.report(file, diagnostics);
 }
 
@@ -303,6 +306,9 @@ struct Loans<'b> {
     /// By slot, the loans of places through a pointer in it (`&mut r.*`),
     /// which a write to that pointer ends.
     loans_through: Vec<Vec<Id<Loan>>>,
+    /// The instructions that can give, use or break a loan; every walk
+    /// skips the others (`instructions_that_matter`).
+    matters: Bits<mir::Instruction>,
 }
 
 /// What an instruction does to a place, as the loan rules see it.
@@ -448,6 +454,11 @@ impl<'b> Loans<'b> {
     /// pointer's.
     fn place_holders(&self, place: &Place, width: Option<u64>) -> Range<usize> {
         match place.root {
+            // Most slots hold no pointer: none of their bytes need finding.
+            Root::Slot(slot) if self.body.slots[slot].holders.is_empty() => {
+                let start = self.holder_starts[slot.index()];
+                start..start
+            }
             Root::Slot(slot) => {
                 let Some(bytes) = self.levels(&place.steps, width).next() else {
                     unreachable!("a place has a level")
@@ -661,6 +672,46 @@ impl<'b> Loans<'b> {
             .collect()
     }
 
+    /// The instructions that can give, use or break a loan: each that
+    /// defines or uses a holder, writes a place with one, or accesses a
+    /// borrowed slot, and each borrow and call. Any other changes nothing
+    /// the walks track, and most do not: they read and write slots no
+    /// loan reaches, such as a loop's count. A loan is broken only by an
+    /// access to its own slot.
+    fn instructions_that_matter(&self) -> Bits<mir::Instruction> {
+        let body = self.body;
+        let mut borrowed = Bits::new(body.slots.len());
+        for &borrow in &self.borrows {
+            if let InstructionKind::Borrow { place, .. } = &body.instructions[borrow].kind
+                && let Root::Slot(slot) = place.root
+            {
+                borrowed.set(slot);
+            }
+        }
+        let mut matters = Bits::new(body.instructions.len());
+        for id in body.instructions.ids() {
+            let writes_holder = match &body.instructions[id].kind {
+                InstructionKind::Borrow { .. } | InstructionKind::Call { .. } => true,
+                InstructionKind::Store { class, place, .. } => {
+                    let width = class.bytes(self.pointer_bytes);
+                    !self.place_holders(place, Some(width)).is_empty()
+                }
+                InstructionKind::Copy { to, size, .. } => {
+                    !self.place_holders(to, Some(*size)).is_empty()
+                }
+                _ => false,
+            };
+            let mut uses_holder = false;
+            self.uses(id, |_| uses_holder = true);
+            let accesses_borrowed = (self.accesses(id).into_iter().flatten())
+                .any(|access| matches!(access.root, Root::Slot(slot) if borrowed.has(slot)));
+            if writes_holder || uses_holder || accesses_borrowed || !self.defines(id).is_empty() {
+                matters.set(id);
+            }
+        }
+        matters
+    }
+
     /// `held`, the loans of each holder, after the instruction `id`. What
     /// is not listed gives no value that holds a loan.
     fn step_held(&self, held: &mut Held, id: Id<mir::Instruction>) {
@@ -843,7 +894,9 @@ impl<'b> Loans<'b> {
             |block| predecessors[block.index()].iter().copied(),
             |block, live: &mut Vec<Id<Holder>>| {
                 let mut walked = self.live_set(live);
-                let ids: Vec<_> = body.lists.items(body.blocks[block].instructions).collect();
+                let ids: Vec<_> = (body.lists.items(body.blocks[block].instructions))
+                    .filter(|&id| self.matters.has(id))
+                    .collect();
                 for &id in ids.iter().rev() {
                     self.step_live(&mut walked, id, |_| {});
                 }
@@ -877,7 +930,9 @@ impl<'b> Loans<'b> {
             |block| body.blocks[block].terminator.targets(),
             |block, held| {
                 for id in body.lists.items(body.blocks[block].instructions) {
-                    self.step_held(held, id);
+                    if self.matters.has(id) {
+                        self.step_held(held, id);
+                    }
                 }
                 let Some(live) = &ends[block.index()] else {
                     unreachable!("each block starts the backward pass")
@@ -914,7 +969,7 @@ impl<'b> Loans<'b> {
             // that, not as gone while its reference is in use.
             if let Some((returned, span)) = self.returned(block) {
                 let mut at_return = held.clone();
-                for &id in &ids {
+                for &id in ids.iter().filter(|&&id| self.matters.has(id)) {
                     self.step_held(&mut at_return, id);
                 }
                 let loans = self.loans_of(&at_return, returned);
@@ -926,10 +981,14 @@ impl<'b> Loans<'b> {
             // would grow with the block's length times its holders.
             let mut live = self.live_set(end.as_deref().unwrap_or_default());
             let mut flips = Vec::new(); // (position, holder), the last first
-            for (position, &id) in ids.iter().enumerate().rev() {
+            let walked = ids
+                .iter()
+                .enumerate()
+                .filter(|&(_, &id)| self.matters.has(id));
+            for (position, &id) in walked.clone().rev() {
                 self.step_live(&mut live, id, |holder| flips.push((position, holder)));
             }
-            for (position, &id) in ids.iter().enumerate() {
+            for (position, &id) in walked {
                 // `live` is before `id` here, when a call's reserved arguments
                 // take hold. No call accesses a place, so an instruction has
                 // at most one of the two errors.
