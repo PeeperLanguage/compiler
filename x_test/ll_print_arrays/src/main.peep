@@ -1,5 +1,5 @@
-// Each array type prints through one private function with a loop, so the
-// code does not grow with the length; a nested array calls its element's.
+// An array prints with a loop written where it is printed, so the code does
+// not grow with the length; a nested array's loop holds its element's loop.
 fn main() {
     let grid = [2][3]i32{[3]i32{1, 2, 3}, [3]i32{4, 5, 6}};
     println(grid);

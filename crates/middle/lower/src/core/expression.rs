@@ -37,6 +37,9 @@ use source::Span;
 
 use crate::core::Lowering;
 use crate::core::Value;
+use crate::core::binary::BinaryOperation;
+use crate::core::binary::binary_operation;
+use crate::core::c_abi::c_signature;
 use crate::core::slot_of;
 
 /// The length of what an index or a slice is taken of: an array's, from
@@ -58,6 +61,11 @@ impl Lowering<'_> {
             Some(match kind {
                 _ if ty == TypeId::INVALID => return None,
                 thir::ExprKind::Invalid => return None,
+                thir::ExprKind::Constant(Constant::Bytes(bytes)) if ty == TypeId::STR => self
+                    .in_temporary(ty, span, |this, place| {
+                        this.str_constant(bytes, place, span);
+                        Some(())
+                    })?,
                 thir::ExprKind::Constant(value) => self.constant(value, ty, span),
                 thir::ExprKind::Variable(variable) => {
                     self.read(Place::whole(slot_of(*variable)), ty, span)
@@ -84,23 +92,45 @@ impl Lowering<'_> {
                     callee,
                     signature,
                     arguments,
-                } => self.lower_call(*callee, *signature, *arguments, ty, span)?,
+                } => self.lower_call(*callee, *signature, *arguments, ty, None, span)?,
                 thir::ExprKind::ToInterface {
                     reference,
                     implementation,
                 } => {
                     let reference = self.lower_expr(*reference)?.register();
-                    self.lower_to_interface(reference, *implementation, ty, span)
+                    self.in_temporary(ty, span, |this, place| {
+                        this.lower_to_interface(reference, *implementation, ty, place, span);
+                        Some(())
+                    })?
                 }
                 thir::ExprKind::StructLiteral(fields) => {
-                    self.lower_struct_literal(*fields, ty, span)?
+                    self.in_temporary(ty, span, |this, place| {
+                        this.lower_struct_literal(*fields, ty, place)
+                    })?
                 }
                 thir::ExprKind::ArrayLiteral(parts) => {
-                    self.lower_array_literal(*parts, ty, span)?
+                    self.in_temporary(ty, span, |this, place| {
+                        this.lower_array_literal(*parts, ty, place, span)
+                    })?
                 }
-                thir::ExprKind::Range { .. } => self.lower_range(expression)?,
-                thir::ExprKind::Borrow(borrowed) => self.lower_borrow(*borrowed, ty, span)?,
-                thir::ExprKind::Slice { .. } => self.lower_slice(expression)?,
+                thir::ExprKind::Range { .. } => {
+                    self.in_temporary(ty, span, |this, place| this.lower_range(expression, place))?
+                }
+                thir::ExprKind::Borrow(borrowed) if self.class(ty).is_none() => {
+                    self.in_temporary(ty, span, |this, place| {
+                        this.lower_borrow(*borrowed, ty, place, span)
+                    })?
+                }
+                thir::ExprKind::Borrow(borrowed) => {
+                    let Some(mutable) = self.types[ty].borrows() else {
+                        unreachable!("a borrow's type is a reference, slice or interface reference")
+                    };
+                    let place = self.place_of(*borrowed)?;
+                    Value::Register(self.borrow(place, mutable, "reference", span))
+                }
+                thir::ExprKind::Slice { .. } => {
+                    self.in_temporary(ty, span, |this, place| this.lower_slice(expression, place))?
+                }
                 thir::ExprKind::Address(place) => {
                     let place = self.place_of(*place)?;
                     Value::Register(self.emit(InstructionKind::Address(place), span))
@@ -113,8 +143,28 @@ impl Lowering<'_> {
         })
     }
 
-    /// The constant `value`, of the type `ty`, as a value: a register, or
-    /// for a `&str` its two words in a temporary.
+    /// A value of the type `ty` that `build` writes at the place it is
+    /// given, built in a new temporary.
+    fn in_temporary(
+        &mut self,
+        ty: TypeId,
+        span: Span,
+        build: impl FnOnce(&mut Self, Place) -> Option<()>,
+    ) -> Option<Value> {
+        let slot = self.temporary(ty, span);
+        build(self, Place::whole(slot))?;
+        Some(Value::Memory(Place::whole(slot)))
+    }
+
+    /// The `&str` constant `bytes` at `place`: their address and length.
+    fn str_constant(&mut self, bytes: &[u8], place: Place, span: Span) {
+        let address = self.global(Global::Bytes(bytes.into()));
+        let length = Operand::integer(self.usize, bytes.len() as u64);
+        self.slice_words(address, length, place, span);
+    }
+
+    /// The constant `value`, of the type `ty`, as a register; a `&str` is
+    /// `str_constant`'s.
     fn constant(&mut self, value: &Constant, ty: TypeId, span: Span) -> Value {
         match value {
             Constant::Bool(value) => {
@@ -134,15 +184,6 @@ impl Lowering<'_> {
                 _ => Operand::integer(Class::F64, *bits),
             }),
             Constant::Null => Value::Register(Operand::integer(Class::Pointer, 0)),
-            Constant::Bytes(bytes) if ty == TypeId::STR => {
-                let address = self.global(Global::Bytes(bytes.clone()));
-                let length = Operand::integer(self.usize, bytes.len() as u64);
-                let slot = self.temporary(ty, span);
-                self.store(Class::Pointer, Place::whole(slot), address, span);
-                let length_place = self.second_word(Place::whole(slot));
-                self.store(self.usize, length_place, length, span);
-                Value::Memory(Place::whole(slot))
-            }
             Constant::Bytes(bytes) => {
                 // C reads a `&cstr` up to its first zero byte, so it ends in one.
                 let mut text = bytes.to_vec();
@@ -511,106 +552,79 @@ impl Lowering<'_> {
         let left_value = self.lower_expr(left)?.register();
         let right_value = self.lower_expr(right)?.register();
         let right_constant = matches!(right_value, Operand::Constant { .. });
-        let value = match self.types[left_type] {
-            Type::Integer(integer) => {
-                let class = Class::integer(integer.bits);
-                let operation = match op {
-                    BinaryOp::Add => IntegerOp::Add,
-                    BinaryOp::Subtract => IntegerOp::Subtract,
-                    BinaryOp::Multiply => IntegerOp::Multiply,
-                    BinaryOp::Divide | BinaryOp::Remainder => {
-                        if !right_constant {
-                            let zero =
-                                self.class_constant(class, &Limbs::new(class.bits(), &[]), span);
-                            let failed =
-                                self.compare(Comparison::Equal, class, right_value, zero, span);
-                            self.emit_check(failed, DIVISION_BY_ZERO, span);
-                        }
-                        // The lowest signed value over -1 wraps to itself, so
-                        // the result fits the width.
-                        match (op, integer.signed) {
-                            (BinaryOp::Divide, true) => IntegerOp::SignedDivide,
-                            (BinaryOp::Divide, false) => IntegerOp::UnsignedDivide,
-                            (_, true) => IntegerOp::SignedRemainder,
-                            (_, false) => IntegerOp::UnsignedRemainder,
-                        }
-                    }
-                    BinaryOp::ShiftLeft | BinaryOp::ShiftRight => {
-                        let Type::Integer(count_type) = self.types[right_type] else {
-                            unreachable!("a shift count is an integer")
+        let number = &self.types[left_type];
+        let value = match *number {
+            Type::Integer(_) | Type::Float(_) => {
+                let class = match *number {
+                    Type::Integer(integer) => Class::integer(integer.bits),
+                    Type::Float(Float::F32) => Class::F32,
+                    _ => Class::F64,
+                };
+                match binary_operation(op, number) {
+                    BinaryOperation::Compare {
+                        comparison,
+                        swapped,
+                    } => {
+                        let (left, right) = if swapped {
+                            (right_value, left_value)
+                        } else {
+                            (left_value, right_value)
                         };
-                        let count = self.shift_count(
-                            right_value,
-                            count_type,
-                            integer,
-                            right_constant,
-                            span,
-                        );
-                        let operation = match (op, integer.signed) {
-                            (BinaryOp::ShiftLeft, _) => IntegerOp::ShiftLeft,
-                            (_, true) => IntegerOp::SignedShiftRight,
-                            (_, false) => IntegerOp::UnsignedShiftRight,
-                        };
-                        let shifted = self.arithmetic(operation, integer, left_value, count, span);
-                        return Some(Value::Register(shifted));
+                        self.compare(comparison, class, left, right, span)
                     }
-                    BinaryOp::BitAnd => IntegerOp::And,
-                    BinaryOp::BitOr => IntegerOp::Or,
-                    BinaryOp::BitXor => IntegerOp::Xor,
-                    _ => {
-                        let comparison = self.compare_integers(
-                            op,
-                            integer.signed,
+                    BinaryOperation::Float(operation) => {
+                        let kind = InstructionKind::Float {
+                            operation,
                             class,
-                            left_value,
-                            right_value,
-                            span,
-                        );
-                        return Some(Value::Register(comparison));
-                    }
-                };
-                self.arithmetic(operation, integer, left_value, right_value, span)
-            }
-            Type::Float(float) => {
-                let class = if float == Float::F32 {
-                    Class::F32
-                } else {
-                    Class::F64
-                };
-                let operation = match op {
-                    BinaryOp::Add => model::core_mir::FloatOp::Add,
-                    BinaryOp::Subtract => model::core_mir::FloatOp::Subtract,
-                    BinaryOp::Multiply => model::core_mir::FloatOp::Multiply,
-                    BinaryOp::Divide => model::core_mir::FloatOp::Divide,
-                    BinaryOp::Remainder => model::core_mir::FloatOp::Remainder,
-                    _ => {
-                        let (comparison, left_value, right_value) = match op {
-                            BinaryOp::EqualTo => (Comparison::Equal, left_value, right_value),
-                            BinaryOp::NotEqualTo => (Comparison::NotEqual, left_value, right_value),
-                            BinaryOp::LessThan => (Comparison::FloatLess, left_value, right_value),
-                            BinaryOp::LessOrEqual => {
-                                (Comparison::FloatLessOrEqual, left_value, right_value)
-                            }
-                            BinaryOp::GreaterThan => {
-                                (Comparison::FloatLess, right_value, left_value)
-                            }
-                            BinaryOp::GreaterOrEqual => {
-                                (Comparison::FloatLessOrEqual, right_value, left_value)
-                            }
-                            _ => unreachable!("the checker allows no other float operator"),
+                            left: left_value,
+                            right: right_value,
                         };
-                        let compared =
-                            self.compare(comparison, class, left_value, right_value, span);
-                        return Some(Value::Register(compared));
+                        self.emit(kind, span)
                     }
-                };
-                let kind = InstructionKind::Float {
-                    operation,
-                    class,
-                    left: left_value,
-                    right: right_value,
-                };
-                self.emit(kind, span)
+                    BinaryOperation::Integer(operation) => {
+                        let Type::Integer(integer) = *number else {
+                            unreachable!("an integer operation is on integers")
+                        };
+                        let right = match operation {
+                            IntegerOp::SignedDivide
+                            | IntegerOp::UnsignedDivide
+                            | IntegerOp::SignedRemainder
+                            | IntegerOp::UnsignedRemainder => {
+                                if !right_constant {
+                                    let zero = Limbs::new(class.bits(), &[]);
+                                    let zero = self.class_constant(class, &zero, span);
+                                    let failed = self.compare(
+                                        Comparison::Equal,
+                                        class,
+                                        right_value,
+                                        zero,
+                                        span,
+                                    );
+                                    self.emit_check(failed, DIVISION_BY_ZERO, span);
+                                }
+                                // The lowest signed value over -1 wraps to
+                                // itself, so the result fits the width.
+                                right_value
+                            }
+                            IntegerOp::ShiftLeft
+                            | IntegerOp::SignedShiftRight
+                            | IntegerOp::UnsignedShiftRight => {
+                                let Type::Integer(count_type) = self.types[right_type] else {
+                                    unreachable!("a shift count is an integer")
+                                };
+                                self.shift_count(
+                                    right_value,
+                                    count_type,
+                                    integer,
+                                    right_constant,
+                                    span,
+                                )
+                            }
+                            _ => right_value,
+                        };
+                        self.arithmetic(operation, integer, left_value, right, span)
+                    }
+                }
             }
             Type::Bool => {
                 let class = Class::I8;
@@ -661,34 +675,6 @@ impl Lowering<'_> {
             _ => unreachable!("the checker allows operators on numbers, `bool`s and pointers"),
         };
         Some(Value::Register(value))
-    }
-
-    /// `left op right` for the integer comparison `op`, signed as `signed`
-    /// says: `>` and `>=` are `<` and `<=` the other way round.
-    fn compare_integers(
-        &mut self,
-        op: BinaryOp,
-        signed: bool,
-        class: Class,
-        left: Operand,
-        right: Operand,
-        span: Span,
-    ) -> Operand {
-        let (less, less_or_equal) = if signed {
-            (Comparison::SignedLess, Comparison::SignedLessOrEqual)
-        } else {
-            (Comparison::UnsignedLess, Comparison::UnsignedLessOrEqual)
-        };
-        let (comparison, left, right) = match op {
-            BinaryOp::EqualTo => (Comparison::Equal, left, right),
-            BinaryOp::NotEqualTo => (Comparison::NotEqual, left, right),
-            BinaryOp::LessThan => (less, left, right),
-            BinaryOp::LessOrEqual => (less_or_equal, left, right),
-            BinaryOp::GreaterThan => (less, right, left),
-            BinaryOp::GreaterOrEqual => (less_or_equal, right, left),
-            _ => unreachable!("the checker allows no other integer operator"),
-        };
-        self.compare(comparison, class, left, right, span)
     }
 
     /// The count of a shift of a value of the type `shifted`, `count` of
@@ -879,17 +865,73 @@ impl Lowering<'_> {
         self.emit(kind, span)
     }
 
+    /// Puts the value of `expression` at `place`, a place nothing the
+    /// expression reads can see: a new variable, an argument's copy, the
+    /// result, or a field of one of them. A literal, or a call giving its
+    /// value in memory, is built right there, with no copy; an assignment's
+    /// target may be read by its value, so it is not such a place.
+    pub(super) fn lower_into(&mut self, expression: Id<thir::Expr>, place: Place) -> Option<()> {
+        // Literals nest as deep as the source.
+        source::grow_stack(|| {
+            let span = self.thir.exprs.span(expression);
+            let thir::Expr { ty, kind } = &self.thir.exprs[expression];
+            let ty = self.types.real(*ty);
+            match kind {
+                _ if ty == TypeId::INVALID => None,
+                thir::ExprKind::StructLiteral(fields) => {
+                    self.lower_struct_literal(*fields, ty, place)
+                }
+                thir::ExprKind::Constant(Constant::Bytes(bytes)) if ty == TypeId::STR => {
+                    self.str_constant(bytes, place, span);
+                    Some(())
+                }
+                thir::ExprKind::ToInterface {
+                    reference,
+                    implementation,
+                } => {
+                    let reference = self.lower_expr(*reference)?.register();
+                    self.lower_to_interface(reference, *implementation, ty, place, span);
+                    Some(())
+                }
+                thir::ExprKind::Borrow(borrowed) if self.class(ty).is_none() => {
+                    self.lower_borrow(*borrowed, ty, place, span)
+                }
+                thir::ExprKind::Slice { .. } => self.lower_slice(expression, place),
+                thir::ExprKind::Range { .. } => self.lower_range(expression, place),
+                thir::ExprKind::ArrayLiteral(parts) => {
+                    self.lower_array_literal(*parts, ty, place, span)
+                }
+                thir::ExprKind::Call {
+                    callee,
+                    signature,
+                    arguments,
+                } if matches!(self.result_passing(ty), Some(Passing::Memory { .. })) => {
+                    let destination = Some(place);
+                    self.lower_call(*callee, *signature, *arguments, ty, destination, span)?;
+                    Some(())
+                }
+                _ => {
+                    let value = self.lower_expr(expression)?;
+                    self.put(place, value, ty, span);
+                    Some(())
+                }
+            }
+        })
+    }
+
     /// A call of `callee`, of the function type `signature`, with
     /// `arguments`, giving a value of the type `ty`. An argument kept in
     /// memory is passed as the address of a private copy, which the callee
     /// may change; a result kept in memory is written where a hidden first
-    /// argument points.
+    /// argument points: at `destination` when given (`lower_into`), else in
+    /// a new temporary.
     fn lower_call(
         &mut self,
         callee: Callee,
         signature: TypeId,
         arguments: arena::List<thir::Expr>,
         ty: TypeId,
+        destination: Option<Place>,
         span: Span,
     ) -> Option<Value> {
         let Type::Function { variadic, .. } = self.types[self.types.real(signature)] else {
@@ -897,13 +939,20 @@ impl Lowering<'_> {
         };
         let mut passed = Vec::with_capacity(arguments.len() + 1);
         let mut parameters = Vec::with_capacity(arguments.len());
+        let c_function = match callee {
+            Callee::Function(function) => {
+                model::program::c_symbol(self.modules, function.definition).is_some()
+            }
+            Callee::Method(_) => false,
+        };
+        let mut argument_types = Vec::new();
         let result = self.result_passing(ty);
-        let result_slot = match result {
+        let result_place = match result {
             Some(Passing::Memory { .. }) => {
-                let slot = self.temporary(ty, span);
-                let address = self.emit(InstructionKind::Address(Place::whole(slot)), span);
+                let place = destination.unwrap_or_else(|| Place::whole(self.temporary(ty, span)));
+                let address = self.emit(InstructionKind::Address(place.clone()), span);
                 passed.push(address);
-                Some(slot)
+                Some(place)
             }
             _ => None,
         };
@@ -915,11 +964,10 @@ impl Lowering<'_> {
         };
         for argument in self.thir.children.lists.items(arguments) {
             let argument_type = self.types.real(self.thir.exprs[argument].ty);
-            let value = self.lower_expr(argument)?;
             // The interface value's address is the receiver, and its table
             // holds the method at `slot`.
             if let (None, Callee::Method(slot)) = (target, callee) {
-                let view = value.memory();
+                let view = self.lower_expr(argument)?.memory();
                 let address = self.load(Class::Pointer, view.clone(), span);
                 let table_place = view.then(Step::Offset(self.pointer_bytes));
                 let table = self.load(Class::Pointer, table_place, span);
@@ -941,65 +989,110 @@ impl Lowering<'_> {
             }
             let passing = self.passing(argument_type);
             parameters.push(passing);
-            match (passing, value) {
-                (Passing::Register { .. }, Value::Register(operand)) => passed.push(operand),
-                (Passing::Memory { .. }, value) => {
+            argument_types.push(argument_type);
+            match passing {
+                Passing::Register { .. } => passed.push(self.lower_expr(argument)?.register()),
+                Passing::Memory { .. } => {
                     let copy = self.temporary(argument_type, span);
-                    self.put(Place::whole(copy), value, argument_type, span);
+                    self.lower_into(argument, Place::whole(copy))?;
                     passed.push(self.emit(InstructionKind::Address(Place::whole(copy)), span));
                 }
-                _ => unreachable!("a register's value is a register"),
             }
         }
         let callee = target.expect("a method call has its receiver");
+        let c = c_function
+            .then(|| c_signature(self.types, self.target, ty, argument_types.into_iter()));
         self.mir.signatures.push(Signature {
             parameters: parameters.into(),
             result,
             variadic,
+            c,
         });
         let kind = InstructionKind::Call {
             callee,
             signature: (self.mir.signatures.len() - 1) as u32,
             arguments: passed.into(),
         };
-        let called = self.emit(kind, span);
-        Some(match (result, result_slot) {
+        let mut called = self.emit(kind, span);
+        // C leaves the bits of a register above a narrow integer unset.
+        if let (true, &Type::Integer(integer)) = (c_function, &self.types[self.types.real(ty)]) {
+            called = self.narrow(called, integer, span);
+        }
+        Some(match (result, result_place) {
             (Some(Passing::Register { .. }), _) => Value::Register(called),
-            (Some(Passing::Memory { .. }), Some(slot)) => Value::Memory(Place::whole(slot)),
+            (Some(Passing::Memory { .. }), Some(place)) => Value::Memory(place),
             _ => Value::Nothing,
         })
     }
 
     /// The interface value of the type `ty` viewing what `reference`
-    /// points at, with the table of `implementation`: its two words in a
-    /// temporary.
-    pub(super) fn lower_to_interface(
+    /// points at, with the table of `implementation`: its two words at
+    /// `place`.
+    fn lower_to_interface(
         &mut self,
         reference: Operand,
         implementation: ImplementationId,
         ty: TypeId,
+        place: Place,
         span: Span,
-    ) -> Value {
+    ) {
         let methods = self.types.implementation(implementation);
-        let table = methods
-            .iter()
-            .map(|&definition| FunctionCopy {
-                definition,
-                arguments: ConstArguments::NONE,
+        let interface = match self.types[ty] {
+            Type::InterfaceReference { interface, .. } => interface,
+            _ => ty, // an owned interface
+        };
+        let Type::Interface {
+            methods: signatures,
+            ..
+        } = &self.types[interface]
+        else {
+            unreachable!("an interface reference's interface is checked")
+        };
+        // As a call through the table passes them: `self` as an address.
+        let table = (methods.iter().zip(signatures))
+            .map(|(&definition, &signature)| {
+                let Type::Function {
+                    parameters, result, ..
+                } = &self.types[signature]
+                else {
+                    unreachable!("a method's signature is a function type")
+                };
+                let receiver = Passing::Register {
+                    class: Class::Pointer,
+                    signed: false,
+                };
+                let parameters = std::iter::once(receiver)
+                    .chain(parameters[1..].iter().map(|&ty| self.passing(ty)));
+                let copy = FunctionCopy {
+                    definition,
+                    arguments: ConstArguments::NONE,
+                };
+                let signature = Signature {
+                    parameters: parameters.collect(),
+                    result: self.result_passing(*result),
+                    variadic: false,
+                    c: None,
+                };
+                (copy, signature)
             })
             .collect();
         let table = self.global(Global::Functions(table));
-        let slot = self.temporary(ty, span);
-        self.store(Class::Pointer, Place::whole(slot), reference, span);
-        let table_place = Place::whole(slot).then(Step::Offset(self.pointer_bytes));
+        self.store(Class::Pointer, place.clone(), reference, span);
+        let table_place = place.then(Step::Offset(self.pointer_bytes));
         self.store(Class::Pointer, table_place, table, span);
-        Value::Memory(Place::whole(slot))
     }
 
-    /// `&place` or `&mut place` as the reference, slice or interface
-    /// reference type `ty`: a loan of the place, and for a slice its two
-    /// words, for an interface reference the struct's address and table.
-    fn lower_borrow(&mut self, borrowed: Id<thir::Expr>, ty: TypeId, span: Span) -> Option<Value> {
+    /// `&borrowed` or `&mut borrowed` as the slice or interface reference
+    /// type `ty`, at `to`: a loan of the place, and for a slice its two
+    /// words, for an interface reference the struct's address and table. A
+    /// reference is one register (`lower_expr`).
+    fn lower_borrow(
+        &mut self,
+        borrowed: Id<thir::Expr>,
+        ty: TypeId,
+        to: Place,
+        span: Span,
+    ) -> Option<()> {
         let Some(mutable) = self.types[ty].borrows() else {
             unreachable!("a borrow's type is a reference, slice or interface reference")
         };
@@ -1017,7 +1110,7 @@ impl Lowering<'_> {
                         (Self::through_slice(place), length)
                     };
                 let address = self.borrow(elements, mutable, "slice", span);
-                Some(self.slice_words(address, length, ty, span))
+                self.slice_words(address, length, to, span);
             }
             // An interface's struct lent again as an interface reference, under a
             // new loan: what an interface reference views (the place ends by
@@ -1037,19 +1130,13 @@ impl Lowering<'_> {
                 let address = self.borrow(struct_place, mutable, "interface reference", span);
                 let table_place = words.then(Step::Offset(self.pointer_bytes));
                 let table = self.load(Class::Pointer, table_place, span);
-                let slot = self.temporary(ty, span);
-                self.store(Class::Pointer, Place::whole(slot), address, span);
-                let table_at = Place::whole(slot).then(Step::Offset(self.pointer_bytes));
+                self.store(Class::Pointer, to.clone(), address, span);
+                let table_at = to.then(Step::Offset(self.pointer_bytes));
                 self.store(Class::Pointer, table_at, table, span);
-                Some(Value::Memory(Place::whole(slot)))
             }
-            _ => Some(Value::Register(self.borrow(
-                place,
-                mutable,
-                "reference",
-                span,
-            ))),
+            _ => unreachable!("a reference is one register"),
         }
+        Some(())
     }
 
     /// A loan of `place`, called `noun` in messages: its address.
@@ -1068,20 +1155,17 @@ impl Lowering<'_> {
         self.emit(kind, span)
     }
 
-    /// A slice value of the type `ty`: `address` and `length` as its two
-    /// words in a temporary.
+    /// A slice value at `place`: `address` and `length` as its two words.
     pub(super) fn slice_words(
         &mut self,
         address: Operand,
         length: Operand,
-        ty: TypeId,
+        place: Place,
         span: Span,
-    ) -> Value {
-        let slot = self.temporary(ty, span);
-        self.store(Class::Pointer, Place::whole(slot), address, span);
-        let length_place = self.second_word(Place::whole(slot));
+    ) {
+        self.store(Class::Pointer, place.clone(), address, span);
+        let length_place = self.second_word(place);
         self.store(self.usize, length_place, length, span);
-        Value::Memory(Place::whole(slot))
     }
 
     /// `left && right` or `left || right`: `right` runs only when `left`

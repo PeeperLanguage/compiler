@@ -196,6 +196,7 @@ dependencies = [
  "arena",
  "bigint",
  "llvm",
+ "lower",
  "model",
  "runtime_abi",
  "rustc-hash",
@@ -415,7 +416,6 @@ name = "llvm"
 version = "0.3.1"
 dependencies = [
  "arena",
- "bigint",
  "compile",
  "model",
  "project",

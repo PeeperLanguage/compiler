@@ -286,22 +286,7 @@ impl Checker<'_> {
             let Some(Built::Kept(Some(body))) = self.internals.built_bodies.get(&next) else {
                 continue;
             };
-            for id in body.instructions.ids() {
-                if let core_mir::InstructionKind::Call {
-                    callee: core_mir::Callee::Function(function),
-                    ..
-                } = body.instructions[id].kind
-                {
-                    pending.push(function);
-                }
-            }
-            // A method is called through a table, so each function in one
-            // may run.
-            for global in &body.globals {
-                if let core_mir::Global::Functions(functions) = global {
-                    pending.extend(functions.iter().copied());
-                }
-            }
+            pending.extend(body.named_functions());
         }
         let module = self.current_module().index();
         let ran = &mut self.module_checks[module].ran_modules;

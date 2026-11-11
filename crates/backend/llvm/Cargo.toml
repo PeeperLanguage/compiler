@@ -17,7 +17,6 @@ source.workspace = true
 toml_edit.workspace = true
 
 [dev-dependencies]
-bigint.workspace = true
 compile.workspace = true
 project.workspace = true
 

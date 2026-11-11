@@ -559,10 +559,6 @@ pub fn builtin_doc(name: &str, pointer_bits: u32) -> Option<String> {
 }
 
 /// The types of a program, for one compile (`check::Checker` holds them).
-// TEMPORARY, to be deleted: `Clone` is for `llvm::write`, whose workers each
-// get a copy of the types, and `compile::interpret`, which keeps the finished
-// ones; delete it with `extend_from`.
-#[derive(Clone)]
 pub struct Types {
     pub usize: TypeId, // as wide as a pointer of the target
     types: Vec<Type>,
@@ -598,27 +594,6 @@ impl Types {
             bits: pointer_bits,
         }));
         types
-    }
-
-    /// Adds the types `other` has after these: keeps a copy of a table that
-    /// only grows, as `other` is when this was made from it, up to date.
-    ///
-    /// TEMPORARY, to be deleted: only `llvm::write` uses it, to give its
-    /// workers a copy of the types. Delete it, and the copy, when each
-    /// module's MIR lists the types it uses (self-contained MIR).
-    pub fn extend_from(&mut self, other: &Types) {
-        // Every type is checked before any function is given out
-        // (`compile::run`), so no slot copied here changes later
-        // (`define_struct`).
-        for ty in &other.types[self.types.len()..] {
-            self.intern(ty.clone());
-        }
-        // Only added to, like the types.
-        let added = &other.implementations[self.implementations.len()..];
-        self.implementations.extend_from_slice(added);
-        for list in &other.argument_lists[self.argument_lists.len()..] {
-            self.const_arguments(list);
-        }
     }
 
     /// The id of the list of `const` arguments `list`, made the first time

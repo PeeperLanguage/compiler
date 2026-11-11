@@ -340,7 +340,7 @@ impl<'b, 'f> Interpreter<'b, 'f> {
                 Global::Bytes(bytes) => self.memory.string_address(bytes),
                 Global::Functions(functions) => {
                     let mut table = Vec::with_capacity(functions.len() * pointer);
-                    for &function in functions {
+                    for &(function, _) in functions {
                         let address = self.function_address(function);
                         table.extend_from_slice(&address.to_le_bytes()[..pointer]);
                     }
@@ -625,6 +625,9 @@ impl<'b, 'f> Interpreter<'b, 'f> {
     /// an earlier pass of a loop, cannot reach this one.
     fn slot_address(&mut self, slot: Id<Slot>, id: Id<Instruction>) -> Result<u64, Failure> {
         let frame = self.frame();
+        if let Some(parameter) = frame.body.parameter_in_memory(slot) {
+            return Ok(self.operand(Operand::Parameter(parameter)) as u64);
+        }
         if self.host.is_some() {
             return Ok(frame.start + frame.layout.slots[slot.index()]);
         }

@@ -17,6 +17,11 @@ use source::SourceFile;
 /// The MIR text of the function `main` of the one-module program `text`,
 /// which must check without errors, for a 64-bit target.
 fn lowered(text: &str) -> String {
+    lowered_for(text, "x86_64-linux")
+}
+
+/// The dump of `text`'s `main` lowered for the machine named `target`.
+fn lowered_for(text: &str, target: &str) -> String {
     let file = Arc::new(SourceFile::new("main.peep", text));
     let (ast, parse) = parser::parse(&file);
     assert!(parse.is_empty(), "{parse:?}");
@@ -25,7 +30,7 @@ fn lowered(text: &str) -> String {
         ast,
         imports: Vec::new(),
     }];
-    let target = Machine::named("x86_64-linux").unwrap();
+    let target = Machine::named(target).unwrap();
     let mut checker = Checker::new(&modules, target, false);
     let tree = &modules[0].ast;
     let (index, name) = tree
@@ -121,6 +126,23 @@ fn a_wide_constant_is_loaded_from_read_only_data() {
 }
 
 #[test]
+fn a_c_call_carries_how_c_passes_each_value() {
+    let program = "#[extern(\"c_mix\")]
+fn mix(a: i5, b: u100, c: i200, d: bool) -> i100;
+fn main() { let x = mix(1, 2, 3, true); }";
+    let text = lowered(program);
+    let call = "in C (signext, 2 x i64, memory 32 align 8 byval, zeroext) -> 2 x i64\n";
+    assert!(text.contains(call), "{text}");
+    // i386 passes a wide integer as a copy's address, in 4-byte words.
+    let i386 = lowered_for(program, "i686-linux");
+    let call =
+        "in C (signext, memory 16 align 4, memory 28 align 4, zeroext) -> memory 16 align 4\n";
+    assert!(i386.contains(call), "{i386}");
+    // The result's bits above 100 are cut back, as C leaves them unset.
+    assert!(text.contains("shl i128 %"), "{text}");
+}
+
+#[test]
 fn a_division_is_checked_unless_by_a_constant() {
     let text = lowered("fn main() -> i32 { let a = 7; let b = a / 2; return b / a; }");
     assert!(text.contains("%2 = sdiv i32 %1, 2\n"), "{text}");
@@ -141,13 +163,11 @@ fn main() -> i64 { let p = Point.{ x = 1, y = 2 }; return p.y; }",
     assert_eq!(
         text,
         "  bb0:
-    store i32 .1[+0], 1
-    store i64 .1[+8], 2
-    copy 16 p.0, .1
-    dead .1
-    %4 = load i64 p.0[+8]
+    store i32 p.0[+0], 1
+    store i64 p.0[+8], 2
+    %2 = load i64 p.0[+8]
     dead p.0
-    return %4
+    return %2
   bb1:
     dead p.0
     fall off at `}`
@@ -164,10 +184,37 @@ fn main() -> i64 { let p = Point.{ x = 1, y = 2 }; return sum(p); }",
     );
     assert!(
         text.contains(
-            "    moved p.0\n    copy 16 .2, p.0\n    %6 = address .2\n    %7 = call sum(%6)\n"
+            "    moved p.0\n    copy 16 .1, p.0\n    %4 = address .1\n    %5 = call sum(%4)\n"
         ),
         "{text}"
     );
+}
+
+/// The caller's copy is the callee's parameter: read where it was passed,
+/// with no copy of its own.
+#[test]
+fn a_struct_parameter_is_the_callers_copy() {
+    let text = lowered(
+        "struct Point { x: i32, y: i64 }
+fn main(p: Point) -> i64 { return p.y; }",
+    );
+    assert!(
+        text.starts_with("  bb0:\n    %0 = load i64 p.0[+8]\n"),
+        "{text}"
+    );
+    assert!(!text.contains("copy"), "{text}");
+}
+
+/// A range spread with constant ends is counted while lowering, so the
+/// array's length needs no check; a range held in a variable is counted
+/// and checked when the program runs.
+#[test]
+fn a_constant_range_spread_needs_no_check() {
+    let constant = lowered("fn main() -> [6]i32 { return [_]i32{(0..3)..., 9, (5..=4)...}; }");
+    assert!(!constant.contains("needs exactly"), "{constant}");
+    assert!(!constant.contains("udiv"), "{constant}");
+    let held = lowered("fn main(r: range[i32]) -> [3]i32 { return [3]i32{r...}; }");
+    assert!(held.contains("needs exactly 3 values"), "{held}");
 }
 
 #[test]
@@ -178,7 +225,7 @@ fn main() -> i32 { let p = make(); return p.x; }
 fn make() -> Point { return Point.{ x = 1, y = 2 }; }",
     );
     assert!(
-        text.contains("    %0 = address .1\n    call make(%0)\n    copy 16 p.0, .1\n"),
+        text.contains("    %0 = address p.0\n    call make(%0)\n    %2 = load i32 p.0[+0]\n"),
         "{text}"
     );
 }
@@ -228,8 +275,8 @@ fn an_array_index_is_checked_and_scaled() {
         lowered("fn main() -> i32 { let a = [3]i32{1, 2, 3}; let i: usize = 1; return a[i]; }");
     assert!(
         text.contains(
-            "    %6 = load i64 i.1\n    %7 = ule i64 3, %6\n    \
-             check %7, \"index out of bounds: the length is 3\"\n    %9 = load i32 a.0[%6 * 4]\n"
+            "    %4 = load i64 i.1\n    %5 = ule i64 3, %4\n    \
+             check %5, \"index out of bounds: the length is 3\"\n    %7 = load i32 a.0[%4 * 4]\n"
         ),
         "{text}"
     );
@@ -301,19 +348,19 @@ fn Square::area(&self) -> i32 { return self.side * self.side; }
 fn main() -> i32 { let s = Square.{ side = 3 }; let shape: &Shape = &s; return shape.area(); }",
     );
     assert!(text.contains("borrow s.0 as reference\n"), "{text}");
-    assert!(text.contains("store ptr .3[+8], global 0\n"), "{text}");
+    assert!(text.contains("store ptr shape.1[+8], global 0\n"), "{text}");
     // The call lends what the reference views again, then reads the
     // method from the table.
     assert!(
         text.contains(
-            "    %8 = borrow shape.1[*] as interface reference\n    %9 = load ptr shape.1[+8]\n"
+            "    %4 = borrow shape.1[*] as interface reference\n    %5 = load ptr shape.1[+8]\n"
         ),
         "{text}"
     );
     assert!(
         text.contains(
-            "    %12 = load ptr .4\n    %13 = load ptr .4[+8]\n    \
-             %14 = load ptr at %13[+0]\n    %15 = call through %14(%12)\n"
+            "    %8 = load ptr .2\n    %9 = load ptr .2[+8]\n    \
+             %10 = load ptr at %9[+0]\n    %11 = call through %10(%8)\n"
         ),
         "{text}"
     );

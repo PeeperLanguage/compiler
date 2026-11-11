@@ -73,7 +73,7 @@ reported once (T0013). Tables: `declared_type(d)`, `function_type(d)`,
 - `flow::cleanup::remove_unused_code` drops `scope end`s, jump-only blocks
   and unreachable blocks; only readers of a compiled body run it (backend,
   dumps). The interpreter reads the MIR of core concepts instead.
-- `llvm`: one walk per function's MIR to LLVM text; `clang -c` per module;
+- `llvm`: one walk per function's MIR of core concepts to LLVM text; `clang -c` per module;
   link with `libpeeper_rt_v1.a` and `-lm` (`docs/ir-design.md`, LLVM).
 - `eval::interpreter::program::run`: the MIR of core concepts
   (`lower::core`), for `run -interpret` and the browser; compile-time calls

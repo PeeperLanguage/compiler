@@ -1,21 +1,19 @@
 source_filename = "<fixture>/src/main.peep"
 
-%slice = type { ptr, i64 }
+@.str.0 = private unnamed_addr constant [4 x i8] c"true"
+@.str.1 = private unnamed_addr constant [5 x i8] c"false"
+@.str.2 = private unnamed_addr constant [1 x i8] c"\0A"
 
-@.str.0 = private unnamed_addr constant [5 x i8] c"true\00"
-@.str.1 = private unnamed_addr constant [6 x i8] c"false\00"
-@.str.2 = private unnamed_addr constant [2 x i8] c"\0A\00"
-
-define ptr @"ll_pointer_offsets:main.Next"(ptr %arg0, i64 %arg1) {
+define ptr @"ll_pointer_offsets:main.Next"(ptr %a0, i64 %a1) {
 entry:
-  %v0 = alloca ptr
-  %v1 = alloca i64
+  %s0 = alloca [8 x i8], align 8
+  %s1 = alloca [8 x i8], align 8
   br label %bb0
 bb0:
-  store ptr %arg0, ptr %v0
-  store i64 %arg1, ptr %v1
-  %i2 = load ptr, ptr %v0
-  %i3 = load i64, ptr %v1
+  store ptr %a0, ptr %s0
+  store i64 %a1, ptr %s1
+  %i2 = load ptr, ptr %s0
+  %i3 = load i64, ptr %s1
   %i4 = getelementptr i8, ptr %i2, i64 %i3
   ret ptr %i4
 }
@@ -25,9 +23,15 @@ entry:
   br label %bb0
 bb0:
   %i0 = call ptr @"ll_pointer_offsets:main.Next"(ptr null, i64 8)
-  %i1 = icmp eq ptr %i0, null
-  %i2.0.b = select i1 %i1, ptr @.str.0, ptr @.str.1
-  call void @"peeper_rt_v1_print_text"(ptr %i2.0.b)
+  %i1.c = icmp eq ptr %i0, null
+  br i1 %i1.c, label %bb1, label %bb2
+bb1:
+  call void @"peeper_rt_v1_print_bytes"(ptr @.str.0, i64 4)
+  br label %bb3
+bb2:
+  call void @"peeper_rt_v1_print_bytes"(ptr @.str.1, i64 5)
+  br label %bb3
+bb3:
   call void @"peeper_rt_v1_print_bytes"(ptr @.str.2, i64 1)
   call void @"peeper_rt_v1_flush"()
   ret void
@@ -36,6 +40,4 @@ bb0:
 declare void @"peeper_rt_v1_flush"()
 
 declare void @"peeper_rt_v1_print_bytes"(ptr, i64)
-
-declare void @"peeper_rt_v1_print_text"(ptr)
 

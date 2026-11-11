@@ -42,11 +42,16 @@ pub fn write_program<'p>(
                     types,
                     ..
                 } = checked;
-                let Some(mir) = checked.into_mir() else {
+                let modules = &program.modules;
+                let Some(body) = checked.core_mir(target, modules, &mut queue.debug_types) else {
                     return; // it has errors
                 };
-                each_function(function, thir, &mir, types);
-                queue.add(module, function, mir, types);
+                queue.add(module, function, body, types);
+                // shortcut: the old MIR is still what a dump shows, until
+                // the driver reads the new one for every command.
+                if let Some(mir) = checked.into_mir() {
+                    each_function(function, thir, &mir, types);
+                }
             },
         )
     });

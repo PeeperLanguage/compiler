@@ -27,6 +27,7 @@ use model::FunctionCopy;
 use model::ModuleId;
 use model::ast;
 use model::constant::Constant;
+use model::core_mir;
 use model::core_mir::DebugTypes;
 use model::machine::Machine;
 use model::mir;
@@ -145,6 +146,18 @@ pub struct CheckedFunction<'c> {
 }
 
 impl CheckedFunction<'_> {
+    /// Its MIR of core concepts, for `target`, with the debug types it
+    /// names added to `debug_types` (`lower::core::lower`). `None` when
+    /// checking it found an error.
+    pub fn core_mir(
+        &self,
+        target: &'static Machine,
+        modules: &[model::program::Module],
+        debug_types: &mut DebugTypes,
+    ) -> Option<core_mir::Body> {
+        lower::core::lower(self.thir, self.ty, self.types, target, modules, debug_types)
+    }
+
     /// Its MIR, as every reader of MIR takes it: with the code no path
     /// reaches removed (`flow::cleanup`). `None` when checking it found an
     /// error. Only a compile that reads MIR pays for the cleanup: in
@@ -177,12 +190,10 @@ pub fn interpret(
     // table goes once lowering stops making what nothing reads.
     let mut debug_types = DebugTypes::default();
     let results = run(program, target, Results::default(), true, false, |output| {
-        if let Output::Function(checked) = output {
-            let (thir, ty, types) = (checked.thir, checked.ty, checked.types);
-            let lowered = lower::core::lower(thir, ty, types, target, modules, &mut debug_types);
-            if let Some(body) = lowered {
-                bodies.insert(checked.function, body);
-            }
+        if let Output::Function(checked) = output
+            && let Some(body) = checked.core_mir(target, modules, &mut debug_types)
+        {
+            bodies.insert(checked.function, body);
         }
     });
     let Some((main, _)) = results.entry_point() else {

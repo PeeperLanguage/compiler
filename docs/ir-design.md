@@ -722,51 +722,71 @@ folders with `mode = "mir"` and an `expected.mir` file, as in rustc's
 
 ## LLVM
 
-`crates/backend/llvm` writes one module's LLVM text from its functions' MIR,
-one walk per function (`peeper -dump ll` shows it):
+`crates/backend/llvm` writes one module's LLVM text from its functions'
+MIR of core concepts (`model::core_mir`), one walk per function (`peeper
+-dump ll` shows it). It reads no language type while writing a body: only
+classes, sizes, how each value is passed and the debug types lowering made.
 
-- Each variable is an `alloca` in an `entry` block, with `llvm.dbg.declare`;
-  each instruction gets a `!dbg` line from its span; each function a
-  `DISubprogram`. A debugger shows variables by name.
-- Symbols: a function's `#[extern("name")]`, else `module_path.name`, quoted.
+- Each slot is an `alloca [size x i8]` with its alignment in an `entry`
+  block, then a branch to `bb0`; a slot a debugger shows has
+  `llvm.dbg.declare` with its debug type. Each line gets a `!dbg` from its
+  span, each function a `DISubprogram`, and each debug scope that declares
+  such a slot a `DILexicalBlock`. Debug types are written from a work list,
+  so a deep struct or pointer chain does not recurse.
+- Symbols: a function's `#[extern("name")]`, else `module_path.name`, a
+  copy's `const` arguments after it in `<..>`, quoted. Each is made on the
+  compile thread (it needs `Types`) and handed to the worker that writes the
+  module.
 - An `extern` function is C's, so it has no body, and every other function
   has one; `extern` on a function is the one attribute there is, and any
-  other is an error (owner, 2026-10-29). Its integers pass as clang passes
-  C's `_BitInt(N)` on the target (`Machine::c_abi`): extended to `int`, as
-  themselves, as two `i64` limbs, or in memory (`sret`, `byval`), with x86-64
-  System V's register count; `i128` passes as `__int128` (on Windows x64 too,
-  owner, 2026-10-29). An integer wider than C has on the target (128 bits on
-  AArch64) is an error.
-- Integer division, remainder and shifts by a value not known at compile time
-  check first and continue in a new block (`bb3.1`); a `phi` names the block
-  where its incoming MIR block ends. Division by zero and a shift count
-  outside 0 to width - 1 panic; signed `MIN / -1` is `MIN` and `MIN % -1` is
-  0, as check folds them.
+  other is an error (owner, 2026-10-29). Lowering decides how each of its
+  values passes (`lower/core/c_abi.rs`, by `Machine::c_abi`, for 32-bit and
+  64-bit targets alike) and puts it in the call's `CSignature`: in a register
+  with `signext`/`zeroext`, in `i64` pieces, as a vector (a result only), or
+  in memory (`byval`, `sret`, or by address); the writer only follows it. Its
+  integers pass as clang passes C's `_BitInt(N)` on the target, with x86-64
+  System V's register count; `i128` passes as `__int128` (on Windows x64
+  too, owner, 2026-10-29). An integer wider than C has on the target (128
+  bits on AArch64) is an error.
+- A MIR `Check` branches on its comparison's `i1` to a panic block and
+  continues in a new block (`bb3.1`); there is no `phi`: a value that
+  joins from two blocks, as `&&` gives, is stored in a slot (measured
+  2026-11-11: a `phi` is slower at `-O0`; branches in place of the slot
+  stop a loop's vectorizing at `-O2`). A comparison is widened to a byte
+  only when something reads it as one, not as a condition. A jump goes
+  past a block that writes nothing and only jumps on, and a block no jump
+  then reaches is not written; the MIR keeps both for the path checks and
+  the unreachable-code warning. Division by zero and a shift count outside
+  0 to width - 1 are checks lowering emits; signed `MIN / -1` is `MIN` and
+  `MIN % -1` is 0, as check folds them: the writer divides by 1 and negates
+  when the divisor is -1 (`body::signed_division`), unless the divisor is a
+  constant other than -1.
 - A panic, a failed check or a written `panic "message"`, writes one string
   constant made at compile time (`panic: division by zero` or `panic:
   message`, then `  --> file:line:column`) through the prelude's `write` to the
   standard error and calls its `exit` with 101: no runtime function of its own.
-- A slice is `%slice = type { ptr, iN }`, N the pointer's width, written at
-  the top of every module, and passed as that one value, not kept in memory
-  like an array, so a slice argument is never copied. At a place's step
-  through a slice the walker loads the elements' address; an index is a
-  `getelementptr` index, an `iN` lowering checked, even a constant one into a
-  slice; a borrow of all a slice's elements loads the slice, and any other
-  borrow as a slice builds both parts with `insertvalue`; a subslice step is
-  a `getelementptr` index at its start, an `iN` checked before, and the slice
-  takes its count. A debugger shows it as a
-  struct with `ptr` and `len`. A slice spread in an array literal is
-  counted from its length, one bit wider than the element, checked with the
-  other parts before any element is written, and copied with one `memcpy`;
-  that array is built in its own memory, never at the place it is stored to
-  or `%result`, which the slice may view.
-- `print` and `println` call the runtime's print functions, one per number,
+- Values are bytes. A place is a root (a slot or an address) and steps: an
+  offset, a load of an address held there, or an index times a size. Offsets
+  and constant indexes add up into one `getelementptr inbounds i8`; a place
+  that moves nowhere is its root's address with no line at all. A slice or
+  `&str` is two words in memory, an address and a length, passed like any
+  value kept in memory: the caller makes one private copy and passes its
+  address, and the callee's parameter is that copy (`%a1`, no `alloca`,
+  `Body::parameter_in_memory`). Lowering builds a literal, a slice, a
+  range, an interface value or a call's result right where it goes when
+  that place is new (`lower_into`: a `let`, an argument's copy, the
+  result, a field of one of them); an assignment's value is built apart,
+  as it may read its target. Strings are
+  `@.str.N` globals of their exact bytes (a `&cstr` literal's include its
+  zero), one per distinct bytes in a module.
+- `print` and `println` are runtime calls lowering emits: one per number,
   `bool`, `&cstr` or pointer, with the text known at compile time (spaces,
-  struct names, brackets) gathered into one string between them. A struct or
-  array prints through a private function per type, which calls those of the
-  structs and arrays in it, and an array's loops over its elements, so the
-  code grows with neither the length nor how often a struct holds another.
-  Each is `noinline optnone`: it only calls the runtime.
+  struct names, brackets) gathered into one string between them. An array
+  prints in a loop, so the code does not grow with its length; a struct
+  prints inline, field by field. shortcut: a struct that holds the one
+  before it twice, nested deep, doubles the code at each level (the writer
+  before 2026-11-11 had a printer function per type); this waits on how a
+  type will say how it prints (`check` `printable`).
 
 `peeper build [-o program] [path]` and `peeper run [path] [-- arguments...]`
 work as the Go compiler's did, except that `run` takes the program's

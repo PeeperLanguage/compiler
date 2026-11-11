@@ -308,6 +308,7 @@ impl Lowering<'_> {
             parameters: signature.parameters.iter().map(passing).collect(),
             result: signature.result.as_ref().map(passing),
             variadic: false,
+            c: None,
         });
         let kind = InstructionKind::Call {
             callee: Callee::Runtime(signature.symbol),

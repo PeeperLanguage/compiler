@@ -3,11 +3,13 @@
 //! operations both ways: `eval` computes them, `lli` runs them on values it cannot
 //! fold (volatile loads), and the bits must match; a NaN matches any NaN, as
 //! LLVM does not specify which NaN an operation gives. Cases the runtime traps
-//! on (division by zero, out-of-range shifts) or guards (`MIN / -1`) are left
-//! out; the unit tests in lib.rs cover them.
+//! on (division by zero, out-of-range shifts) are left out; the unit tests in
+//! lib.rs cover them. `MIN / -1` runs through the backend's guard.
 //!
-//! The LLVM instruction of each operator and conversion is the one the
-//! backend writes (`binary_instruction`, `write_unary`, `cast_instruction`,
+//! Each binary operator becomes the MIR operation lowering makes of it
+//! (`lower::core::binary::binary_operation`), written with the instruction
+//! the backend writes for that operation (`integer_instruction`,
+//! `comparison_instruction`, `signed_division`, `conversion_instruction`,
 //! `saturating_conversion`).
 //!
 //! Runs the `lli` of build/toolchains/native, which scripts/setup.sh puts
@@ -22,12 +24,20 @@ use bigint::Limbs;
 use eval::conversions::convert;
 use eval::operators::binary;
 use eval::operators::unary;
-use llvm::function::arithmetic::binary_instruction;
-use llvm::function::arithmetic::cast_instruction;
-use llvm::function::arithmetic::saturating_conversion;
-use llvm::function::arithmetic::write_unary;
+use llvm::body::comparison_instruction;
+use llvm::body::constant_text;
+use llvm::body::conversion_instruction;
+use llvm::body::float_instruction;
+use llvm::body::integer_instruction;
+use llvm::body::saturating_conversion;
+use llvm::body::signed_division;
 use llvm::link::TOOLCHAIN_FOLDER;
+use lower::core::binary::BinaryOperation;
+use lower::core::binary::binary_operation;
 use model::constant::Value;
+use model::core_mir::Class;
+use model::core_mir::Conversion;
+use model::core_mir::IntegerOp;
 use model::operators::BinaryOp;
 use model::operators::UnaryOp;
 use model::semantic_types::Float;
@@ -39,8 +49,7 @@ const WIDTHS: &[u32] = &[
     256, 257, 511, 1000,
 ];
 
-/// Each float operator; its LLVM instruction is the backend's
-/// (`binary_instruction`).
+/// Each float operator; its LLVM instruction is the backend's (`lowered`).
 const FLOAT_BINARY: &[BinaryOp] = &[
     BinaryOp::Add,
     BinaryOp::Subtract,
@@ -168,14 +177,81 @@ struct Case {
     expected: Vec<u64>,
 }
 
-/// A binary operator's LLVM instruction and right operand, or a unary
+/// A binary operator's MIR operation and right operand, or a unary
 /// operator.
 enum Operation {
     Binary {
-        instruction: &'static str,
+        lowered: BinaryOperation,
         right: Value,
     },
     Unary(UnaryOp),
+}
+
+/// The lines that give `left op right`, of the LLVM type `llvm` and the
+/// class `class`, as `name`, as the backend writes the operation `lowered`.
+fn binary_lines(
+    lowered: BinaryOperation,
+    class: Class,
+    llvm: &str,
+    name: &str,
+    left: &str,
+    right: &str,
+) -> String {
+    match lowered {
+        BinaryOperation::Integer(
+            operation @ (IntegerOp::SignedDivide | IntegerOp::SignedRemainder),
+        ) => signed_division(name, operation, &llvm, &left, &right, &""),
+        BinaryOperation::Integer(operation) => {
+            format!(
+                "  {name} = {} {llvm} {left}, {right}\n",
+                integer_instruction(operation)
+            )
+        }
+        BinaryOperation::Float(operation) => {
+            format!(
+                "  {name} = {} {llvm} {left}, {right}\n",
+                float_instruction(operation)
+            )
+        }
+        BinaryOperation::Compare {
+            comparison,
+            swapped,
+        } => {
+            let (left, right) = if swapped {
+                (right, left)
+            } else {
+                (left, right)
+            };
+            let instruction = comparison_instruction(comparison, class);
+            format!("  {name} = {instruction} {llvm} {left}, {right}\n")
+        }
+    }
+}
+
+/// The line that gives the unary `op` of `value`, of the LLVM type `llvm`
+/// and the class `class`, as `name`, as lowering makes it: `0 - value`,
+/// `-0.0 - value` (so that -(0.0) is -0.0), and `value ^ ones`.
+fn unary_line(op: UnaryOp, class: Class, llvm: &str, name: &str, value: &str) -> String {
+    let (instruction, left, right) = match (op, class) {
+        (UnaryOp::Negate, Class::F32) => (
+            "fsub",
+            constant_text(class, [1 << 31, 0]).to_string(),
+            value,
+        ),
+        (UnaryOp::Negate, Class::F64) => (
+            "fsub",
+            constant_text(class, [1 << 63, 0]).to_string(),
+            value,
+        ),
+        (UnaryOp::Negate, _) => (
+            integer_instruction(IntegerOp::Subtract),
+            "0".to_string(),
+            value,
+        ),
+        (UnaryOp::BitNot, _) => (integer_instruction(IntegerOp::Xor), value.to_string(), "-1"),
+        _ => unreachable!("no other unary operator on numbers"),
+    };
+    format!("  {name} = {instruction} {llvm} {left}, {right}\n")
 }
 
 #[test]
@@ -198,26 +274,31 @@ fn folding_matches_llvm() {
             let mut sign_bit = vec![0; bits.div_ceil(64) as usize];
             sign_bit[(bits as usize - 1) / 64] = 1 << ((bits - 1) % 64);
             let min = integer_value(integer, &sign_bit);
-            for _ in 0..12 {
-                let left = integer_value(integer, &random.value(integer));
+            let class = Class::integer(bits);
+            for iteration in 0..12 {
+                // The first signed one is MIN, divided by -1 (the guard).
+                let left = if signed && iteration == 0 {
+                    min.clone()
+                } else {
+                    integer_value(integer, &random.value(integer))
+                };
                 let mut cases = Vec::new();
                 for &op in BINARY {
                     let right = match op {
                         BinaryOp::ShiftLeft | BinaryOp::ShiftRight => {
                             integer_value(integer, &[random.next() % u64::from(bits)])
                         }
+                        BinaryOp::Divide | BinaryOp::Remainder if left == min => minus_one.clone(),
                         _ => integer_value(integer, &random.value(integer)),
                     };
                     let Ok(value) = binary(op, &ty, &left, &ty, &right) else {
                         continue; // traps at run time
                     };
-                    let divides = matches!(op, BinaryOp::Divide | BinaryOp::Remainder);
-                    if signed && divides && left == min && right == minus_one {
-                        continue; // the runtime guards MIN / -1; LLVM leaves it undefined
-                    }
-                    let instruction = binary_instruction(op, &ty);
                     cases.push(Case {
-                        operation: Operation::Binary { instruction, right },
+                        operation: Operation::Binary {
+                            lowered: binary_operation(op, &ty),
+                            right,
+                        },
                         expected: limbs(&value),
                     });
                 }
@@ -232,7 +313,10 @@ fn folding_matches_llvm() {
                     let k = expected.len();
                     let is_compare = matches!(
                         case.operation,
-                        Operation::Binary { instruction, .. } if instruction.starts_with("icmp")
+                        Operation::Binary {
+                            lowered: BinaryOperation::Compare { .. },
+                            ..
+                        }
                     );
                     let words = if is_compare {
                         1
@@ -242,20 +326,17 @@ fn folding_matches_llvm() {
                     writeln!(module, "@l{k} = global {llvm} {}", literal(&limbs(&left))).unwrap();
                     writeln!(module, "@out{k} = global [{words} x i64] zeroinitializer").unwrap();
                     writeln!(body, "  %l{k} = load volatile {llvm}, ptr @l{k}").unwrap();
-                    let result = match &case.operation {
-                        Operation::Unary(op) => {
-                            let mut text = String::new();
-                            write_unary(&mut text, *op, &ty, &llvm, format_args!("%l{k}")).unwrap();
-                            text
-                        }
-                        Operation::Binary { instruction, right } => {
+                    let (name, left) = (format!("%v{k}"), format!("%l{k}"));
+                    let lines = match &case.operation {
+                        Operation::Unary(op) => unary_line(*op, class, &llvm, &name, &left),
+                        Operation::Binary { lowered, right } => {
                             writeln!(module, "@r{k} = global {llvm} {}", literal(&limbs(right)))
                                 .unwrap();
                             writeln!(body, "  %r{k} = load volatile {llvm}, ptr @r{k}").unwrap();
-                            format!("{instruction} {llvm} %l{k}, %r{k}")
+                            binary_lines(*lowered, class, &llvm, &name, &left, &format!("%r{k}"))
                         }
                     };
-                    writeln!(body, "  %v{k} = {result}").unwrap();
+                    body.push_str(&lines);
                     let from = if is_compare { "i1" } else { llvm.as_str() };
                     let wide = format!("i{}", words * 64);
                     let mut stored = format!("%v{k}");
@@ -279,49 +360,41 @@ fn folding_matches_llvm() {
     }
     for float in [Float::F32, Float::F64] {
         let ty = Type::Float(float);
-        let (llvm, function) = match float {
-            Float::F32 => ("float", "float32"),
-            Float::F64 => ("double", "float64"),
+        let (llvm, function, class) = match float {
+            Float::F32 => ("float", "float32", Class::F32),
+            Float::F64 => ("double", "float64", Class::F64),
         };
         writeln!(body, "define void @{function}() {{").unwrap();
         writeln!(calls, "  call void @{function}()").unwrap();
         for _ in 0..300 {
             let left = random.float(float);
-            // Each binary operator's instruction and right operand, then `-`.
-            let mut cases: Vec<(Option<(&str, u64)>, Value)> = FLOAT_BINARY
+            // Each binary operator's operation and right operand, then `-`.
+            let mut cases: Vec<(Option<(BinaryOperation, u64)>, Value)> = FLOAT_BINARY
                 .iter()
                 .map(|&op| {
-                    let instruction = binary_instruction(op, &ty);
                     let right = random.float(float);
                     let value = binary(op, &ty, &Value::Float(left), &ty, &Value::Float(right));
-                    (Some((instruction, right)), value.unwrap())
+                    (Some((binary_operation(op, &ty), right)), value.unwrap())
                 })
                 .collect();
             cases.push((None, unary(UnaryOp::Negate, &ty, &Value::Float(left))));
-            for (binary_operation, value) in cases {
+            for (case, value) in cases {
                 let k = expected.len();
                 // A double hex constant: exact for an f32 value too.
                 writeln!(module, "@l{k} = global {llvm} 0x{left:016X}").unwrap();
                 writeln!(module, "@out{k} = global [1 x i64] zeroinitializer").unwrap();
                 writeln!(body, "  %l{k} = load volatile {llvm}, ptr @l{k}").unwrap();
-                let is_compare = matches!(
-                    binary_operation,
-                    Some((instruction, _)) if instruction.starts_with("fcmp")
-                );
-                let result = match binary_operation {
-                    None => {
-                        let mut text = String::new();
-                        let operand = format_args!("%l{k}");
-                        write_unary(&mut text, UnaryOp::Negate, &ty, llvm, operand).unwrap();
-                        text
-                    }
-                    Some((instruction, right)) => {
+                let is_compare = matches!(case, Some((BinaryOperation::Compare { .. }, _)));
+                let (name, operand) = (format!("%v{k}"), format!("%l{k}"));
+                let lines = match case {
+                    None => unary_line(UnaryOp::Negate, class, llvm, &name, &operand),
+                    Some((lowered, right)) => {
                         writeln!(module, "@r{k} = global {llvm} 0x{right:016X}").unwrap();
                         writeln!(body, "  %r{k} = load volatile {llvm}, ptr @r{k}").unwrap();
-                        format!("{instruction} {llvm} %l{k}, %r{k}")
+                        binary_lines(lowered, class, llvm, &name, &operand, &format!("%r{k}"))
                     }
                 };
-                writeln!(body, "  %v{k} = {result}").unwrap();
+                body.push_str(&lines);
                 let stored = match (is_compare, float) {
                     (true, _) => format!("zext i1 %v{k} to i64"),
                     (false, Float::F32) => {
@@ -456,12 +529,22 @@ fn write_conversions(
         writeln!(calls, "  call void @{function}()").unwrap();
         let from_llvm = llvm_type(from);
         for to in &types {
+            // The conversion lowering makes (`lower::core`'s `lower_cast`).
+            let cast = |conversion| conversion_instruction(conversion).to_string();
             let instruction = match (from, to) {
                 _ if from == to => continue,
                 (_, Type::Bool) | (Type::Bool, Type::Float(_)) => continue,
-                (Type::Float(float), Type::Integer(to)) => {
-                    let to_llvm = format!("i{}", to.bits);
-                    let intrinsic = saturating_conversion(*float, to.signed, &to_llvm);
+                (&Type::Float(float), Type::Integer(to)) => {
+                    let conversion = if to.signed {
+                        Conversion::FloatToSigned { bits: to.bits }
+                    } else {
+                        Conversion::FloatToUnsigned { bits: to.bits }
+                    };
+                    let class = match float {
+                        Float::F32 => Class::F32,
+                        Float::F64 => Class::F64,
+                    };
+                    let (intrinsic, _) = saturating_conversion(conversion, class);
                     if declared.insert(intrinsic.clone()) {
                         writeln!(
                             declarations,
@@ -472,7 +555,25 @@ fn write_conversions(
                     }
                     format!("saturate {intrinsic}")
                 }
-                (from, to) => cast_instruction(from, to).to_string(),
+                (Type::Float(Float::F32), Type::Float(_)) => cast(Conversion::FloatWiden),
+                (Type::Float(_), Type::Float(_)) => cast(Conversion::FloatNarrow),
+                (Type::Integer(from), Type::Float(_)) if from.signed => {
+                    cast(Conversion::SignedToFloat)
+                }
+                (Type::Integer(_), Type::Float(_)) => cast(Conversion::UnsignedToFloat),
+                (Type::Integer(from), Type::Integer(to)) if from.bits > to.bits => {
+                    cast(Conversion::Truncate)
+                }
+                // Of one width (a `bool` is 1 bit): the same bits, no instruction.
+                (Type::Integer(from), Type::Integer(to)) if from.bits == to.bits => {
+                    "same".to_string()
+                }
+                (Type::Bool, Type::Integer(Integer { bits: 1, .. })) => "same".to_string(),
+                (Type::Integer(from), Type::Integer(_)) if from.signed => {
+                    cast(Conversion::SignExtend)
+                }
+                (Type::Integer(_) | Type::Bool, Type::Integer(_)) => cast(Conversion::ZeroExtend),
+                _ => unreachable!("check converts numbers and `bool`s only"),
             };
             for _ in 0..3 {
                 let value = match from {
@@ -509,6 +610,8 @@ fn write_conversions(
                 let to_llvm = llvm_type(to);
                 if let Some(name) = instruction.strip_prefix("saturate ") {
                     writeln!(body, "  %v{k} = call {to_llvm} @{name}({from_llvm} %l{k})").unwrap();
+                } else if instruction == "same" {
+                    writeln!(body, "  %v{k} = or {to_llvm} %l{k}, 0").unwrap();
                 } else {
                     writeln!(
                         body,

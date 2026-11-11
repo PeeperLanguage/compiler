@@ -107,8 +107,10 @@ impl std::fmt::Display for Class {
 }
 
 /// One function's MIR. Its parameters are its first slots, in order
-/// (`parameters` of them): each is stored from `Operand::Parameter` as the
-/// body starts. The first block is the entry.
+/// (`parameters` of them): one passed in a register is stored from
+/// `Operand::Parameter` as the body starts; one passed in memory is the
+/// caller's copy, at the address it passed (`parameter_in_memory`). The
+/// first block is the entry.
 pub struct Body {
     pub blocks: Arena<Block>,             // with where each starts
     pub instructions: Arena<Instruction>, // with the code each comes from
@@ -124,6 +126,8 @@ pub struct Body {
     /// A block of the source, for a debugger: block `i` of the source is
     /// debug scope `i`.
     pub debug_scopes: Arena<DebugScope>,
+    /// What a debugger shows the result as; `None` when there is none.
+    pub result_debug_type: Option<DebugTypeId>,
     /// Read-only data the body names (`Operand::Global`).
     pub globals: Vec<Global>,
     /// The signature of each call (`InstructionKind::Call`).
@@ -194,7 +198,7 @@ pub struct DebugTypeId(pub u32);
 
 /// The debug types of a program, one per language type that has a value
 /// (`of_type`). Lowering fills it; a backend reads `types` by id.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct DebugTypes {
     /// Each type, at its `DebugTypeId`; `None` while it is being made
     /// (`reserve`), as a struct's members may name the struct.
@@ -240,8 +244,9 @@ impl DebugTypes {
 #[derive(Clone, Debug)]
 pub enum Global {
     Bytes(Box<[u8]>),
-    /// A table of function addresses, in order.
-    Functions(Box<[FunctionCopy]>),
+    /// A table of function addresses, in order, each with how it is called:
+    /// a module may hold a table of functions it never calls.
+    Functions(Box<[(FunctionCopy, Signature)]>),
 }
 
 /// How a function takes its parameters and gives its result.
@@ -252,6 +257,75 @@ pub struct Signature {
     /// Whether it takes more arguments after the parameters, as a C
     /// function may.
     pub variadic: bool,
+    /// For a call of a C function: how C passes each argument, the extra
+    /// ones of a variadic call too, and the result, as clang does on the
+    /// target. `None` in Peeper's own convention.
+    pub c: Option<CSignature>,
+}
+
+/// How C passes the values of one call.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CSignature {
+    pub parameters: Box<[CPassing]>,
+    pub result: Option<CPassing>,
+}
+
+/// How C passes one value, in LLVM's terms rather than one machine's, so
+/// a 32-bit machine's rules are written as a 64-bit one's are. A value is
+/// still a register of its class (`Passing`) before and after the call.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CPassing {
+    /// As its register, widened by C as `extension` says, if at all.
+    Register { extension: Option<Extension> },
+    /// As `count` integers of `bits` bits each, the lowest first: x86-64's
+    /// two halves of a 65- to 127-bit integer.
+    Pieces { count: u32, bits: u32 },
+    /// A result as a vector of `count` integers of `bits` bits: Windows
+    /// x64's `__int128`.
+    Vector { count: u32, bits: u32 },
+    /// In `size` bytes aligned to `align`: a parameter copied onto the
+    /// stack when `by_value`, else passed as a copy's address; a result
+    /// where a hidden first argument points (`sret`).
+    Memory {
+        size: u64,
+        align: u64,
+        by_value: bool,
+    },
+}
+
+/// How C widens an integer narrower than its register.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Extension {
+    Sign,
+    Zero,
+}
+
+impl std::fmt::Display for CPassing {
+    /// The dump's text: `signext`, `2 x i64`, `memory 32 align 8 byval`.
+    fn fmt(&self, out: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match *self {
+            CPassing::Register { extension: None } => out.write_str("register"),
+            CPassing::Register {
+                extension: Some(Extension::Sign),
+            } => out.write_str("signext"),
+            CPassing::Register {
+                extension: Some(Extension::Zero),
+            } => out.write_str("zeroext"),
+            CPassing::Pieces { count, bits } => write!(out, "{count} x i{bits}"),
+            CPassing::Vector { count, bits } => write!(out, "<{count} x i{bits}>"),
+            CPassing::Memory {
+                size,
+                align,
+                by_value,
+            } => {
+                write!(out, "memory {size} align {align}")?;
+                if by_value {
+                    out.write_str(" byval")?;
+                }
+                Ok(())
+            }
+        }
+    }
 }
 
 impl Signature {
@@ -559,6 +633,37 @@ pub enum Terminator {
 }
 
 impl Body {
+    /// Each function the body may run: those it calls, and those in its
+    /// tables, which a method call reaches through an interface value.
+    pub fn named_functions(&self) -> impl Iterator<Item = FunctionCopy> {
+        let called = self
+            .instructions
+            .ids()
+            .filter_map(|id| match self.instructions[id].kind {
+                InstructionKind::Call {
+                    callee: Callee::Function(function),
+                    ..
+                } => Some(function),
+                _ => None,
+            });
+        let tabled = (self.globals.iter()).flat_map(|global| match global {
+            Global::Functions(entries) => &entries[..],
+            Global::Bytes(_) => &[],
+        });
+        called.chain(tabled.map(|&(function, _)| function))
+    }
+
+    /// The parameter, as an `Operand::Parameter` index, whose address the
+    /// slot `slot` is: a parameter passed in memory is the caller's private
+    /// copy, so it has no memory of its own.
+    pub fn parameter_in_memory(&self, slot: Id<Slot>) -> Option<u32> {
+        let index = slot.index();
+        match self.signature.parameters.get(index)? {
+            Passing::Memory { .. } => Some(index as u32 + self.signature.hidden_parameters()),
+            Passing::Register { .. } => None,
+        }
+    }
+
     /// The class of the register `operand` is; `None` for a call that gives
     /// nothing or gives its result in memory.
     pub fn class_of(&self, operand: Operand) -> Option<Class> {
@@ -736,7 +841,9 @@ impl Printer<'_> {
                 self.write_place(place);
             }
             InstructionKind::Call {
-                callee, arguments, ..
+                callee,
+                signature,
+                arguments,
             } => {
                 match callee {
                     Callee::Function(function) => {
@@ -751,6 +858,17 @@ impl Printer<'_> {
                 }
                 self.write_operands(arguments);
                 self.out.push(')');
+                if let Some(c) = &self.body.signatures[*signature as usize].c {
+                    self.out.push_str(" in C (");
+                    for (index, passing) in c.parameters.iter().enumerate() {
+                        let separator = if index > 0 { ", " } else { "" };
+                        _ = write!(self.out, "{separator}{passing}");
+                    }
+                    self.out.push(')');
+                    if let Some(result) = &c.result {
+                        _ = write!(self.out, " -> {result}");
+                    }
+                }
             }
             InstructionKind::Check { failed, message } => {
                 self.out.push_str("check ");

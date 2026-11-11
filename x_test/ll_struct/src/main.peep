@@ -1,6 +1,8 @@
-// LLVM writes a struct as a literal type kept in memory, a literal as a store
-// to each field's `getelementptr`, a field of a variable as a `getelementptr`
-// and a load, and debug info as a `DICompositeType` with each member at its offset.
+// LLVM keeps a struct as bytes in memory, `[size x i8]` with its alignment;
+// a literal stores each field at its `getelementptr` offset, in written order,
+// right where it goes when that place is new; a field read is a
+// `getelementptr` and a load; debug info is a `DICompositeType` with each
+// member at its offset.
 struct Point {
     x: i32,
     y: i32,

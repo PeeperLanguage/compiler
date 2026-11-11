@@ -9,6 +9,8 @@
 //! removal step).
 
 mod aggregates;
+pub mod binary;
+mod c_abi;
 mod expression;
 mod print;
 mod statement;
@@ -93,9 +95,11 @@ pub fn lower(
                 parameters: Box::default(), // below, once passing can be asked
                 result: None,
                 variadic: false,
+                c: None,
             },
             origins: origins.clone(),
             debug_scopes: Arena::default(),
+            result_debug_type: None, // below, once a debug type can be made
             globals: Vec::new(),
             signatures: Vec::new(),
             lists: Lists::default(),
@@ -113,7 +117,10 @@ pub fn lower(
         parameters: parameters.iter().map(|&ty| lowering.passing(ty)).collect(),
         result: lowering.result_passing(*result),
         variadic: false,
+        c: None,
     };
+    lowering.mir.result_debug_type =
+        (types.real(*result) != TypeId::VOID).then(|| lowering.debug_type(*result));
     // One debug scope per block and one slot per THIR variable, in order:
     // block `i` is debug scope `i`, and the ids of variables match.
     for block in body.blocks.ids() {
@@ -159,28 +166,19 @@ pub fn lower(
     let span = body.blocks.span(function_block);
     lowering.block = lowering.new_block(span);
     // A result kept in memory is written where a hidden first parameter
-    // points, so the written parameters come after it.
+    // points, so the written parameters come after it. One passed in memory
+    // is the caller's copy already (`Body::parameter_in_memory`).
     let hidden = lowering.mir.signature.hidden_parameters();
     for index in 0..parameters.len() {
         let slot = Id::from_index(index);
-        let given = Operand::Parameter(index as u32 + hidden);
-        let span = lowering.mir.slots.span(slot);
-        let kind = match lowering.mir.signature.parameters[index] {
-            Passing::Register { class, .. } => InstructionKind::Store {
+        if let Passing::Register { class, .. } = lowering.mir.signature.parameters[index] {
+            let kind = InstructionKind::Store {
                 class,
                 place: Place::whole(slot),
-                value: given,
-            },
-            Passing::Memory { size, .. } => InstructionKind::Copy {
-                to: Place::whole(slot),
-                from: Place {
-                    root: model::core_mir::Root::At(given),
-                    steps: Box::default(),
-                },
-                size,
-            },
-        };
-        lowering.emit(kind, span);
+                value: Operand::Parameter(index as u32 + hidden),
+            };
+            lowering.emit(kind, lowering.mir.slots.span(slot));
+        }
         lowering.declare(slot);
     }
     lowering.lower_block(function_block, 0)?; // the parameters are its variables too
@@ -249,9 +247,9 @@ impl Value {
     }
 }
 
-/// How deep the debug types of pointers and structs follow the source
-/// (`llvm` could not write deeper ones: clang runs out of stack).
-const DEEPEST_DEBUG_TYPE: u32 = 256;
+/// How deep the debug types of pointers and structs follow the source:
+/// clang runs out of stack on debug types tens of thousands of nodes deep.
+const DEEPEST_DEBUG_TYPE: u32 = 5_000;
 
 impl Lowering<'_> {
     /// A new block starting at `span`; `finish` gives it its instructions and

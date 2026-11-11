@@ -40,36 +40,42 @@ use crate::core::slot_of;
 /// constant when known while lowering, else a register.
 type RangeWalk = [Operand; 5];
 
+/// A part of an array literal, lowered: its value, or the walk of a range
+/// it spreads, whose count is then a constant when its ends are.
+enum Part {
+    Value(Value),
+    Range(RangeWalk),
+}
+
 impl Lowering<'_> {
-    /// A struct value of the type `ty` from `fields`, computed in the order
-    /// written, each stored at its offset in a temporary.
+    /// A struct value of the type `ty` from `fields`, at `place`
+    /// (`lower_into`): each computed in the order written, right at its
+    /// offset.
     pub(super) fn lower_struct_literal(
         &mut self,
         fields: List<thir::FieldValue>,
         ty: TypeId,
-        span: Span,
-    ) -> Option<Value> {
-        let slot = self.temporary(ty, span);
+        place: Place,
+    ) -> Option<()> {
         for field in self.thir.children.lists.items(fields) {
             let thir::FieldValue { index, value } = self.thir.children.field_values[field];
-            let value_span = self.thir.exprs.span(value);
-            let value = self.lower_expr(value)?;
-            let (place, field_type) = self.field(Place::whole(slot), ty, index as usize);
-            self.put(place, value, field_type, value_span);
+            let (at, _) = self.field(place.clone(), ty, index as usize);
+            self.lower_into(value, at)?;
         }
-        Some(Value::Memory(Place::whole(slot)))
+        Some(())
     }
 
-    /// An array value of the array type `ty` from `parts`: each element at
-    /// its place; with a spread (an array, a slice or a range giving each
+    /// An array value of the array type `ty` from `parts`, at `place`
+    /// (`lower_into`): each element at its own place; with a spread (an array, a slice or a range giving each
     /// of its elements or values), the parts are counted first and the
     /// program stops unless they give exactly the array's length.
     pub(super) fn lower_array_literal(
         &mut self,
         parts: List<thir::Expr>,
         ty: TypeId,
+        place: Place,
         span: Span,
-    ) -> Option<Value> {
+    ) -> Option<()> {
         let Type::Array {
             element, length, ..
         } = self.types[ty]
@@ -78,7 +84,6 @@ impl Lowering<'_> {
         };
         let element = self.types.real(element);
         let (size, _) = layout(self.types, element, self.target);
-        let slot = self.temporary(ty, span);
         let parts: Vec<Id<thir::Expr>> = self.thir.children.lists.items(parts).collect();
         // Each part's value, and how many elements it gives: a number when
         // known now, else a register counted when the program runs.
@@ -96,7 +101,10 @@ impl Lowering<'_> {
             let part_type = self.types.real(self.thir.exprs[part].ty);
             // An element may itself be a slice or a range: one part, not a spread.
             let spread = !self.types.same(part_type, element);
-            let value = self.lower_expr(part)?;
+            let value = match self.types[part_type] {
+                Type::Range { .. } if spread => Part::Range(self.walk_range(part)?),
+                _ => Part::Value(self.lower_expr(part)?),
+            };
             let count = match self.types[part_type] {
                 _ if !spread => Ok(1),
                 Type::Array { length, .. } => Ok(length),
@@ -132,26 +140,28 @@ impl Lowering<'_> {
         for (spread, part_type, value, count) in lowered {
             // A position counted when the program runs is already a `usize`.
             let at = |position: &Result<u64, Operand>| match *position {
-                Ok(index) => Place::whole(slot).then(Step::Offset(index * size)),
-                Err(index) => Place::whole(slot).then(Step::Index { index, size }),
+                Ok(index) => place.clone().then(Step::Offset(index * size)),
+                Err(index) => place.clone().then(Step::Index { index, size }),
             };
-            match self.types[part_type] {
-                Type::Slice { .. } if spread => {
+            match value {
+                Part::Range(walk) => {
+                    let to = at(&position);
+                    let count = match count {
+                        Ok(count) => Operand::integer(self.usize, count),
+                        Err(count) => self.as_usize(count, wide, span),
+                    };
+                    self.fill_range(to, &walk, part_type, count, span);
+                }
+                Part::Value(value)
+                    if spread && matches!(self.types[part_type], Type::Slice { .. }) =>
+                {
                     let to = at(&position);
                     let count = count.expect_err("a slice is counted when the program runs");
                     let count = self.as_usize(count, wide, span);
                     let from = Self::through_slice(value.memory());
                     self.copy_elements(to, from, count, size, span);
                 }
-                Type::Range { .. } if spread => {
-                    let to = at(&position);
-                    let count = match count {
-                        Ok(count) => Operand::integer(self.usize, count),
-                        Err(count) => self.as_usize(count, wide, span),
-                    };
-                    self.fill_range(to, value.memory(), part_type, count, span);
-                }
-                _ => {
+                Part::Value(value) => {
                     let to = at(&position);
                     self.put(to, value, part_type, span);
                 }
@@ -173,7 +183,7 @@ impl Lowering<'_> {
                 }
             };
         }
-        Some(Value::Memory(Place::whole(slot)))
+        Some(())
     }
 
     /// `count`, a number of the class `wide`, as a `usize`: it was checked
@@ -191,30 +201,23 @@ impl Lowering<'_> {
         self.emit(kind, span)
     }
 
-    /// How many elements the spread part `value`, of the type `part_type`,
+    /// How many elements the spread part `part`, of the type `part_type`,
     /// gives, as the class `wide`: a slice's length, or a range's count, its
     /// `left` over its `step`, one more when it includes its end or when
     /// that leaves a rest. A constant when the range's fields are.
-    fn part_count(&mut self, value: &Value, part_type: TypeId, wide: Class, span: Span) -> Operand {
-        let place = value.clone().memory();
-        match self.types[part_type] {
-            Type::Slice { .. } => {
-                let length = self.second_word(place);
+    fn part_count(&mut self, part: &Part, part_type: TypeId, wide: Class, span: Span) -> Operand {
+        match (part, &self.types[part_type]) {
+            (Part::Value(value), Type::Slice { .. }) => {
+                let length = self.second_word(value.clone().memory());
                 let length = self.load(self.usize, length, span);
                 self.widen_unsigned(length, self.usize, wide, span)
             }
-            Type::Range { element, step } => {
+            (Part::Range(walk), &Type::Range { step, .. }) => {
                 let Type::Integer(size) = self.types[self.types.real(step)] else {
                     unreachable!("a range's step is an integer")
                 };
-                let _ = element;
-                let class = Class::integer(size.bits);
-                let left = self.field(place.clone(), part_type, range_field::LEFT);
-                let step_at = self.field(place.clone(), part_type, range_field::STEP);
-                let inclusive = self.field(place, part_type, range_field::INCLUSIVE);
-                let left = self.load(class, left.0, span);
-                let step = self.load(class, step_at.0, span);
-                let inclusive = self.load(Class::I8, inclusive.0, span);
+                let (left, step) = (walk[range_field::LEFT], walk[range_field::STEP]);
+                let inclusive = walk[range_field::INCLUSIVE];
                 self.range_count(left, step, inclusive, size, wide, span)
             }
             _ => unreachable!("only a slice and a range are counted when the program runs"),
@@ -304,13 +307,13 @@ impl Lowering<'_> {
         self.block = done;
     }
 
-    /// Writes `count` values of the range at `range`, of the type
+    /// Writes `count` values of the range whose walk is `walk`, of the type
     /// `range_type`, as elements from `to` on: its `start`, then each
     /// `delta` more, wrapping.
     fn fill_range(
         &mut self,
         to: Place,
-        range: Place,
+        walk: &RangeWalk,
         range_type: TypeId,
         count: Operand,
         span: Span,
@@ -323,10 +326,7 @@ impl Lowering<'_> {
         };
         let class = Class::integer(integer.bits);
         let (size, _) = layout(self.types, self.types.real(element), self.target);
-        let (start, _) = self.field(range.clone(), range_type, range_field::START);
-        let (delta, _) = self.field(range, range_type, range_field::DELTA);
-        let start = self.load(class, start, span);
-        let delta = self.load(class, delta, span);
+        let (start, delta) = (walk[range_field::START], walk[range_field::DELTA]);
         let value = self.register_slot(class, span);
         self.store(class, Place::whole(value), start, span);
         let index = self.counter_slot(span);
@@ -376,21 +376,20 @@ impl Lowering<'_> {
         self.store(self.usize, Place::whole(slot), next, span);
     }
 
-    /// A range value written as `start..end:step`: its walk's five fields
-    /// stored in a temporary.
-    pub(super) fn lower_range(&mut self, range: Id<thir::Expr>) -> Option<Value> {
+    /// A range value written as `start..end:step`, at `place`: its walk's
+    /// five fields.
+    pub(super) fn lower_range(&mut self, range: Id<thir::Expr>, place: Place) -> Option<()> {
         let span = self.thir.exprs.span(range);
         let ty = self.types.real(self.thir.exprs[range].ty);
         let walk = self.walk_range(range)?;
-        let slot = self.temporary(ty, span);
         for (index, value) in walk.into_iter().enumerate() {
-            let (place, field_type) = self.field(Place::whole(slot), ty, index);
+            let (at, field_type) = self.field(place.clone(), ty, index);
             let class = self
                 .class(field_type)
                 .expect("a range's fields are registers");
-            self.store(class, place, value, span);
+            self.store(class, at, value, span);
         }
-        Some(Value::Memory(Place::whole(slot)))
+        Some(())
     }
 
     /// The parts of the range `range` written as `start..end:step`, as
@@ -708,8 +707,8 @@ impl Lowering<'_> {
     /// them or the ends are out of order. The checker rejected such ends
     /// known at compile time for an array, so they get no check; a slice's
     /// length is known only when the program runs, so each of its ends but
-    /// a start of 0 is checked.
-    pub(super) fn lower_slice(&mut self, expression: Id<thir::Expr>) -> Option<Value> {
+    /// a start of 0 is checked. Its two words go at `to`.
+    pub(super) fn lower_slice(&mut self, expression: Id<thir::Expr>, to: Place) -> Option<()> {
         let span = self.thir.exprs.span(expression);
         let thir::Expr {
             ty,
@@ -822,7 +821,8 @@ impl Lowering<'_> {
             size,
         });
         let address = self.borrow(elements, mutable, "slice", span);
-        Some(self.slice_words(address, count, ty, span))
+        self.slice_words(address, count, to, span);
+        Some(())
     }
 
     /// The end `end` of a slice of `length` elements, an integer, as a

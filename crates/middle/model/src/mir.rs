@@ -354,19 +354,6 @@ impl Body {
         }
     }
 
-    /// The text `print` writes for `operand`, when that is a constant string:
-    /// all of a `&str`, a `&cstr` up to its first zero byte, as C reads it.
-    pub fn constant_text(&self, operand: Operand) -> Option<&[u8]> {
-        let constant = self.constant(operand)?;
-        let Value::Bytes(bytes) = &constant.value else {
-            return None;
-        };
-        if constant.ty == TypeId::STR {
-            return Some(bytes);
-        }
-        bytes.split(|&byte| byte == 0).next()
-    }
-
     /// The type of the value `operand` stands for.
     pub fn operand_type(&self, operand: Operand) -> TypeId {
         match operand {

@@ -72,7 +72,9 @@ pointers, a range) lives in memory and is handled by its address.
 
 ### 3.2 Slots
 
-A function's memory is slots: a parameter, a `let`, or a temporary.
+A function's memory is slots: a parameter, a `let`, or a temporary. A
+parameter passed in memory is the caller's private copy, at the address it
+passed (`Body::parameter_in_memory`), so it is never copied again.
 
 ```text
 Slot { size, align, holders: [offset], debug_type: Option<DebugTypeId>,
@@ -222,7 +224,7 @@ lines.
 **LLVM writer** (`backend/llvm`, 4,191) is rewritten on v4's
 (`v4/backend/llvm/src/lib.rs`, 687 lines) plus: floats, `i128`, unsigned
 operations, the C ABI for `Memory` parameters of extern and runtime calls
-(`byval`/`sret` as `function/calls.rs:178, 287` write today, chosen by
+(`byval`/`sret` as the writer before step 13 wrote them, chosen by
 `Machine::c_abi`), globals, debug info from the table. Estimate: 2,000 to
 2,500 lines.
 

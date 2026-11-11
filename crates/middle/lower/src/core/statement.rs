@@ -86,9 +86,7 @@ impl Lowering<'_> {
                 thir::Stmt::Let { variable, value } => {
                     let declared = slot_of(variable);
                     if let Some(value) = value {
-                        let ty = self.types.real(self.thir.exprs[value].ty);
-                        let value = self.lower_expr(value)?;
-                        self.put(Place::whole(declared), value, ty, span);
+                        self.lower_into(value, Place::whole(declared))?;
                     }
                     self.close_scopes(temporaries, span);
                     self.declare(declared);
@@ -105,26 +103,27 @@ impl Lowering<'_> {
                 }
                 thir::Stmt::Return(value) => {
                     let value = match value {
-                        Some(value) => {
-                            match self.lower_expr(value)? {
-                                Value::Register(operand) => Some(operand),
-                                // Written where the hidden first parameter points.
-                                Value::Memory(from) => {
-                                    let Some(Passing::Memory { size, .. }) =
-                                        self.mir.signature.result
-                                    else {
-                                        unreachable!("a value kept in memory is given there")
-                                    };
-                                    let to = Place {
-                                        root: Root::At(model::core_mir::Operand::Parameter(0)),
-                                        steps: Box::default(),
-                                    };
-                                    self.emit(InstructionKind::Copy { to, from, size }, span);
-                                    None
-                                }
-                                Value::Nothing => None,
-                            }
+                        // Written where the hidden first parameter points.
+                        Some(value)
+                            if matches!(
+                                self.mir.signature.result,
+                                Some(Passing::Memory { .. })
+                            ) =>
+                        {
+                            let result = Place {
+                                root: Root::At(model::core_mir::Operand::Parameter(0)),
+                                steps: Box::default(),
+                            };
+                            self.lower_into(value, result)?;
+                            None
                         }
+                        Some(value) => match self.lower_expr(value)? {
+                            Value::Register(operand) => Some(operand),
+                            Value::Nothing => None,
+                            Value::Memory(_) => {
+                                unreachable!("a value kept in memory is given there")
+                            }
+                        },
                         None => None,
                     };
                     self.emit_scope_ends(0, span); // out of the function

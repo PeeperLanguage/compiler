@@ -9,62 +9,106 @@ use std::sync::mpsc;
 
 use model::FunctionCopy;
 use model::ModuleId;
+use model::core_mir;
+use model::core_mir::DebugTypes;
 use model::machine::Machine;
-use model::mir;
 use model::semantic_types::Types;
+use rustc_hash::FxHashMap;
 
 use crate::BuildMode;
 use crate::Module;
+use crate::body::Defined;
+use crate::text::copy_symbol;
 
-/// One module's functions, each with its MIR, and the types they name.
+/// One module's functions, with the symbol of each function they define or
+/// name and, in a debug build, the debug types they name.
 struct Batch {
-    module: Option<ModuleId>, // `None` before its first function
-    functions: Vec<(FunctionCopy, mir::Body)>,
-    types: Types,
+    module: ModuleId,
+    functions: Vec<Defined>,
+    /// Made here, not by a worker: a copy's symbol names its `const`
+    /// arguments, which only the program's types tell.
+    symbols: FxHashMap<FunctionCopy, String>,
+    debug_types: DebugTypes,
 }
 
 /// Where a compile puts each function it checked, to be written in its
 /// module's LLVM text.
-pub struct FunctionQueue {
-    batch: Batch,    // the module whose functions are coming
+pub struct FunctionQueue<'p> {
+    program: &'p model::program::Program,
+    mode: BuildMode,
+    /// The module whose functions are coming, `None` before the first, and
+    /// those so far, with the symbols they need (`Batch`).
+    module: Option<ModuleId>,
+    functions: Vec<Defined>,
+    symbols: FxHashMap<FunctionCopy, String>,
     sent: Vec<bool>, // by module: whether its functions went to a worker
     batches: mpsc::Sender<Batch>,
+    /// The debug type of each type the program's bodies name so far, which
+    /// lowering adds to (`lower::core::lower`).
+    pub debug_types: DebugTypes,
 }
 
-impl FunctionQueue {
+impl FunctionQueue<'_> {
     /// Adds the function `copy`, whose MIR is `body`, to the LLVM module of
     /// `module`, the module whose compile built it: its own, or the first
     /// to call a copy of another module's function. `types` is the
     /// program's types so far. A program's functions come module by module,
     /// so a function of another module sends the one before to a worker.
-    pub fn add(&mut self, module: ModuleId, copy: FunctionCopy, body: mir::Body, types: &Types) {
-        if self.batch.module != Some(module) {
+    pub fn add(
+        &mut self,
+        module: ModuleId,
+        copy: FunctionCopy,
+        body: core_mir::Body,
+        types: &Types,
+    ) {
+        if self.module != Some(module) {
             self.send();
             assert!(
                 !self.sent[module.index()],
                 "a module's functions come together"
             );
-            self.batch.module = Some(module);
+            self.module = Some(module);
         }
-        self.batch.types.extend_from(types);
-        self.batch.functions.push((copy, body));
+        let program = self.program;
+        let symbols = &mut self.symbols;
+        let mut name = |copy: FunctionCopy| {
+            symbols
+                .entry(copy)
+                .or_insert_with(|| copy_symbol(program, types, copy));
+        };
+        name(copy);
+        body.named_functions().for_each(name);
+        let shown_name = match self.mode {
+            BuildMode::Debug => {
+                let modules = &program.modules;
+                let declared = model::program::declared_path(modules, copy.definition);
+                let name_of = |definition| model::program::declared_text(modules, definition);
+                types.copy_text(declared, copy.arguments, name_of)
+            }
+            BuildMode::Release => String::new(),
+        };
+        self.functions.push(Defined {
+            copy,
+            shown_name,
+            body,
+        });
     }
 
-    /// Sends the functions kept so far, with a copy of their types, to a
-    /// worker.
+    /// Sends the functions kept so far, with what they name, to a worker.
     fn send(&mut self) {
-        let Some(module) = self
-            .batch
-            .module
-            .filter(|_| !self.batch.functions.is_empty())
-        else {
+        let Some(module) = self.module.filter(|_| !self.functions.is_empty()) else {
             return;
         };
         self.sent[module.index()] = true;
+        let debug_types = match self.mode {
+            BuildMode::Debug => self.debug_types.clone(),
+            BuildMode::Release => DebugTypes::default(),
+        };
         let batch = Batch {
-            module: Some(module),
-            functions: std::mem::take(&mut self.batch.functions),
-            types: self.batch.types.clone(),
+            module,
+            functions: std::mem::take(&mut self.functions),
+            symbols: std::mem::take(&mut self.symbols),
+            debug_types,
         };
         _ = self.batches.send(batch);
     }
@@ -78,7 +122,7 @@ pub fn write_modules<'p, T>(
     program: &'p model::program::Program,
     target: &'static Machine,
     mode: BuildMode,
-    compile: impl FnOnce(&mut FunctionQueue) -> T,
+    compile: impl FnOnce(&mut FunctionQueue<'p>) -> T,
 ) -> (Vec<Module<'p>>, T) {
     let (sender, receiver) = mpsc::channel::<Batch>();
     let receiver = Mutex::new(receiver);
@@ -95,10 +139,9 @@ pub fn write_modules<'p, T>(
                         let Ok(batch) = next else {
                             return written; // the channel is closed and empty
                         };
-                        let module = batch.module.expect("a batch sent has a module");
-                        let mut module = Module::new(program, module, target, mode);
-                        for (copy, body) in &batch.functions {
-                            module.add_function(*copy, body, &batch.types);
+                        let mut module = Module::new(program, batch.module, target, mode);
+                        for defined in &batch.functions {
+                            module.add_body(defined, &batch.symbols, &batch.debug_types);
                         }
                         written.push(module);
                     }
@@ -106,13 +149,14 @@ pub fn write_modules<'p, T>(
             })
             .collect(); // every worker starts before any is waited for
         let mut queue = FunctionQueue {
-            batch: Batch {
-                module: None,
-                functions: Vec::new(),
-                types: Types::new(target.pointer_bits),
-            },
+            program,
+            mode,
+            module: None,
+            functions: Vec::new(),
+            symbols: FxHashMap::default(),
             sent: vec![false; count],
             batches: sender,
+            debug_types: DebugTypes::default(),
         };
         let compiled = compile(&mut queue);
         queue.send();
