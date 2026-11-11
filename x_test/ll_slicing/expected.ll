@@ -112,18 +112,18 @@ bb0.2:
   %i15 = getelementptr inbounds i8, ptr %s5, i64 8, !dbg !54
   store i64 %i12, ptr %i15, !dbg !54
   %i17 = call i32 @"ll_slicing:main.total"(ptr %s5), !dbg !55
-  store i32 %i17, ptr %s3, !dbg !55
-  %i20 = load i64, ptr %s2, !dbg !56
-  %i21.c = icmp ule i64 4, %i20, !dbg !56
-  br i1 %i21.c, label %bb0.3.panic, label %bb0.3, !dbg !56
+  store i32 %i17, ptr %s3, !dbg !56
+  %i20 = load i64, ptr %s2, !dbg !57
+  %i21.c = icmp ule i64 4, %i20, !dbg !57
+  br i1 %i21.c, label %bb0.3.panic, label %bb0.3, !dbg !57
 bb0.3:
-  %i23 = add i64 %i20, 1, !dbg !57
-  store ptr %s0, ptr %s6, !dbg !57
-  %i26 = getelementptr inbounds i8, ptr %s6, i64 8, !dbg !57
-  store i64 %i23, ptr %i26, !dbg !57
-  %i28 = call i32 @"ll_slicing:main.total"(ptr %s6), !dbg !58
-  store i32 %i28, ptr %s4, !dbg !58
-  ret void, !dbg !59
+  %i23 = add i64 %i20, 1, !dbg !58
+  store ptr %s0, ptr %s6, !dbg !58
+  %i26 = getelementptr inbounds i8, ptr %s6, i64 8, !dbg !58
+  store i64 %i23, ptr %i26, !dbg !58
+  %i28 = call i32 @"ll_slicing:main.total"(ptr %s6), !dbg !59
+  store i32 %i28, ptr %s4, !dbg !60
+  ret void, !dbg !61
 bb0.1.panic:
   call i32 @"peeper_rt_v1_write"(i32 2, ptr @.str.2, i32 53), !dbg !53
   call void @"peeper_rt_v1_exit"(i32 101), !dbg !53
@@ -133,8 +133,8 @@ bb0.2.panic:
   call void @"peeper_rt_v1_exit"(i32 101), !dbg !54
   unreachable
 bb0.3.panic:
-  call i32 @"peeper_rt_v1_write"(i32 2, ptr @.str.4, i32 53), !dbg !56
-  call void @"peeper_rt_v1_exit"(i32 101), !dbg !56
+  call i32 @"peeper_rt_v1_write"(i32 2, ptr @.str.4, i32 53), !dbg !57
+  call void @"peeper_rt_v1_exit"(i32 101), !dbg !57
   unreachable
 }
 
@@ -147,7 +147,7 @@ declare i32 @"peeper_rt_v1_write"(i32, ptr, i32)
 declare void @llvm.dbg.declare(metadata, metadata, metadata)
 
 !llvm.dbg.cu = !{!1}
-!llvm.module.flags = !{!60, !61}
+!llvm.module.flags = !{!62, !63}
 !0 = !DIFile(filename: "main.peep", directory: "<fixture>/src")
 !1 = distinct !DICompileUnit(language: DW_LANG_C, file: !0, producer: "peeper", isOptimized: false, runtimeVersion: 0, emissionKind: FullDebug)
 !2 = !DIBasicType(name: "i32", size: 32, encoding: DW_ATE_signed)
@@ -199,14 +199,16 @@ declare void @llvm.dbg.declare(metadata, metadata, metadata)
 !48 = !DILocalVariable(name: "through", scope: !36, file: !0, line: 19, type: !2)
 !49 = !DILocation(line: 19, column: 9, scope: !36)
 !50 = !DILocation(line: 15, column: 18, scope: !36)
-!51 = !DILocation(line: 16, column: 22, scope: !36)
-!52 = !DILocation(line: 17, column: 22, scope: !36)
+!51 = !DILocation(line: 16, column: 5, scope: !36)
+!52 = !DILocation(line: 17, column: 5, scope: !36)
 !53 = !DILocation(line: 18, column: 32, scope: !36)
 !54 = !DILocation(line: 18, column: 24, scope: !36)
 !55 = !DILocation(line: 18, column: 18, scope: !36)
-!56 = !DILocation(line: 19, column: 36, scope: !36)
-!57 = !DILocation(line: 19, column: 25, scope: !36)
-!58 = !DILocation(line: 19, column: 19, scope: !36)
-!59 = !DILocation(line: 20, column: 1, scope: !36)
-!60 = !{i32 7, !"Dwarf Version", i32 4}
-!61 = !{i32 2, !"Debug Info Version", i32 3}
+!56 = !DILocation(line: 18, column: 5, scope: !36)
+!57 = !DILocation(line: 19, column: 36, scope: !36)
+!58 = !DILocation(line: 19, column: 25, scope: !36)
+!59 = !DILocation(line: 19, column: 19, scope: !36)
+!60 = !DILocation(line: 19, column: 5, scope: !36)
+!61 = !DILocation(line: 20, column: 1, scope: !36)
+!62 = !{i32 7, !"Dwarf Version", i32 4}
+!63 = !{i32 2, !"Debug Info Version", i32 3}

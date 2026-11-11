@@ -85,8 +85,18 @@ impl Lowering<'_> {
             match self.thir.stmts[statement] {
                 thir::Stmt::Let { variable, value } => {
                     let declared = slot_of(variable);
-                    if let Some(value) = value {
-                        self.lower_into(value, Place::whole(declared))?;
+                    match value {
+                        // One store with the statement's span, as an
+                        // assignment's: a warning underlines the whole `let`.
+                        Some(value)
+                            if let Some(class) =
+                                self.class(self.types.real(self.thir.exprs[value].ty)) =>
+                        {
+                            let value = self.lower_expr(value)?.register();
+                            self.store(class, Place::whole(declared), value, span);
+                        }
+                        Some(value) => self.lower_into(value, Place::whole(declared))?,
+                        None => {}
                     }
                     self.close_scopes(temporaries, span);
                     self.declare(declared);
@@ -99,7 +109,11 @@ impl Lowering<'_> {
                     self.put(place, value, ty, span);
                 }
                 thir::Stmt::Expression(value) => {
-                    self.lower_expr(value)?;
+                    // A variable's value used by itself still moves out.
+                    if let Value::Moving(place, read) = self.lower_expr(value)? {
+                        let ty = self.types.real(self.thir.exprs[value].ty);
+                        self.mark_moved(place, ty, read);
+                    }
                 }
                 thir::Stmt::Return(value) => {
                     let value = match value {
@@ -120,7 +134,7 @@ impl Lowering<'_> {
                         Some(value) => match self.lower_expr(value)? {
                             Value::Register(operand) => Some(operand),
                             Value::Nothing => None,
-                            Value::Memory(_) => {
+                            Value::Memory(_) | Value::Moving(..) => {
                                 unreachable!("a value kept in memory is given there")
                             }
                         },

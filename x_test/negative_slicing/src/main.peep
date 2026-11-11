@@ -44,13 +44,13 @@ fn slice_loans(s: &mut []i32) {
     s[0] = 1;
     let read = view[0];
     let part = &mut s[1..];
-    let first = s[0];
+    let first = s[1];
     part[0] = first;
 }
 
 // A slice's length is read for its ends; the error names the borrow written.
 fn slice_while_element_lent(s: &mut []i32) {
-    let x = &mut s[0];
+    let x = &mut s[1];
     let rest = &s[1..2];
     x.* = rest[0];
 }

@@ -1,0 +1,12 @@
+name = "negative_loans_i686"
+build = "lib"
+
+[test]
+mode = "check"
+target = "i686-linux"
+outcome = "failure"
+stderr_contains = [
+    "`y` is changed while a reference to it is still in use",
+    "main.peep:10:5\n",
+    "Compilation failed with 1 error(s)",
+]

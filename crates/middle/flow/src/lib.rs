@@ -53,8 +53,7 @@ use std::sync::Arc;
 use arena::Id;
 use diagnostics::Diagnostic;
 use model::DefId;
-use model::constant::Value;
-use model::mir;
+use model::core_mir;
 use model::semantic_types::TypeId;
 use model::semantic_types::Types;
 use source::SourceFile;
@@ -77,7 +76,7 @@ const SHOWN_CAUSES: usize = 3;
 /// runs statements of the function body, only the end is named, since one
 /// `return` there fixes every path.
 pub fn report_missing_return<'n>(
-    body: &mir::Body,
+    body: &core_mir::Body,
     file: &Arc<SourceFile>,
     types: &Types,
     result: TypeId,
@@ -91,7 +90,7 @@ pub fn report_missing_return<'n>(
         .blocks
         .ids()
         .find_map(|block| match body.blocks[block].terminator {
-            mir::Terminator::FallOff(span) => Some((block, span)),
+            core_mir::Terminator::FallOff(span) => Some((block, span)),
             _ => None,
         });
     let Some((end, end_span)) = end else {
@@ -132,8 +131,8 @@ pub fn report_missing_return<'n>(
 /// Where each path arrives at `end`, a reachable block, and the label for it:
 /// nothing when `end` itself runs code, as one `return` there fixes every path.
 fn missing_return_causes(
-    body: &mir::Body,
-    end: Id<mir::Block>,
+    body: &core_mir::Body,
+    end: Id<core_mir::Block>,
     reachable: &[bool],
 ) -> Vec<(Span, &'static str)> {
     let mut causes = Vec::new();
@@ -152,12 +151,12 @@ fn missing_return_causes(
             if !reachable[predecessor.index()] {
                 continue;
             }
-            let mir::Block {
+            let core_mir::Block {
                 instructions,
                 terminator,
                 ..
             } = &body.blocks[predecessor];
-            if let mir::Terminator::Branch {
+            if let core_mir::Terminator::Branch {
                 condition,
                 span,
                 then,
@@ -167,12 +166,10 @@ fn missing_return_causes(
                 // A constant condition still has two sides here, as in Go
                 // and Rust, so whether code compiles never depends on a
                 // constant's value; the label only says which side it takes.
-                let always = body
-                    .constant(condition)
-                    .and_then(|constant| match constant.value {
-                        Value::Bool(value) => Some(value),
-                        _ => None,
-                    });
+                let always = match condition {
+                    core_mir::Operand::Constant { bits, .. } => Some(bits[0] != 0),
+                    _ => None,
+                };
                 let side = then == block;
                 let label = match (always, side) {
                     (Some(true), true) => "this is always true, so nothing is returned",
@@ -211,11 +208,11 @@ fn missing_return_causes(
 /// `edges` gives the blocks entered after one; `run` turns the facts where a
 /// block is entered into those where it is left; `join` gives the facts
 /// where paths meet.
-fn dataflow<F: Clone + PartialEq, E: IntoIterator<Item = Id<mir::Block>>>(
+fn dataflow<B, F: Clone + PartialEq, E: IntoIterator<Item = Id<B>>>(
     blocks: usize,
-    seeds: impl IntoIterator<Item = (Id<mir::Block>, F)>,
-    edges: impl Fn(Id<mir::Block>) -> E,
-    run: impl Fn(Id<mir::Block>, &mut F),
+    seeds: impl IntoIterator<Item = (Id<B>, F)>,
+    edges: impl Fn(Id<B>) -> E,
+    run: impl Fn(Id<B>, &mut F),
     join: impl Fn(&F, &F) -> F,
 ) -> Vec<Option<F>> {
     let mut entered = vec![None; blocks];
@@ -244,7 +241,7 @@ fn dataflow<F: Clone + PartialEq, E: IntoIterator<Item = Id<mir::Block>>>(
 }
 
 /// The blocks that go straight to each block, by index.
-fn predecessors(body: &mir::Body) -> Vec<Vec<Id<mir::Block>>> {
+fn predecessors(body: &core_mir::Body) -> Vec<Vec<Id<core_mir::Block>>> {
     let mut predecessors = vec![Vec::new(); body.blocks.len()];
     for from in body.blocks.ids() {
         for target in body.blocks[from].terminator.targets() {
@@ -330,27 +327,27 @@ impl<T> Bits<T> {
 /// again. Code is an instruction, a `return` or a branch; a jump between
 /// blocks or the closing brace is not.
 pub fn warn_unreachable_code(
-    body: &mir::Body,
+    body: &core_mir::Body,
     file: &Arc<SourceFile>,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
     let mut seen = reachable(body);
     // (the first code written, its block) of each block not reached.
-    let mut starts: Vec<(Span, Id<mir::Block>)> = body
+    let mut starts: Vec<(Span, Id<core_mir::Block>)> = body
         .blocks
         .ids()
         .filter(|block| !seen[block.index()])
         .filter_map(|block| {
-            let mir::Block {
+            let core_mir::Block {
                 instructions,
                 terminator,
                 ..
             } = &body.blocks[block];
             let terminator = match *terminator {
-                mir::Terminator::Return { span, .. }
-                | mir::Terminator::Panic { span, .. }
-                | mir::Terminator::Branch { span, .. } => Some(span),
-                mir::Terminator::Goto(_) | mir::Terminator::FallOff(_) => None,
+                core_mir::Terminator::Return { span, .. }
+                | core_mir::Terminator::Panic { span, .. }
+                | core_mir::Terminator::Branch { span, .. } => Some(span),
+                core_mir::Terminator::Jump(_) | core_mir::Terminator::FallOff(_) => None,
             };
             let spans = body.lists.items(*instructions);
             let spans = spans
@@ -380,7 +377,7 @@ pub fn warn_unreachable_code(
 }
 
 /// Which blocks control can reach from the entry, by index.
-fn reachable(body: &mir::Body) -> Vec<bool> {
+fn reachable(body: &core_mir::Body) -> Vec<bool> {
     let mut reachable = vec![false; body.blocks.len()];
     mark_reachable(body, Id::from_index(0), &mut reachable);
     reachable
@@ -388,7 +385,7 @@ fn reachable(body: &mir::Body) -> Vec<bool> {
 
 /// Marks in `marked` `from` and every block control can reach from it,
 /// stopping at blocks already marked.
-fn mark_reachable(body: &mir::Body, from: Id<mir::Block>, marked: &mut [bool]) {
+fn mark_reachable(body: &core_mir::Body, from: Id<core_mir::Block>, marked: &mut [bool]) {
     let mut pending = vec![from];
     while let Some(block) = pending.pop() {
         if !std::mem::replace(&mut marked[block.index()], true) {

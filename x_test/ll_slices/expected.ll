@@ -92,8 +92,8 @@ bb0:
   %i16 = getelementptr inbounds i8, ptr %s4, i64 8, !dbg !56
   store i64 2, ptr %i16, !dbg !56
   %i18 = call i32 @"ll_slices:main.get"(ptr %s4, i64 1), !dbg !57
-  store i32 %i18, ptr %s1, !dbg !57
-  ret void, !dbg !58
+  store i32 %i18, ptr %s1, !dbg !58
+  ret void, !dbg !59
 }
 
 declare void @"peeper_rt_v1_exit"(i32)
@@ -103,7 +103,7 @@ declare i32 @"peeper_rt_v1_write"(i32, ptr, i32)
 declare void @llvm.dbg.declare(metadata, metadata, metadata)
 
 !llvm.dbg.cu = !{!1}
-!llvm.module.flags = !{!59, !60}
+!llvm.module.flags = !{!60, !61}
 !0 = !DIFile(filename: "main.peep", directory: "<fixture>/src")
 !1 = distinct !DICompileUnit(language: DW_LANG_C, file: !0, producer: "peeper", isOptimized: false, runtimeVersion: 0, emissionKind: FullDebug)
 !2 = !DIBasicType(name: "i32", size: 32, encoding: DW_ATE_signed)
@@ -162,6 +162,7 @@ declare void @llvm.dbg.declare(metadata, metadata, metadata)
 !55 = !DILocation(line: 20, column: 5, scope: !44)
 !56 = !DILocation(line: 21, column: 20, scope: !44)
 !57 = !DILocation(line: 21, column: 16, scope: !44)
-!58 = !DILocation(line: 22, column: 1, scope: !44)
-!59 = !{i32 7, !"Dwarf Version", i32 4}
-!60 = !{i32 2, !"Debug Info Version", i32 3}
+!58 = !DILocation(line: 21, column: 5, scope: !44)
+!59 = !DILocation(line: 22, column: 1, scope: !44)
+!60 = !{i32 7, !"Dwarf Version", i32 4}
+!61 = !{i32 2, !"Debug Info Version", i32 3}

@@ -144,6 +144,16 @@
   check.sh: only `ll_array_ranges` fails, waiting on review.
 - `ll_array_ranges` blessed (2026-11-11), comment rewritten. All 13 `ll_`
   fixtures blessed; `bash scripts/check.sh` exits 0, every gate ok.
+- Step 14 start (2026-11-11), commit c6bba520: the core MIR gets the facts
+  the path checks read from types. Origins move onto every `Signature`
+  (`Body::origins` gone). `read()` emits `Moved` for register values (a
+  moved `&mut T` gave none; test fails with the old `read()`). `Moved`
+  carries `lent_again` and `size`; `Step::Index` carries `count`; `Borrow`
+  and `Address` carry `size`. Fuad chose byte ranges for the loan check:
+  a slice of an array covers start..array end, so `a[0] = 9` while
+  `&mut a[1..]` is live becomes accepted (old: refused, probe
+  `target/step12-probes/step14/slicing.peep`). check.sh ok after fmt.
+  Nothing reads the new fields until the checks are ported.
 - Struct and array printing removed (2026-11-11, Fuad: "keep only scalar
   type printing"). Inline printing of a struct that holds another twice
   grew 2^depth (`peeper build` at depth 18: 1.4 s, 400 MB). `check`
@@ -155,3 +165,17 @@
   tests that printed a whole aggregate deleted; `negative_print` refuses a
   struct, an array and `&Point`. Design page section 11 records it.
   Later (Fuad): `print` a library function, a type prints by an interface.
+- Step 14 (2026-11-11): the path checks read the core MIR. `loans.rs`
+  rewritten on byte ranges (`report_loan_errors(body, pointer_bytes, ..)`);
+  `variable_state.rs` on core events; `flow::mir_predecessors` gone. Fuad
+  accepted four checks that now pass where the old refused: `.len` keeps
+  no loan, disjoint slice parts, two-phase `&mut` through memory
+  arguments, a spread of known length is exact (`x_test/loans`). New
+  `loans_i686` and `negative_loans_i686` (a 4-byte pointer; the negative
+  one fails with 8). Found while removing print: core lowering's
+  `add_holders` walked every field of a struct with no references, so
+  `check` hung on `checks_structs_holding_structs_twice` (`same` alone:
+  20 s+; now 0.00 s); it returns on `holders_in == 0`. Register parts of
+  a literal now carry the literal's span: 4 `ll_` dumps re-blessed (debug
+  locations only). `path_check_memory` bound 45 MB while `check` builds
+  both MIRs (back to 30 at step 16).

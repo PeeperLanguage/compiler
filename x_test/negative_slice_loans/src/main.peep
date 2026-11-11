@@ -75,3 +75,11 @@ fn ReadWhileEdited() -> i32 {
     fill(edit);
     return read;
 }
+
+// A slice views from its start to the array's end.
+fn ChangedInsideSlice() -> i32 {
+    let mut values = [3]i32{1, 2, 3};
+    let tail = &values[1..];
+    values[2] = 9;
+    return tail[0];
+}

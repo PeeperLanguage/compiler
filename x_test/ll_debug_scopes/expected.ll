@@ -23,51 +23,51 @@ bb0:
   %i2 = load i32, ptr %s0, !dbg !20
   %i3 = load i32, ptr %s1, !dbg !21
   %i4 = add i32 %i2, %i3, !dbg !20
-  store i32 %i4, ptr %s2, !dbg !20
-  %i6 = load i32, ptr %s2, !dbg !22
-  %i7 = mul i32 %i6, 2, !dbg !22
-  store i32 %i7, ptr %s3, !dbg !22
-  %i9 = load i32, ptr %s3, !dbg !23
-  %i10.c = icmp slt i32 2, %i9, !dbg !23
-  br i1 %i10.c, label %bb1, label %bb2, !dbg !23
+  store i32 %i4, ptr %s2, !dbg !22
+  %i6 = load i32, ptr %s2, !dbg !23
+  %i7 = mul i32 %i6, 2, !dbg !23
+  store i32 %i7, ptr %s3, !dbg !24
+  %i9 = load i32, ptr %s3, !dbg !25
+  %i10.c = icmp slt i32 2, %i9, !dbg !25
+  br i1 %i10.c, label %bb1, label %bb2, !dbg !25
 bb1:
-  %i11 = load i32, ptr %s3, !dbg !24
-  %i12 = sdiv i32 %i11, 2, !dbg !24
-  store i32 %i12, ptr %s4, !dbg !24
-  %i14 = load i32, ptr %s4, !dbg !25
-  ret i32 %i14, !dbg !26
+  %i11 = load i32, ptr %s3, !dbg !26
+  %i12 = sdiv i32 %i11, 2, !dbg !26
+  store i32 %i12, ptr %s4, !dbg !27
+  %i14 = load i32, ptr %s4, !dbg !28
+  ret i32 %i14, !dbg !29
 bb2:
-  store i32 3, ptr %s5, !dbg !27
-  %i23 = load i32, ptr %s5, !dbg !28
-  %i24 = load i32, ptr %s2, !dbg !29
-  %i25 = add i32 %i23, %i24, !dbg !28
-  ret i32 %i25, !dbg !30
+  store i32 3, ptr %s5, !dbg !30
+  %i23 = load i32, ptr %s5, !dbg !31
+  %i24 = load i32, ptr %s2, !dbg !32
+  %i25 = add i32 %i23, %i24, !dbg !31
+  ret i32 %i25, !dbg !33
 }
 
-define i32 @"ll_debug_scopes:main.main"() !dbg !32 {
+define i32 @"ll_debug_scopes:main.main"() !dbg !35 {
 entry:
   %s0 = alloca [4 x i8], align 4
-  call void @llvm.dbg.declare(metadata ptr %s0, metadata !35, metadata !DIExpression()), !dbg !36
+  call void @llvm.dbg.declare(metadata ptr %s0, metadata !38, metadata !DIExpression()), !dbg !39
   %s1 = alloca [4 x i8], align 4
-  call void @llvm.dbg.declare(metadata ptr %s1, metadata !37, metadata !DIExpression()), !dbg !38
+  call void @llvm.dbg.declare(metadata ptr %s1, metadata !40, metadata !DIExpression()), !dbg !41
   %s2 = alloca [4 x i8], align 4
-  call void @llvm.dbg.declare(metadata ptr %s2, metadata !39, metadata !DIExpression()), !dbg !40
+  call void @llvm.dbg.declare(metadata ptr %s2, metadata !42, metadata !DIExpression()), !dbg !43
   br label %bb0
 bb0:
-  %i0 = call i32 @"peeper_rt_v1_write"(i32 1, ptr @.str.0, i32 7), !dbg !41
-  %i1 = call i32 @"ll_debug_scopes:main.scale"(i32 1, i32 2), !dbg !42
-  store i32 %i1, ptr %s0, !dbg !42
-  %i3 = load i32, ptr %s0, !dbg !43
-  %i4.c = icmp slt i32 0, %i3, !dbg !43
-  br i1 %i4.c, label %bb1, label %bb2, !dbg !43
+  %i0 = call i32 @"peeper_rt_v1_write"(i32 1, ptr @.str.0, i32 7), !dbg !44
+  %i1 = call i32 @"ll_debug_scopes:main.scale"(i32 1, i32 2), !dbg !45
+  store i32 %i1, ptr %s0, !dbg !46
+  %i3 = load i32, ptr %s0, !dbg !47
+  %i4.c = icmp slt i32 0, %i3, !dbg !47
+  br i1 %i4.c, label %bb1, label %bb2, !dbg !47
 bb1:
-  %i5 = load i32, ptr %s0, !dbg !44
-  store i32 %i5, ptr %s1, !dbg !44
-  %i7 = load i32, ptr %s1, !dbg !45
-  store i32 %i7, ptr %s2, !dbg !45
+  %i5 = load i32, ptr %s0, !dbg !48
+  store i32 %i5, ptr %s1, !dbg !49
+  %i7 = load i32, ptr %s1, !dbg !50
+  store i32 %i7, ptr %s2, !dbg !51
   br label %bb2
 bb2:
-  ret i32 0, !dbg !46
+  ret i32 0, !dbg !52
 }
 
 declare i32 @"peeper_rt_v1_write"(i32, ptr, i32)
@@ -75,7 +75,7 @@ declare i32 @"peeper_rt_v1_write"(i32, ptr, i32)
 declare void @llvm.dbg.declare(metadata, metadata, metadata)
 
 !llvm.dbg.cu = !{!1}
-!llvm.module.flags = !{!47, !48}
+!llvm.module.flags = !{!53, !54}
 !0 = !DIFile(filename: "main.peep", directory: "<fixture>/src")
 !1 = distinct !DICompileUnit(language: DW_LANG_C, file: !0, producer: "peeper", isOptimized: false, runtimeVersion: 0, emissionKind: FullDebug)
 !2 = !DIBasicType(name: "i32", size: 32, encoding: DW_ATE_signed)
@@ -98,30 +98,36 @@ declare void @llvm.dbg.declare(metadata, metadata, metadata)
 !19 = !DILocation(line: 15, column: 13, scope: !5)
 !20 = !DILocation(line: 6, column: 13, scope: !4)
 !21 = !DILocation(line: 6, column: 17, scope: !4)
-!22 = !DILocation(line: 9, column: 21, scope: !6)
-!23 = !DILocation(line: 10, column: 16, scope: !6)
-!24 = !DILocation(line: 11, column: 25, scope: !7)
-!25 = !DILocation(line: 12, column: 24, scope: !7)
-!26 = !DILocation(line: 12, column: 17, scope: !7)
-!27 = !DILocation(line: 15, column: 17, scope: !5)
-!28 = !DILocation(line: 16, column: 16, scope: !5)
-!29 = !DILocation(line: 16, column: 20, scope: !5)
-!30 = !DILocation(line: 16, column: 9, scope: !5)
-!31 = !DISubroutineType(types: !{!2})
-!32 = distinct !DISubprogram(name: "main", linkageName: "ll_debug_scopes:main.main", scope: !0, file: !0, line: 20, type: !31, scopeLine: 20, spFlags: DISPFlagDefinition, unit: !1)
-!33 = !DILexicalBlock(scope: !32, file: !0, line: 20, column: 18)
-!34 = !DILexicalBlock(scope: !33, file: !0, line: 24, column: 9)
-!35 = !DILocalVariable(name: "x", scope: !33, file: !0, line: 22, type: !2)
-!36 = !DILocation(line: 22, column: 9, scope: !33)
-!37 = !DILocalVariable(name: "y", scope: !34, file: !0, line: 25, type: !2)
-!38 = !DILocation(line: 25, column: 17, scope: !34)
-!39 = !DILocalVariable(name: "z", scope: !34, file: !0, line: 26, type: !2)
-!40 = !DILocation(line: 26, column: 17, scope: !34)
-!41 = !DILocation(line: 21, column: 5, scope: !33)
-!42 = !DILocation(line: 22, column: 13, scope: !33)
-!43 = !DILocation(line: 23, column: 8, scope: !33)
-!44 = !DILocation(line: 25, column: 21, scope: !34)
-!45 = !DILocation(line: 26, column: 21, scope: !34)
-!46 = !DILocation(line: 29, column: 5, scope: !33)
-!47 = !{i32 7, !"Dwarf Version", i32 4}
-!48 = !{i32 2, !"Debug Info Version", i32 3}
+!22 = !DILocation(line: 6, column: 5, scope: !4)
+!23 = !DILocation(line: 9, column: 21, scope: !6)
+!24 = !DILocation(line: 9, column: 13, scope: !6)
+!25 = !DILocation(line: 10, column: 16, scope: !6)
+!26 = !DILocation(line: 11, column: 25, scope: !7)
+!27 = !DILocation(line: 11, column: 17, scope: !7)
+!28 = !DILocation(line: 12, column: 24, scope: !7)
+!29 = !DILocation(line: 12, column: 17, scope: !7)
+!30 = !DILocation(line: 15, column: 9, scope: !5)
+!31 = !DILocation(line: 16, column: 16, scope: !5)
+!32 = !DILocation(line: 16, column: 20, scope: !5)
+!33 = !DILocation(line: 16, column: 9, scope: !5)
+!34 = !DISubroutineType(types: !{!2})
+!35 = distinct !DISubprogram(name: "main", linkageName: "ll_debug_scopes:main.main", scope: !0, file: !0, line: 20, type: !34, scopeLine: 20, spFlags: DISPFlagDefinition, unit: !1)
+!36 = !DILexicalBlock(scope: !35, file: !0, line: 20, column: 18)
+!37 = !DILexicalBlock(scope: !36, file: !0, line: 24, column: 9)
+!38 = !DILocalVariable(name: "x", scope: !36, file: !0, line: 22, type: !2)
+!39 = !DILocation(line: 22, column: 9, scope: !36)
+!40 = !DILocalVariable(name: "y", scope: !37, file: !0, line: 25, type: !2)
+!41 = !DILocation(line: 25, column: 17, scope: !37)
+!42 = !DILocalVariable(name: "z", scope: !37, file: !0, line: 26, type: !2)
+!43 = !DILocation(line: 26, column: 17, scope: !37)
+!44 = !DILocation(line: 21, column: 5, scope: !36)
+!45 = !DILocation(line: 22, column: 13, scope: !36)
+!46 = !DILocation(line: 22, column: 5, scope: !36)
+!47 = !DILocation(line: 23, column: 8, scope: !36)
+!48 = !DILocation(line: 25, column: 21, scope: !37)
+!49 = !DILocation(line: 25, column: 13, scope: !37)
+!50 = !DILocation(line: 26, column: 21, scope: !37)
+!51 = !DILocation(line: 26, column: 13, scope: !37)
+!52 = !DILocation(line: 29, column: 5, scope: !36)
+!53 = !{i32 7, !"Dwarf Version", i32 4}
+!54 = !{i32 2, !"Debug Info Version", i32 3}

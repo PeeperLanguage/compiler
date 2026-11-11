@@ -20,5 +20,6 @@ stderr_contains = [
     "slice used later here",
     "reference used later here",
     "a `&mut []` argument takes hold when the call starts",
-    "Compilation failed with 11 error(s)",
+    "main.peep:83:5\n",
+    "Compilation failed with 12 error(s)",
 ]

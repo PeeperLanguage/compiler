@@ -1,0 +1,7 @@
+name = "loans_i686"
+build = "lib"
+
+[test]
+mode = "check"
+target = "i686-linux"
+outcome = "success"

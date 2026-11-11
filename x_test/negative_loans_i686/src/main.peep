@@ -1,0 +1,12 @@
+// Loans on a 32-bit target, where a pointer is 4 bytes: repointing
+// `two.first` leaves the loan `two.second` holds, 4 bytes on.
+struct Two { first: &i32, second: &i32 }
+
+fn SecondKeepsItsLoan() -> i32 {
+    let mut y = 2;
+    let z = 3;
+    let mut two = Two.{ first = &y, second = &y };
+    two.first = &z;
+    y = 4;
+    return two.second.*;
+}

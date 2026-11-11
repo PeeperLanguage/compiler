@@ -23,14 +23,14 @@ bb0:
   store i32 4, ptr %i5, !dbg !26
   %i6.a = getelementptr inbounds i8, ptr %s1, i64 8, !dbg !27
   %i6 = load i32, ptr %i6.a, !dbg !27
-  store i32 %i6, ptr %s2, !dbg !27
-  store i32 5, ptr %s4, !dbg !28
-  %i9 = getelementptr inbounds i8, ptr %s4, i64 4, !dbg !29
-  store i32 6, ptr %i9, !dbg !29
-  %i10.a = getelementptr inbounds i8, ptr %s4, i64 4, !dbg !30
-  %i10 = load i32, ptr %i10.a, !dbg !30
-  store i32 %i10, ptr %s3, !dbg !30
-  ret void, !dbg !31
+  store i32 %i6, ptr %s2, !dbg !28
+  store i32 5, ptr %s4, !dbg !29
+  %i9 = getelementptr inbounds i8, ptr %s4, i64 4, !dbg !30
+  store i32 6, ptr %i9, !dbg !30
+  %i10.a = getelementptr inbounds i8, ptr %s4, i64 4, !dbg !31
+  %i10 = load i32, ptr %i10.a, !dbg !31
+  store i32 %i10, ptr %s3, !dbg !32
+  ret void, !dbg !33
 }
 
 declare void @llvm.memcpy.p0.p0.i64(ptr, ptr, i64, i1)
@@ -38,7 +38,7 @@ declare void @llvm.memcpy.p0.p0.i64(ptr, ptr, i64, i1)
 declare void @llvm.dbg.declare(metadata, metadata, metadata)
 
 !llvm.dbg.cu = !{!1}
-!llvm.module.flags = !{!32, !33}
+!llvm.module.flags = !{!34, !35}
 !0 = !DIFile(filename: "main.peep", directory: "<fixture>/src")
 !1 = distinct !DICompileUnit(language: DW_LANG_C, file: !0, producer: "peeper", isOptimized: false, runtimeVersion: 0, emissionKind: FullDebug)
 !2 = !DISubroutineType(types: !{null})
@@ -67,9 +67,11 @@ declare void @llvm.dbg.declare(metadata, metadata, metadata)
 !25 = !DILocation(line: 18, column: 47, scope: !4)
 !26 = !DILocation(line: 18, column: 54, scope: !4)
 !27 = !DILocation(line: 19, column: 13, scope: !4)
-!28 = !DILocation(line: 20, column: 25, scope: !4)
-!29 = !DILocation(line: 20, column: 32, scope: !4)
-!30 = !DILocation(line: 20, column: 13, scope: !4)
-!31 = !DILocation(line: 21, column: 1, scope: !4)
-!32 = !{i32 7, !"Dwarf Version", i32 4}
-!33 = !{i32 2, !"Debug Info Version", i32 3}
+!28 = !DILocation(line: 19, column: 5, scope: !4)
+!29 = !DILocation(line: 20, column: 25, scope: !4)
+!30 = !DILocation(line: 20, column: 32, scope: !4)
+!31 = !DILocation(line: 20, column: 13, scope: !4)
+!32 = !DILocation(line: 20, column: 5, scope: !4)
+!33 = !DILocation(line: 21, column: 1, scope: !4)
+!34 = !{i32 7, !"Dwarf Version", i32 4}
+!35 = !{i32 2, !"Debug Info Version", i32 3}

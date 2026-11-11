@@ -335,6 +335,7 @@ impl Lowering<'_> {
                 // reference in a register, gone through.
                 _ => match self.lower_expr(outer)? {
                     Value::Memory(place) => break place,
+                    Value::Moving(..) => unreachable!("a variable's value is read in place"),
                     Value::Register(address) => {
                         let Some(Ok(Step::Through)) = steps.pop() else {
                             unreachable!("only a reference's value is a register here")
@@ -985,10 +986,18 @@ impl Lowering<'_> {
             // The interface value's address is the receiver, and its table
             // holds the method at `slot`.
             if let (None, Callee::Method(slot)) = (target, callee) {
-                let view = self.lower_expr(argument)?.memory();
+                // An owned interface taken by value moves once its words
+                // are read.
+                let (view, moved_at) = match self.lower_expr(argument)? {
+                    Value::Moving(place, read) => (place, Some(read)),
+                    value => (value.memory(), None),
+                };
                 let address = self.load(Class::Pointer, view.clone(), span);
-                let table_place = view.then(Step::Offset(self.pointer_bytes));
+                let table_place = view.clone().then(Step::Offset(self.pointer_bytes));
                 let table = self.load(Class::Pointer, table_place, span);
+                if let Some(read) = moved_at {
+                    self.mark_moved(view, argument_type, read);
+                }
                 let method_place = Place {
                     root: Root::At(table),
                     steps: Box::new([Step::Offset(u64::from(slot) * self.pointer_bytes)]),

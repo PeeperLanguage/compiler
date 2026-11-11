@@ -123,3 +123,58 @@ fn ArgumentsRead(flag: bool) -> i32 {
     update(r, 2);
     return x;
 }
+
+// A write before a slice's start changes no element it views.
+fn BeforeSliceStart() -> i32 {
+    let mut values = [3]i32{1, 2, 3};
+    let tail = &mut values[1..];
+    values[0] = 9;
+    tail[0] = 4;
+    return values[0];
+}
+
+// Parts of a slice that share no element are borrowed apart.
+fn DisjointSliceParts(s: &mut []i32) -> i32 {
+    let part = &mut s[1..];
+    let first = s[0];
+    part[0] = first;
+    let x = &mut s[0];
+    let rest = &s[1..2];
+    x.* = rest[0];
+    return first;
+}
+
+// A slice's length is its own: reading it uses no loan of its elements.
+fn LengthAfterChange() {
+    let mut values = [3]i32{1, 2, 3};
+    let view = &mut values[..];
+    values[0] = 1;
+    println(view.len);
+}
+
+iface Sized { fn size(&self) -> i32 }
+struct Square { side: i32 }
+fn Square::size(&self) -> i32 { return self.side; }
+fn resize(s: &mut Sized, by: i32) {}
+fn measure(s: &Sized) -> i32 { return s.size(); }
+struct Edit { target: &mut i32 }
+fn apply(edit: Edit, value: i32) {}
+
+// A `&mut` passed in memory, as an interface reference or in a struct,
+// takes hold only when the call starts, as one passed alone does.
+fn ArgumentsInMemoryRead() {
+    let mut square = Square.{ side = 1 };
+    resize(&mut square, measure(&square));
+    let mut x = 1;
+    apply(Edit.{ target = &mut x }, read(&x));
+}
+
+// A spread of known length puts each part in its own element.
+fn KnownSpread() -> i32 {
+    let mut a = 1;
+    let b = 2;
+    let first = [1]&i32{ &a };
+    let refs = [2]&i32{ first..., &b };
+    a = 5;
+    return refs[1].*;
+}

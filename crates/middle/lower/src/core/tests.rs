@@ -184,7 +184,7 @@ fn main() -> i64 { let p = Point.{ x = 1, y = 2 }; return sum(p); }",
     );
     assert!(
         text.contains(
-            "    moved 16 p.0\n    copy 16 .1, p.0\n    %4 = address 16 .1\n    %5 = call sum(%4)\n"
+            "    copy 16 .1, p.0\n    moved 16 p.0\n    %4 = address 16 .1\n    %5 = call sum(%4)\n"
         ),
         "{text}"
     );
@@ -518,4 +518,34 @@ fn a_mutable_reference_or_slice_moves_with_how_to_lend_it_again() {
         "{text}"
     );
     assert!(!text.contains("moved q."), "{text}");
+}
+
+/// A struct is moved once its bytes are read; an owned interface taken by
+/// value once its words are read; a field read out of a call's temporary
+/// moves nothing, as nothing reads the temporary again.
+#[test]
+fn a_value_in_memory_moves_after_it_is_read() {
+    let text = lowered(
+        "iface Shape { fn retire(self) -> i32 }
+struct Square { side: i32 }
+fn Square::retire(self) -> i32 { return self.side; }
+struct Pair { a: Square, b: Square }
+fn make() -> Pair { return Pair.{ a = Square.{ side = 1 }, b = Square.{ side = 2 } }; }
+fn main() {
+    let p = make();
+    let q = p;
+    let s: Shape = Square.{ side = 3 };
+    let n = s.retire();
+    let a = make().a;
+}",
+    );
+    assert!(
+        text.contains("    copy 8 q.1, p.0\n    moved 8 p.0\n"),
+        "{text}"
+    );
+    assert!(
+        text.contains("load ptr s.3[+8]\n    moved 16 s.3\n"),
+        "{text}"
+    );
+    assert_eq!(text.matches("moved").count(), 2, "{text}");
 }

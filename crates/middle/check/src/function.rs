@@ -204,24 +204,25 @@ impl Checker<'_> {
         let modules = self.modules;
         let module = definition.module.index();
         let Type::Function {
-            parameters,
-            result,
-            origins,
-            ..
+            parameters, result, ..
         } = &self.types[ty]
         else {
             unreachable!("a checked body has a function type")
         };
         let mir = lower::lower(thir, parameters.len(), *result, &self.types)?;
+        // shortcut: no debug type is read here, as in `evaluate_call`.
+        let debug_types = &mut DebugTypes::default();
+        let core = lower::core::lower(thir, ty, &self.types, self.target, modules, debug_types)?;
         let file = &modules[module].ast.file;
         let diagnostics = &mut self.module_checks[module].diagnostics;
         let types = &self.types;
-        flow::variable_state::report_variable_state_errors(&mir, types, file, diagnostics);
-        flow::loans::report_loan_errors(&mir, types, origins, file, diagnostics);
-        flow::warn_unreachable_code(&mir, file, diagnostics);
+        flow::variable_state::report_variable_state_errors(&core, file, diagnostics);
+        let pointer_bytes = u64::from(self.target.pointer_bits / 8);
+        flow::loans::report_loan_errors(&core, pointer_bytes, file, diagnostics);
+        flow::warn_unreachable_code(&core, file, diagnostics);
         // Last: it points at the closing brace.
         flow::report_missing_return(
-            &mir,
+            &core,
             file,
             types,
             *result,

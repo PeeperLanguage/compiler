@@ -13,7 +13,17 @@ use model::mir;
 use model::mir::InstructionKind;
 use model::mir::Terminator;
 
-use crate::reachable;
+/// Which blocks control can reach from the entry, by index.
+fn reachable(body: &mir::Body) -> Vec<bool> {
+    let mut reachable = vec![false; body.blocks.len()];
+    let mut pending = vec![Id::from_index(0)];
+    while let Some(block) = pending.pop() {
+        if !std::mem::replace(&mut reachable[block.index()], true) {
+            pending.extend(body.blocks[block].terminator.targets());
+        }
+    }
+    reachable
+}
 
 /// Removes what no later phase uses. The block order stays, so the entry is
 /// still the first block.

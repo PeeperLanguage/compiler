@@ -122,7 +122,10 @@ fn large_functions_stay_small() {
         // 21 MB as it runs first here; 47 MB with a set of every holder at
         // every block's end. At 400 groups, a table of every holder and loan
         // at every block took 407 MB.
-        ("branching", branching_function(4000), 30),
+        // shortcut: 45 MB, as `check` builds the old MIR next to the core
+        // MIR (32 MB); back to 30 once the old MIR is removed (step 16 of
+        // the middle cleanup).
+        ("branching", branching_function(4000), 45),
         // 2 MB after `branching`; 28 MB alone, keeping the live holders after
         // each instruction.
         ("straight", straight_function(3000), 8),

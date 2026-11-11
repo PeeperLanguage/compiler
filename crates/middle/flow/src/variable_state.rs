@@ -7,9 +7,12 @@ use std::sync::Arc;
 
 use arena::Id;
 use diagnostics::Diagnostic;
-use model::mir;
-use model::semantic_types::Type;
-use model::semantic_types::Types;
+use model::core_mir;
+use model::core_mir::InstructionKind;
+use model::core_mir::Place;
+use model::core_mir::Root;
+use model::core_mir::Slot;
+use model::core_mir::Step;
 use source::SourceFile;
 use source::Span;
 
@@ -17,47 +20,57 @@ use crate::Bits;
 use crate::dataflow;
 use crate::predecessors;
 
-/// A variable the check follows, numbered from 0 in variable order. Only
-/// named by `Id<Tracked>`.
+/// A slot the check follows, numbered from 0 in slot order. Only named by
+/// `Id<Tracked>`.
 enum Tracked {}
 
 /// Reports each variable used where it may not be set yet or was moved, and
 /// each variable without `mut` assigned where it may already be set, once per
 /// variable; and each move out of a field. Only a `let` without a value is
 /// unset at first, and only a move unsets a variable or takes a part of a
-/// place. So only a variable with one of the two is tracked: any other is set
+/// place. So only a slot with one of the two is tracked: any other is set
 /// wherever it is in scope, and the checker refuses a second assignment to
 /// one without `mut`. A function with neither is not walked.
 ///
+/// A slot declared with a value is set from the start and again where its
+/// storage ends (`Dead`), as the next pass of a loop declares it anew: its
+/// value may be built in place, a part at a time, with no whole write.
+///
 /// Forward dataflow over the reachable blocks: `dataflow` finds the `Facts`
 /// at each block's start; the loop walks each block again from them and
-/// reports at each use and `store`.
+/// reports at each use and whole write.
 pub fn report_variable_state_errors(
-    body: &mir::Body,
-    types: &Types,
+    body: &core_mir::Body,
     file: &Arc<SourceFile>,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
-    let starts_set = |variable| body.variables[variable].initialized;
-    let moves = |id| matches!(body.instructions[id].kind, mir::InstructionKind::Move(_));
-    if body.variables.ids().all(starts_set) && !body.instructions.ids().any(moves) {
+    let starts_set = |slot| body.slots[slot].initialized;
+    let moves = |id| matches!(body.instructions[id].kind, InstructionKind::Moved { .. });
+    if body.slots.ids().all(starts_set) && !body.instructions.ids().any(moves) {
         return;
     }
-    let (tracked, tracked_count) = tracked_variables(body);
-    let tracked = |variable: Id<mir::Variable>| tracked[variable.index()];
-    let instructions = |block: Id<mir::Block>| body.lists.items(body.blocks[block].instructions);
+    let (tracked, tracked_count) = tracked_slots(body);
+    let tracked = |slot: Id<Slot>| tracked[slot.index()];
+    let mut entry = Facts::new(tracked_count);
+    for slot in body.slots.ids().filter(|&slot| starts_set(slot)) {
+        if let Some(followed) = tracked(slot) {
+            entry.declare(followed, true);
+        }
+    }
+    let instructions =
+        |block: Id<core_mir::Block>| body.lists.items(body.blocks[block].instructions);
     let starts = dataflow(
         body.blocks.len(),
-        [(Id::from_index(0), Facts::new(tracked_count))],
+        [(Id::from_index(0), entry)],
         |block| body.blocks[block].terminator.targets(),
         |block, facts| {
             for instruction in instructions(block) {
-                facts.step(&body.instructions[instruction].kind, tracked);
+                facts.step(body, &body.instructions[instruction].kind, tracked);
             }
         },
         Facts::join,
     );
-    let mut reported = vec![false; body.variables.len()];
+    let mut reported = vec![false; body.slots.len()];
     let mut errors = Vec::new();
     for (block, start) in body.blocks.ids().zip(starts) {
         let Some(mut facts) = start else {
@@ -66,82 +79,115 @@ pub fn report_variable_state_errors(
         for (position, instruction) in instructions(block).enumerate() {
             let span = body.instructions.span(instruction);
             let kind = &body.instructions[instruction].kind;
-            let error = match kind {
-                mir::InstructionKind::Move(place) if place.whole_variable().is_none() => {
-                    let error =
-                        partial_move(file, span, place, &types[body.instructions[instruction].ty]);
-                    errors.push((span.start, error));
-                    None
-                }
-                mir::InstructionKind::Store { place, .. }
-                    if let Some(variable) = place.whole_variable()
-                        && let Some(followed) = tracked(variable) =>
-                {
-                    let assigned = facts.maybe.has(followed) && !body.variables[variable].mutable;
+            if let InstructionKind::Moved {
+                place, lent_again, ..
+            } = kind
+                && place.whole_slot().is_none()
+            {
+                errors.push((span.start, partial_move(file, span, place, *lent_again)));
+            }
+            for access in accesses(kind) {
+                let Root::Slot(slot) = access.place.root else {
+                    continue;
+                };
+                let Some(followed) = tracked(slot) else {
+                    continue;
+                };
+                let error = if access.writes && access.place.whole_slot().is_some() {
+                    // A slot declared with a value: the checker refuses a
+                    // second assignment to one without `mut`.
+                    let declared = &body.slots[slot];
+                    let assigned =
+                        facts.maybe.has(followed) && !declared.mutable && !declared.initialized;
                     assigned.then(|| {
                         let set = if facts.always.has(followed) {
                             "is already set here"
                         } else {
                             "may already be set here"
                         };
-                        (variable, second_assignment(body, file, variable, span, set))
+                        second_assignment(body, file, slot, span, set)
                     })
-                }
-                mir::InstructionKind::Load(place)
-                | mir::InstructionKind::Length(place)
-                | mir::InstructionKind::Move(place)
-                | mir::InstructionKind::Store { place, .. }
-                | mir::InstructionKind::Borrow { place, .. }
-                | mir::InstructionKind::Address(place)
-                    if let Some(followed) = tracked(place.variable)
-                        && !facts.always.has(followed) =>
-                {
-                    let variable = place.variable;
+                } else if !facts.always.has(followed) {
                     // Writing through a reference only reads the variable.
-                    let writes_part = matches!(kind, mir::InstructionKind::Store { .. })
-                        && !place.is_behind_reference();
-                    let written = writes_part.then(|| part_and_holder(place)[0]);
-                    let error = if facts.moved.has(followed) {
-                        let moves = move_sites(body, variable, block, position);
-                        moved_use(body, file, variable, span, &moves, written)
+                    let writes_part = access.writes && !access.place.is_behind_pointer();
+                    let written = writes_part.then(|| part_and_holder(access.place)[0]);
+                    Some(if facts.moved.has(followed) {
+                        let moves = move_sites(body, slot, block, position);
+                        moved_use(body, file, slot, span, &moves, written)
                     } else {
                         let state = if facts.maybe.has(followed) {
                             "is not set on every path to here"
                         } else {
                             "is not set yet here"
                         };
-                        unset_use(body, file, variable, span, state, written)
-                    };
-                    Some((variable, error))
+                        unset_use(body, file, slot, span, state, written)
+                    })
+                } else {
+                    None
+                };
+                if let Some(error) = error
+                    && !std::mem::replace(&mut reported[slot.index()], true)
+                {
+                    errors.push((span.start, error));
                 }
-                _ => None,
-            };
-            facts.step(kind, tracked);
-            if let Some((variable, error)) = error
-                && !std::mem::replace(&mut reported[variable.index()], true)
-            {
-                errors.push((span.start, error));
             }
+            facts.step(body, kind, tracked);
         }
     }
     errors.sort_by_key(|&(start, _)| start);
     diagnostics.extend(errors.into_iter().map(|(_, error)| error));
 }
-/// Each variable's number if the check follows it: its `let` has no value,
-/// or a `move` takes it whole somewhere. Also how many are followed.
-fn tracked_variables(body: &mir::Body) -> (Vec<Option<Id<Tracked>>>, usize) {
-    let mut moved = vec![false; body.variables.len()];
+
+/// A place an instruction reads or writes, as this check sees it.
+struct Access<'p> {
+    place: &'p Place,
+    writes: bool,
+}
+
+/// The places `kind` reads or writes, a read first. `Moved` is not one: the
+/// read before it is.
+fn accesses(kind: &InstructionKind) -> impl Iterator<Item = Access<'_>> {
+    let read = |place| Access {
+        place,
+        writes: false,
+    };
+    let write = |place| Access {
+        place,
+        writes: true,
+    };
+    let (first, second) = match kind {
+        InstructionKind::Load { place, .. }
+        | InstructionKind::Borrow { place, .. }
+        | InstructionKind::Address { place, .. } => (Some(read(place)), None),
+        InstructionKind::Store { place, .. } => (Some(write(place)), None),
+        InstructionKind::Copy { to, from, .. } => (Some(read(from)), Some(write(to))),
+        InstructionKind::Integer { .. }
+        | InstructionKind::Float { .. }
+        | InstructionKind::Compare { .. }
+        | InstructionKind::Convert { .. }
+        | InstructionKind::Call { .. }
+        | InstructionKind::Check { .. }
+        | InstructionKind::Moved { .. }
+        | InstructionKind::Dead(_) => (None, None),
+    };
+    first.into_iter().chain(second)
+}
+
+/// Each slot's number if the check follows it: its `let` has no value, or a
+/// `Moved` takes it whole somewhere. Also how many are followed.
+fn tracked_slots(body: &core_mir::Body) -> (Vec<Option<Id<Tracked>>>, usize) {
+    let mut moved = vec![false; body.slots.len()];
     for id in body.instructions.ids() {
-        if let mir::InstructionKind::Move(place) = &body.instructions[id].kind
-            && let Some(variable) = place.whole_variable()
+        if let InstructionKind::Moved { place, .. } = &body.instructions[id].kind
+            && let Some(slot) = place.whole_slot()
         {
-            moved[variable.index()] = true;
+            moved[slot.index()] = true;
         }
     }
     let mut count = 0;
-    let tracked = (body.variables.ids())
-        .map(|variable| {
-            let follows = !body.variables[variable].initialized || moved[variable.index()];
+    let tracked = (body.slots.ids())
+        .map(|slot| {
+            let follows = !body.slots[slot].initialized || moved[slot.index()];
             follows.then(|| {
                 count += 1;
                 Id::from_index(count - 1)
@@ -151,16 +197,17 @@ fn tracked_variables(body: &mir::Body) -> (Vec<Option<Id<Tracked>>>, usize) {
     (tracked, count)
 }
 
-/// What is known about each tracked variable at one point of a function, one
-/// bit per tracked variable in each set.
+/// What is known about each tracked slot at one point of a function, one bit
+/// per tracked slot in each set.
 #[derive(Clone, PartialEq)]
 struct Facts {
     always: Bits<Tracked>, // set on every path to here (joined with "and")
     maybe: Bits<Tracked>,  // set on some path to here, even if moved since ("or")
     moved: Bits<Tracked>,  // moved on some path to here and not set since ("or")
 }
+
 impl Facts {
-    /// Nothing set or moved, for `count` tracked variables.
+    /// Nothing set or moved, for `count` tracked slots.
     fn new(count: usize) -> Facts {
         let none = Bits::new(count);
         Facts {
@@ -170,33 +217,43 @@ impl Facts {
         }
     }
 
-    /// The facts after `kind` runs, `tracked` giving each variable's number
-    /// if it is tracked: a `store` to a whole variable sets it, a `move` of
-    /// one unsets it, and the end of its scope forgets it, so a loop's next
-    /// pass declares it anew.
+    /// `followed` where it is declared: set when declared with a value, else
+    /// unset; never moved.
+    fn declare(&mut self, followed: Id<Tracked>, set: bool) {
+        if set {
+            self.always.set(followed);
+            self.maybe.set(followed);
+        } else {
+            self.always.clear(followed);
+            self.maybe.clear(followed);
+        }
+        self.moved.clear(followed);
+    }
+
+    /// The facts after `kind` runs in `body`, `tracked` giving each slot's
+    /// number if it is tracked: a whole write sets it, a `Moved` of all of it
+    /// unsets it, and the end of its storage declares it anew for the next
+    /// pass of a loop.
     fn step(
         &mut self,
-        kind: &mir::InstructionKind,
-        tracked: impl Fn(Id<mir::Variable>) -> Option<Id<Tracked>>,
+        body: &core_mir::Body,
+        kind: &InstructionKind,
+        tracked: impl Fn(Id<Slot>) -> Option<Id<Tracked>>,
     ) {
         match kind {
-            mir::InstructionKind::Store { place, .. }
-                if let Some(followed) = place.whole_variable().and_then(&tracked) =>
+            InstructionKind::Store { place, .. } | InstructionKind::Copy { to: place, .. }
+                if let Some(followed) = place.whole_slot().and_then(&tracked) =>
             {
-                self.always.set(followed);
-                self.maybe.set(followed);
-                self.moved.clear(followed);
+                self.declare(followed, true);
             }
-            mir::InstructionKind::Move(place)
-                if let Some(followed) = place.whole_variable().and_then(&tracked) =>
+            InstructionKind::Moved { place, .. }
+                if let Some(followed) = place.whole_slot().and_then(&tracked) =>
             {
                 self.always.clear(followed);
                 self.moved.set(followed);
             }
-            mir::InstructionKind::ScopeEnd(variable) if let Some(followed) = tracked(*variable) => {
-                self.always.clear(followed);
-                self.maybe.clear(followed);
-                self.moved.clear(followed);
+            InstructionKind::Dead(slot) if let Some(followed) = tracked(*slot) => {
+                self.declare(followed, body.slots[*slot].initialized);
             }
             _ => {}
         }
@@ -211,12 +268,14 @@ impl Facts {
         }
     }
 }
-/// Where `variable` was moved on the paths to the instruction at `position`
-/// of `block` that do not set it again: searched back only for an error.
+
+/// Where `slot` was moved on the paths to the instruction at `position` of
+/// `block` that do not set it again or end it: searched back only for an
+/// error.
 fn move_sites(
-    body: &mir::Body,
-    variable: Id<mir::Variable>,
-    block: Id<mir::Block>,
+    body: &core_mir::Body,
+    slot: Id<Slot>,
+    block: Id<core_mir::Block>,
     position: usize,
 ) -> Vec<Span> {
     let predecessors = predecessors(body);
@@ -226,18 +285,19 @@ fn move_sites(
     while let Some((block, end)) = pending.pop() {
         let instructions: Vec<_> = body.lists.items(body.blocks[block].instructions).collect();
         let before = &instructions[..end.unwrap_or(instructions.len())];
-        // The last move or store of `variable` before `end`: the move is a site;
-        // a store ends the path.
+        // The last move, whole write or end of `slot` before `end`: the move
+        // is a site; the others end the path.
         let last = before.iter().rev().find_map(|&instruction| {
             match &body.instructions[instruction].kind {
-                mir::InstructionKind::Move(moved) if moved.whole_variable() == Some(variable) => {
+                InstructionKind::Moved { place, .. } if place.whole_slot() == Some(slot) => {
                     Some(Some(body.instructions.span(instruction)))
                 }
-                mir::InstructionKind::Store { place, .. }
-                    if place.whole_variable() == Some(variable) =>
+                InstructionKind::Store { place, .. } | InstructionKind::Copy { to: place, .. }
+                    if place.whole_slot() == Some(slot) =>
                 {
                     Some(None)
                 }
+                InstructionKind::Dead(ended) if *ended == slot => Some(None),
                 _ => None,
             }
         });
@@ -256,18 +316,19 @@ fn move_sites(
     sites.dedup();
     sites
 }
-/// The error for `variable`, used at `span` where it is not set on every path
-/// to there, as `state` says. A use that sets a `written` part, such as "a
+
+/// The error for `slot`, used at `span` where it is not set on every path to
+/// there, as `state` says. A use that sets a `written` part, such as "a
 /// field", needs the whole value set.
 fn unset_use(
-    body: &mir::Body,
+    body: &core_mir::Body,
     file: &Arc<SourceFile>,
-    variable: Id<mir::Variable>,
+    slot: Id<Slot>,
     span: Span,
     state: &str,
     written: Option<&str>,
 ) -> Diagnostic {
-    let declared = body.variables.span(variable);
+    let declared = body.slots.span(slot);
     let name = file.slice(declared);
     let message = match written {
         Some(part) => format!("cannot set {part} of `{name}` before `{name}` is set"),
@@ -275,25 +336,26 @@ fn unset_use(
     };
     Diagnostic::new(diagnostics::USED_BEFORE_SET, message)
         .label(file, span, format!("`{name}` {state}"))
-    .label(file, declared, "declared here without a value")
-    .help(
-        format!(
-            "set `{name}` on every path before this use, or give it a value where it is declared"
-        ),
-        Vec::new(),
-    )
+        .label(file, declared, "declared here without a value")
+        .help(
+            format!(
+                "set `{name}` on every path before this use, or give it a value where it is declared"
+            ),
+            Vec::new(),
+        )
 }
-/// The error for `variable`, used at `span` where some path moved it at one
-/// of `moves`; a use that sets a `written` part, such as "a field".
+
+/// The error for `slot`, used at `span` where some path moved it at one of
+/// `moves`; a use that sets a `written` part, such as "a field".
 fn moved_use(
-    body: &mir::Body,
+    body: &core_mir::Body,
     file: &Arc<SourceFile>,
-    variable: Id<mir::Variable>,
+    slot: Id<Slot>,
     span: Span,
     moves: &[Span],
     written: Option<&str>,
 ) -> Diagnostic {
-    let name = file.slice(body.variables.span(variable));
+    let name = file.slice(body.slots.span(slot));
     let message = match written {
         Some(part) => format!("cannot set {part} of `{name}` after `{name}` was moved"),
         None => format!("`{name}` is used after it was moved"),
@@ -318,17 +380,18 @@ fn moved_use(
             Vec::new(),
         )
 }
-/// The error for a value of the type `moved`, which moves, read by value at
-/// `span` from `place`, a part of its variable: a value cannot be moved out
-/// of its struct or array, nor out of what a reference or raw pointer points
-/// to. A `&mut` or `&mut []` there can be lent again instead.
+
+/// The error for a value that moves, read by value at `span` from `place`, a
+/// part of its slot: a value cannot be moved out of its struct or array, nor
+/// out of what a reference or raw pointer points to. A `&mut` or `&mut []`
+/// there can be lent again instead, with `lent_again` after it.
 fn partial_move(
     file: &Arc<SourceFile>,
     span: Span,
-    place: &mir::Place,
-    moved: &Type,
+    place: &Place,
+    lent_again: Option<&str>,
 ) -> Diagnostic {
-    let (message, help) = if place.is_behind_reference() {
+    let (message, help) = if place.is_behind_pointer() {
         (
             "cannot move out of a reference or pointer".to_string(),
             "borrow it instead, or read only parts that copy".to_string(),
@@ -340,40 +403,34 @@ fn partial_move(
             format!("move the whole {whole}, or read only parts that copy"),
         )
     };
-    // As the checker lends one again (`ThirBuilder::reborrow`).
-    let lent_through = match *moved {
-        Type::Reference { mutable: true, .. } | Type::InterfaceReference { mutable: true, .. } => {
-            Some(".*")
-        }
-        Type::Slice { mutable: true, .. } => Some("[..]"),
-        _ => None,
-    };
     let text = file.slice(span);
-    let help = lent_through.map_or(help, |step| {
+    let help = lent_again.map_or(help, |step| {
         format!("lend it again with `&mut {text}{step}`, or `&{text}{step}` to only read")
     });
     Diagnostic::new(diagnostics::PARTIAL_MOVE, message)
         .label(file, span, "this value's type moves")
         .help(help, Vec::new())
 }
-/// The part of a value that `place`, not a whole variable, names last, and
-/// what holds it: "a field" of a "struct" or "an element" of an "array".
-fn part_and_holder(place: &mir::Place) -> [&'static str; 2] {
-    match place.projections.last() {
-        Some(mir::Projection::Index(_)) => ["an element", "array"],
+
+/// The part of a value that `place`, not a whole slot, names last, and what
+/// holds it: "a field" of a "struct" or "an element" of an "array".
+fn part_and_holder(place: &Place) -> [&'static str; 2] {
+    match place.steps.last() {
+        Some(Step::Index { .. }) => ["an element", "array"],
         _ => ["a field", "struct"],
     }
 }
-/// The error for `variable`, without `mut`, assigned at `span` where some path
+
+/// The error for `slot`, without `mut`, assigned at `span` where some path
 /// already set it, as `set` says.
 fn second_assignment(
-    body: &mir::Body,
+    body: &core_mir::Body,
     file: &Arc<SourceFile>,
-    variable: Id<mir::Variable>,
+    slot: Id<Slot>,
     span: Span,
     set: &str,
 ) -> Diagnostic {
-    let declared = body.variables.span(variable);
+    let declared = body.slots.span(slot);
     let name = file.slice(declared);
     Diagnostic::new(
         diagnostics::INVALID_ASSIGNMENT,

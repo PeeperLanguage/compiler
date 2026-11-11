@@ -39,6 +39,7 @@ use model::core_mir::Operand;
 use model::core_mir::Passing;
 use model::core_mir::Place;
 use model::core_mir::REFERENCE_WORDS;
+use model::core_mir::Root;
 use model::core_mir::SLICE_WORDS;
 use model::core_mir::Signature;
 use model::core_mir::Slot;
@@ -238,6 +239,10 @@ struct Loop {
 enum Value {
     Register(Operand),
     Memory(Place),
+    /// Kept in memory at the place, read at the span out of a variable
+    /// whose type moves: whoever takes the value marks it moved once its
+    /// bytes are read (`put`, a method's receiver, `print`).
+    Moving(Place, Span),
     Nothing,
 }
 
@@ -245,13 +250,16 @@ impl Value {
     fn register(&self) -> Operand {
         match self {
             Value::Register(operand) => *operand,
-            Value::Memory(_) | Value::Nothing => unreachable!("the value is a register"),
+            Value::Memory(_) | Value::Moving(..) | Value::Nothing => {
+                unreachable!("the value is a register")
+            }
         }
     }
 
     fn memory(self) -> Place {
         match self {
             Value::Memory(place) => place,
+            Value::Moving(..) => unreachable!("a value that moves is taken where it moves"),
             Value::Register(_) | Value::Nothing => unreachable!("the value is kept in memory"),
         }
     }
@@ -384,51 +392,73 @@ impl Lowering<'_> {
     /// the bytes of a value kept in memory. Nothing when the value is
     /// already there.
     fn put(&mut self, place: Place, value: Value, ty: TypeId, span: Span) {
-        match value {
+        let (from, moved_at) = match value {
             Value::Register(value) => {
                 let class = self.class(ty).expect("a register has a class");
                 self.store(class, place, value, span);
+                return;
             }
-            Value::Memory(from) => {
-                if from == place {
-                    return; // `a = a`: the bytes are already there
-                }
-                let (size, _) = layout(self.types, ty, self.target);
-                let kind = InstructionKind::Copy {
-                    to: place,
-                    from,
-                    size,
-                };
-                self.emit(kind, span);
-            }
+            Value::Memory(from) => (from, None),
+            Value::Moving(from, read) => (from, Some(read)),
             Value::Nothing => unreachable!("only a value is put somewhere"),
+        };
+        if from == place {
+            return; // `a = a`: the bytes are already there
+        }
+        let (size, _) = layout(self.types, ty, self.target);
+        let kind = InstructionKind::Copy {
+            to: place,
+            from: from.clone(),
+            size,
+        };
+        self.emit(kind, span);
+        if let Some(read) = moved_at {
+            self.mark_moved(from, ty, read);
         }
     }
 
-    /// The value of the type `ty` at `place`: a load, or the place itself
-    /// for a value kept in memory; moved out when its type moves.
+    /// The value of the type `ty` read at `place`, at `span`: a load,
+    /// marked moved when it moves out, or the place itself for a value kept
+    /// in memory, `Moving` when it moves out. A value read out of one of
+    /// lowering's temporaries moves nothing: nothing reads the temporary
+    /// again (the old MIR read such a part out of a value).
     fn read(&mut self, place: Place, ty: TypeId, span: Span) -> Value {
-        let value = match self.class(ty) {
-            Some(class) => Value::Register(self.load(class, place.clone(), span)),
-            None => Value::Memory(place.clone()),
+        let temporary = matches!(
+            place.root,
+            Root::Slot(slot) if slot.index() >= self.thir.variables.len()
+        );
+        let moves = !self.types.is_copy(ty) && !temporary;
+        let Some(class) = self.class(ty) else {
+            return if moves {
+                Value::Moving(place, span)
+            } else {
+                Value::Memory(place)
+            };
         };
-        if !self.types.is_copy(ty) {
-            // As the checker lends one again (`ThirBuilder::reborrow`).
-            let lent_again = match self.types[ty] {
-                Type::Reference { mutable: true, .. }
-                | Type::InterfaceReference { mutable: true, .. } => Some(".*"),
-                Type::Slice { mutable: true, .. } => Some("[..]"),
-                _ => None,
-            };
-            let (size, _) = layout(self.types, ty, self.target);
-            let kind = InstructionKind::Moved {
-                place,
-                size,
-                lent_again,
-            };
-            self.emit(kind, span);
+        let value = self.load(class, place.clone(), span);
+        if moves {
+            self.mark_moved(place, ty, span);
         }
-        value
+        Value::Register(value)
+    }
+
+    /// `Moved` for the value of the type `ty`, which moves, just read at
+    /// `place` at `span`.
+    fn mark_moved(&mut self, place: Place, ty: TypeId, span: Span) {
+        // As the checker lends one again (`ThirBuilder::reborrow`).
+        let lent_again = match self.types[ty] {
+            Type::Reference { mutable: true, .. }
+            | Type::InterfaceReference { mutable: true, .. } => Some(".*"),
+            Type::Slice { mutable: true, .. } => Some("[..]"),
+            _ => None,
+        };
+        let (size, _) = layout(self.types, ty, self.target);
+        let kind = InstructionKind::Moved {
+            place,
+            size,
+            lent_again,
+        };
+        self.emit(kind, span);
     }
 
     /// A new slot for a value of the type `ty` made at `span`, in scope
@@ -534,6 +564,12 @@ impl Lowering<'_> {
     }
 
     fn add_holders(&self, ty: TypeId, at: u64, holders: &mut Vec<Holder>) {
+        let ty = self.types.real(ty);
+        // A struct holding another twice has 2^depth fields, so a type with
+        // no holders is not walked.
+        if self.types.holders_in(ty) == 0 {
+            return;
+        }
         match &self.types[ty] {
             Type::Slice { .. } => holders.push(Holder {
                 offset: at,
@@ -549,14 +585,11 @@ impl Lowering<'_> {
                 fields, internals, ..
             } => {
                 for (&field, &offset) in fields.iter().zip(&internals.offsets) {
-                    self.add_holders(self.types.real(field), at + offset, holders);
+                    self.add_holders(field, at + offset, holders);
                 }
             }
             Type::Array { internals, .. } => {
                 let base = self.types.real(internals.base);
-                if self.types.holders_in(base) == 0 {
-                    return;
-                }
                 let (size, _) = layout(self.types, base, self.target);
                 for index in 0..internals.count {
                     self.add_holders(base, at + index * size, holders);

@@ -667,7 +667,7 @@ impl Writer<'_, '_, '_> {
     fn write_instruction(&mut self, out: &mut String, id: Id<Instruction>) {
         let body = self.body;
         let Instruction { kind, debug_scope } = &body.instructions[id];
-        if let InstructionKind::Moved { .. } | InstructionKind::Dead(_) = kind {
+        if !kind.runs() {
             return; // for the path checks only
         }
         let location = self.location(body.instructions.span(id), *debug_scope);
@@ -1148,12 +1148,8 @@ fn jump_targets(body: &Body) -> Vec<Id<Block>> {
         let Terminator::Jump(next) = data.terminator else {
             return None;
         };
-        let writes = body.lists.items(data.instructions).any(|id| {
-            !matches!(
-                body.instructions[id].kind,
-                InstructionKind::Moved { .. } | InstructionKind::Dead(_)
-            )
-        });
+        let writes =
+            (body.lists.items(data.instructions)).any(|id| body.instructions[id].kind.runs());
         (!writes).then_some(next)
     };
     // Each block is followed once: a chain found is kept for every block on it.

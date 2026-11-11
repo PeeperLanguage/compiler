@@ -444,6 +444,19 @@ impl Place {
         }
     }
 
+    /// The slot when the place is all of its memory.
+    pub fn whole_slot(&self) -> Option<Id<Slot>> {
+        match self.root {
+            Root::Slot(slot) if self.steps.is_empty() => Some(slot),
+            _ => None,
+        }
+    }
+
+    /// Whether it is memory a pointer leads to, not a slot's own.
+    pub fn is_behind_pointer(&self) -> bool {
+        matches!(self.root, Root::At(_)) || self.steps.contains(&Step::Through)
+    }
+
     /// The place `step` further in.
     pub fn then(mut self, step: Step) -> Place {
         let mut steps = self.steps.into_vec();
@@ -646,6 +659,15 @@ pub enum Callee {
 }
 
 impl InstructionKind {
+    /// Whether it is code a compiled program runs: all but `Moved` and
+    /// `Dead`, which only mark a point for the path checks.
+    pub fn runs(&self) -> bool {
+        !matches!(
+            self,
+            InstructionKind::Moved { .. } | InstructionKind::Dead(_)
+        )
+    }
+
     /// The class of the value it gives, if any; a call's is read from its
     /// signature (`Body::class_of`).
     fn own_class(&self) -> Option<Class> {
@@ -690,6 +712,22 @@ pub enum Terminator {
     },
     /// The function's closing brace, reached without a `return`.
     FallOff(Span),
+}
+
+impl Terminator {
+    /// The blocks control can go to next.
+    pub fn targets(&self) -> impl Iterator<Item = Id<Block>> {
+        let targets = match *self {
+            Terminator::Jump(target) => [Some(target), None],
+            Terminator::Branch {
+                then, otherwise, ..
+            } => [Some(then), Some(otherwise)],
+            Terminator::Return { .. } | Terminator::Panic { .. } | Terminator::FallOff(_) => {
+                [None, None]
+            }
+        };
+        targets.into_iter().flatten()
+    }
 }
 
 impl Body {

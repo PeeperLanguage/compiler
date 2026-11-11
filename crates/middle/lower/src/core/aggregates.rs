@@ -138,7 +138,7 @@ impl Lowering<'_> {
         // Where the next part goes, in elements: a number until a part
         // counted when the program runs, then a register.
         let mut position: Result<u64, Operand> = Ok(0);
-        for (spread, part_type, value, count) in lowered {
+        for (&part, (spread, part_type, value, count)) in parts.iter().zip(lowered) {
             // A position counted when the program runs is already a `usize`.
             // Also how many elements there are from it to the end: at most
             // the length when only the program knows the position.
@@ -171,9 +171,16 @@ impl Lowering<'_> {
                     let from = Self::through_slice(value.memory());
                     self.copy_elements(to, room, from, count, size, span);
                 }
+                // A value in memory is read by its copy, at the part's own
+                // span; a register was read there already, and the literal
+                // keeps it.
                 Part::Value(value) => {
                     let (to, _) = at(&position);
-                    self.put(to, value, part_type, span);
+                    let at = match value {
+                        Value::Register(_) => span,
+                        _ => self.thir.exprs.span(part),
+                    };
+                    self.put(to, value, part_type, at);
                 }
             }
             position = match (position, count) {
