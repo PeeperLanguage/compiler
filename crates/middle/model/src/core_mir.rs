@@ -120,9 +120,10 @@ pub struct Body {
     /// kept in memory is written where `Operand::Parameter(0)` points, a
     /// hidden first parameter; the written ones follow it.
     pub signature: Signature,
-    /// The positions of the parameters a returned pointer may point into,
-    /// for the loan check.
-    pub origins: Box<[u32]>,
+    /// How a loan message names what the function returns: "a reference
+    /// into", "a slice of", "an interface holding"; `None` when its result
+    /// cannot hold a loan.
+    pub returned: Option<&'static str>,
     /// A block of the source, for a debugger: block `i` of the source is
     /// debug scope `i`.
     pub debug_scopes: Arena<DebugScope>,
@@ -140,8 +141,8 @@ pub struct Body {
 pub struct Slot {
     pub size: u64,
     pub align: u64,
-    /// The offsets of the pointers in it that may hold a loan.
-    pub holders: Box<[u64]>,
+    /// The pointers in it that may hold a loan.
+    pub holders: Box<[Holder]>,
     /// What a debugger shows it as; `None` for a temporary.
     pub debug_type: Option<DebugTypeId>,
     pub debug_scope: Id<DebugScope>, // the block it is declared in
@@ -152,6 +153,41 @@ pub struct Slot {
     /// Made for a value, not written; its span is not a name.
     pub hidden: bool,
 }
+
+/// A pointer in a slot that may hold a loan: a reference's, a slice's, an
+/// interface's.
+#[derive(Clone, Copy, Debug)]
+pub struct Holder {
+    pub offset: u64,
+    /// How a message names it ("reference used later here").
+    pub words: &'static LoanWords,
+}
+
+/// The words a loan message names a borrow or a holder with, chosen by
+/// lowering from the type: a reference's or a slice's.
+#[derive(Debug)]
+pub struct LoanWords {
+    pub noun: &'static str,             // "reference made here"
+    pub writable: &'static str,         // "a `&mut` argument"
+    pub to: &'static str,               // "a reference to it"
+    pub mutably_borrowed: &'static str, // "`x` is borrowed as `&mut`"
+}
+
+/// Those of a reference, an interface reference or an owned interface.
+pub const REFERENCE_WORDS: LoanWords = LoanWords {
+    noun: "reference",
+    writable: "`&mut`",
+    to: "to",
+    mutably_borrowed: "borrowed as `&mut`",
+};
+
+/// Those of a slice.
+pub const SLICE_WORDS: LoanWords = LoanWords {
+    noun: "slice",
+    writable: "`&mut []`",
+    to: "of",
+    mutably_borrowed: "borrowed as `&mut []`",
+};
 
 /// A block of the source, as THIR's `Block` without its statements, for a
 /// debugger.
@@ -261,6 +297,10 @@ pub struct Signature {
     /// ones of a variadic call too, and the result, as clang does on the
     /// target. `None` in Peeper's own convention.
     pub c: Option<CSignature>,
+    /// The positions of the written parameters a returned pointer may
+    /// point into, for the loan check: a hidden first parameter
+    /// (`hidden_parameters`) is not counted.
+    pub origins: Box<[u32]>,
 }
 
 /// How C passes the values of one call.
@@ -429,8 +469,14 @@ pub enum Step {
     /// What the pointer here points to.
     Through,
     /// The element `index`, a pointer-wide integer that lowering checked
-    /// to be inside, of `size` bytes each.
-    Index { index: Operand, size: u64 },
+    /// to be inside, of `size` bytes each. `count` is how many elements
+    /// there are from here, for the path checks; `None` when only the
+    /// program knows (a slice's elements).
+    Index {
+        index: Operand,
+        size: u64,
+        count: Option<u64>,
+    },
 }
 
 /// What an `Integer` instruction does to two registers of its class, the
@@ -545,8 +591,12 @@ pub enum InstructionKind {
         from: Place,
         size: u64,
     },
-    /// The place's address: a pointer that holds no loan.
-    Address(Place),
+    /// The place's address: a pointer that holds no loan. `size` is how
+    /// many bytes are there, for the path checks.
+    Address {
+        place: Place,
+        size: u64,
+    },
     /// A call, with the callee's signature (`Body::signatures`).
     Call {
         callee: Callee,
@@ -561,15 +611,23 @@ pub enum InstructionKind {
     },
     // The events, for the path checks only; removed before a backend runs.
     /// A reference to the place, `&mut` when `mutable`: a loan. Its value
-    /// is the place's address. `noun` is the word a message calls it:
-    /// "reference", "slice" or "interface".
+    /// is the place's address. `size` is how many bytes from the place
+    /// the loan covers, `None` for all there are, which only the program
+    /// knows (a slice's elements). `words` are how a message names it.
     Borrow {
         place: Place,
+        size: Option<u64>,
         mutable: bool,
-        noun: &'static str,
+        words: &'static LoanWords,
     },
-    /// The value at the place, just read, is moved out.
-    Moved(Place),
+    /// The value of `size` bytes at the place, just read, is moved out.
+    /// `lent_again` is the step a message adds to the place to lend it
+    /// again instead (`&mut x.*`, `&mut x[..]`), for a value that can be.
+    Moved {
+        place: Place,
+        size: u64,
+        lent_again: Option<&'static str>,
+    },
     /// The slot's storage ends: its block ends, or a jump leaves it.
     Dead(Id<Slot>),
 }
@@ -597,12 +655,14 @@ impl InstructionKind {
             | InstructionKind::Load { class, .. } => Some(*class),
             InstructionKind::Compare { .. } => Some(Class::I8),
             InstructionKind::Convert { to, .. } => Some(*to),
-            InstructionKind::Address(_) | InstructionKind::Borrow { .. } => Some(Class::Pointer),
+            InstructionKind::Address { .. } | InstructionKind::Borrow { .. } => {
+                Some(Class::Pointer)
+            }
             InstructionKind::Call { .. }
             | InstructionKind::Store { .. }
             | InstructionKind::Copy { .. }
             | InstructionKind::Check { .. }
-            | InstructionKind::Moved(_)
+            | InstructionKind::Moved { .. }
             | InstructionKind::Dead(_) => None,
         }
     }
@@ -836,8 +896,8 @@ impl Printer<'_> {
                 self.out.push_str(", ");
                 self.write_place(from);
             }
-            InstructionKind::Address(place) => {
-                self.out.push_str("address ");
+            InstructionKind::Address { place, size } => {
+                _ = write!(self.out, "address {size} ");
                 self.write_place(place);
             }
             InstructionKind::Call {
@@ -877,17 +937,28 @@ impl Printer<'_> {
             }
             InstructionKind::Borrow {
                 place,
+                size,
                 mutable,
-                noun,
+                words,
             } => {
                 let mutable = if *mutable { " mut" } else { "" };
                 _ = write!(self.out, "borrow{mutable} ");
+                if let Some(size) = size {
+                    _ = write!(self.out, "{size} ");
+                }
                 self.write_place(place);
-                _ = write!(self.out, " as {noun}");
+                _ = write!(self.out, " as {}", words.noun);
             }
-            InstructionKind::Moved(place) => {
-                self.out.push_str("moved ");
+            InstructionKind::Moved {
+                place,
+                size,
+                lent_again,
+            } => {
+                _ = write!(self.out, "moved {size} ");
                 self.write_place(place);
+                if let Some(step) = lent_again {
+                    _ = write!(self.out, " lent again with {step}");
+                }
             }
             InstructionKind::Dead(slot) => {
                 self.out.push_str("dead ");
@@ -978,9 +1049,12 @@ impl Printer<'_> {
             match *step {
                 Step::Offset(bytes) => _ = write!(self.out, "+{bytes}"),
                 Step::Through => self.out.push('*'),
-                Step::Index { index, size } => {
+                Step::Index { index, size, count } => {
                     self.write_operand(&index);
                     _ = write!(self.out, " * {size}");
+                    if let Some(count) = count {
+                        _ = write!(self.out, " of {count}");
+                    }
                 }
             }
         }

@@ -77,12 +77,14 @@ parameter passed in memory is the caller's private copy, at the address it
 passed (`Body::parameter_in_memory`), so it is never copied again.
 
 ```text
-Slot { size, align, holders: [offset], debug_type: Option<DebugTypeId>,
+Slot { size, align, holders: [Holder { offset, words }], debug_type: Option<DebugTypeId>,
        span, mutable, hidden }
 ```
 
 `holders` are the byte offsets of the pointers in the slot that may hold a
-loan (v4's `Slot::holders`). Today the loan check walks the type for this
+loan (v4's `Slot::holders`), each with the `LoanWords` a message names it
+by ("reference used later here"). `Body::returned` is how a message names
+what the function returns ("a slice of"), `None` when it holds no loan. Today the loan check walks the type for this
 (`Types::holders_in`, `semantic_types.rs:912`); here lowering writes it
 once and the check reads it.
 
@@ -94,14 +96,21 @@ at an address an operand gives. Steps are:
 - `Offset(bytes)`: a field, a word of a slice, an element at a known index;
 - `Through`: what the pointer here points to (a reference, a raw pointer,
   a slice's elements);
-- `Index { index: Operand, size }`: the element `index` of `size` bytes,
-  which lowering has already checked to be inside. Main's
-  `Projection::Index` (`mir.rs:97`) is this with the element size written
-  down. v4 had no dynamic index (arrays were paused).
+- `Index { index: Operand, size, count }`: the element `index` of `size`
+  bytes, which lowering has already checked to be inside, of `count`
+  elements from here (`None` for a slice's elements, which only the
+  program counts). Main's `Projection::Index` (`mir.rs:97`) is this with
+  the element size written down. v4 had no dynamic index (arrays were
+  paused).
 
-The path checks keep their place reasoning (`may_overlap`,
-`leaves_storage`, `mir.rs:104-132`) on these steps: two `Offset`s overlap
-when equal, two `Index`es always may, `Through` leaves the storage.
+The path checks see a place in a slot as a byte range: `Offset`s and
+constant indexes add up, an index only the program knows covers its
+`count` elements, and `Through` leaves the slot. Two accesses conflict
+when their ranges meet, and a place's holders are those inside its
+range. Each access says how many bytes it touches: a class's width,
+`Copy`'s, `Borrow`'s, `Moved`'s and `Address`'s `size`, a slot's size
+for `Dead`. A slice of an array covers from its start to the array's
+end, so a write before the start is allowed while the slice is in use.
 
 ### 3.4 Operands
 
@@ -125,7 +134,7 @@ Those that run:
 | `Load { class, place }` | one register from memory |
 | `Store { class, place, value }` | one register to memory |
 | `Copy { to, from, size }` | `size` bytes between two places that do not overlap |
-| `Address(place)` | the place's address; no loan |
+| `Address { place, size }` | the address of the `size` bytes at `place`; no loan |
 | `Call { callee, arguments }` | `callee` is a function id, a runtime symbol (`runtime_abi::symbols`), or an extern function; its signature says each parameter's class, or `Memory { size, align }` for a value passed by its address |
 | `CallThrough { signature, pointer, arguments }` | a call of the function at `pointer` |
 | `Check { failed, message }` | stops the program with `message` when the `I8` is not 0 |
@@ -134,8 +143,8 @@ The events, for the path checks only, removed before the backends run:
 
 | Event | Meaning |
 | --- | --- |
-| `Borrow { place, mutable, noun }` | a loan of `place`; its value is the address. `noun` is the word the message uses ("reference", "slice", "interface reference"), as `Check` carries its message: a word, not a feature |
-| `Moved(place)` | the value just read at `place` is moved out |
+| `Borrow { place, size, mutable, words }` | a loan of `size` bytes from `place` (`None`: all there are, a slice's elements); its value is the address. `words` are the `LoanWords` the message uses (a reference's or a slice's: noun, `&mut` form, "to"/"of"), chosen by lowering from the type |
+| `Moved { place, size, lent_again }` | the value of `size` bytes just read at `place` is moved out; `lent_again` is the step a message adds to lend it again instead (`.*`, `[..]`), for a `&mut` value |
 | `Dead(slot)` | the slot's storage ends |
 
 Terminators: `Jump`, `Branch { condition, span, then, otherwise }`,
@@ -170,11 +179,12 @@ LLVM writer reads the table and never sees a language type.
 | Today (`mir.rs:176-268`) | Lowering writes |
 | --- | --- |
 | `Load(place)` of a register type | `Load { class }` |
+| `Move(place)` of a register type (`&mut T`) | `Load { class }`, then `Moved` |
 | `Load`/`Move(place)` of a memory type | the place itself is the value; `Moved` for a move; a `Copy` where it is stored |
 | `Length(place)` | `Load { Pointer-wide, place + Offset(pointer_bytes) }` |
 | `Store { place, value }` | `Store` or `Copy` |
-| `Borrow { place, mutable }` of a reference | `Borrow { noun: "reference" }`; its value is the address |
-| `Borrow` of a slice `&a[i..j]` | the bounds `Check`s, then `Borrow { noun: "slice" }` of the elements, then two `Store`s (address, length) into the slice slot |
+| `Borrow { place, mutable }` of a reference | `Borrow { words: REFERENCE_WORDS }`; its value is the address |
+| `Borrow` of a slice `&a[i..j]` | the bounds `Check`s, then `Borrow { words: SLICE_WORDS }` of the elements, then two `Store`s (address, length) into the slice slot |
 | `Address(place)` | `Address` |
 | `Binary { op }` on integers | `Integer` or `Compare`; division and shifts are preceded by a `Check` with the message from `runtime_abi::messages`, which the backends trap on today |
 | `Binary` on floats or bools | `Float`, `Compare`, or `Integer` on `I8` |
@@ -205,9 +215,9 @@ sequences. It is the only phase after check that reads `Types`. Estimate:
 
 **Path checks** (`middle/flow`, 2,004) read slot holders instead of
 walking types; `origins` (the parameters a returned pointer may point
-into, `semantic_types.rs:192`) move onto the function's signature in the
-MIR; the mutability words in `variable_state.rs:345` come with the event
-as `Borrow::noun` does. Estimate: about the same size, 11 type matches
+into, `semantic_types.rs:192`) move onto each `Signature` in the MIR, so
+a call carries its callee's; the mutability words in `variable_state.rs:345` come with the event
+as `Borrow::words` does. Estimate: about the same size, 11 type matches
 gone.
 
 **Interpreter** (`middle/eval`, 2,578) is rewritten on v4's

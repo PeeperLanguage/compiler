@@ -11,6 +11,7 @@ use model::core_mir::InstructionKind;
 use model::core_mir::IntegerOp;
 use model::core_mir::Operand;
 use model::core_mir::Place;
+use model::core_mir::SLICE_WORDS;
 use model::core_mir::Slot;
 use model::core_mir::Step;
 use model::core_mir::Terminator;
@@ -139,30 +140,39 @@ impl Lowering<'_> {
         let mut position: Result<u64, Operand> = Ok(0);
         for (spread, part_type, value, count) in lowered {
             // A position counted when the program runs is already a `usize`.
+            // Also how many elements there are from it to the end: at most
+            // the length when only the program knows the position.
             let at = |position: &Result<u64, Operand>| match *position {
-                Ok(index) => place.clone().then(Step::Offset(index * size)),
-                Err(index) => place.clone().then(Step::Index { index, size }),
+                Ok(index) => (
+                    place.clone().then(Step::Offset(index * size)),
+                    length - index,
+                ),
+                Err(index) => {
+                    let count = Some(length);
+                    let step = Step::Index { index, size, count };
+                    (place.clone().then(step), length)
+                }
             };
             match value {
                 Part::Range(walk) => {
-                    let to = at(&position);
+                    let (to, room) = at(&position);
                     let count = match count {
                         Ok(count) => Operand::integer(self.usize, count),
                         Err(count) => self.as_usize(count, wide, span),
                     };
-                    self.fill_range(to, &walk, part_type, count, span);
+                    self.fill_range(to, room, &walk, part_type, count, span);
                 }
                 Part::Value(value)
                     if spread && matches!(self.types[part_type], Type::Slice { .. }) =>
                 {
-                    let to = at(&position);
+                    let (to, room) = at(&position);
                     let count = count.expect_err("a slice is counted when the program runs");
                     let count = self.as_usize(count, wide, span);
                     let from = Self::through_slice(value.memory());
-                    self.copy_elements(to, from, count, size, span);
+                    self.copy_elements(to, room, from, count, size, span);
                 }
                 Part::Value(value) => {
-                    let to = at(&position);
+                    let (to, _) = at(&position);
                     self.put(to, value, part_type, span);
                 }
             }
@@ -276,9 +286,18 @@ impl Lowering<'_> {
         self.emit(kind, span)
     }
 
-    /// Copies `count` elements of `size` bytes from `from` to `to`: a loop, so the code does not grow with the
-    /// count.
-    fn copy_elements(&mut self, to: Place, from: Place, count: Operand, size: u64, span: Span) {
+    /// Copies `count` elements of `size` bytes from `from`, a slice's
+    /// elements, to `to`, which has `room` elements to its array's end: a
+    /// loop, so the code does not grow with the count.
+    fn copy_elements(
+        &mut self,
+        to: Place,
+        room: u64,
+        from: Place,
+        count: Operand,
+        size: u64,
+        span: Span,
+    ) {
         let index = self.counter_slot(span);
         let (test, body, done) = (
             self.new_block(span),
@@ -297,8 +316,16 @@ impl Lowering<'_> {
         });
         self.block = body;
         let kind = InstructionKind::Copy {
-            to: to.then(Step::Index { index: at, size }),
-            from: from.then(Step::Index { index: at, size }),
+            to: to.then(Step::Index {
+                index: at,
+                size,
+                count: Some(room),
+            }),
+            from: from.then(Step::Index {
+                index: at,
+                size,
+                count: None,
+            }),
             size,
         };
         self.emit(kind, span);
@@ -308,11 +335,12 @@ impl Lowering<'_> {
     }
 
     /// Writes `count` values of the range whose walk is `walk`, of the type
-    /// `range_type`, as elements from `to` on: its `start`, then each
-    /// `delta` more, wrapping.
+    /// `range_type`, as elements from `to` on, which has `room` elements to
+    /// its array's end: its `start`, then each `delta` more, wrapping.
     fn fill_range(
         &mut self,
         to: Place,
+        room: u64,
         walk: &RangeWalk,
         range_type: TypeId,
         count: Operand,
@@ -349,7 +377,11 @@ impl Lowering<'_> {
         let current = self.load(class, Place::whole(value), span);
         self.store(
             class,
-            to.then(Step::Index { index: at, size }),
+            to.then(Step::Index {
+                index: at,
+                size,
+                count: Some(room),
+            }),
             current,
             span,
         );
@@ -816,11 +848,15 @@ impl Lowering<'_> {
                 span,
             ),
         };
+        // The loan runs from the start to the array's end, so a write
+        // before the start may happen while the slice is in use.
         let elements = place.then(Step::Index {
             index: start_operand,
             size,
+            count: known_length,
         });
-        let address = self.borrow(elements, mutable, "slice", span);
+        let covered = known_length.map(|length| (length - known_start.unwrap_or(0)) * size);
+        let address = self.borrow(elements, covered, mutable, &SLICE_WORDS, span);
         self.slice_words(address, count, to, span);
         Some(())
     }

@@ -123,7 +123,7 @@ impl Interpreter<'_, '_> {
                 copied.ok_or_else(|| self.fail(INVALID_ACCESS, self.span_of(id)))?;
                 return Ok(None);
             }
-            InstructionKind::Address(place) | InstructionKind::Borrow { place, .. } => {
+            InstructionKind::Address { place, .. } | InstructionKind::Borrow { place, .. } => {
                 u128::from(self.address(place, id)?)
             }
             InstructionKind::Call { .. } => unreachable!("`run_frames` runs a call"),
@@ -133,7 +133,7 @@ impl Interpreter<'_, '_> {
                 }
                 return Ok(None);
             }
-            InstructionKind::Moved(_) => return Ok(None),
+            InstructionKind::Moved { .. } => return Ok(None),
             InstructionKind::Dead(slot) => {
                 if let Some(started) = self.frame_mut().slots.get_mut(slot.index()) {
                     let started = std::mem::take(started);
@@ -208,7 +208,7 @@ impl Interpreter<'_, '_> {
             address = match step {
                 Step::Offset(bytes) => address.wrapping_add(bytes) & wrap,
                 Step::Through => self.read_word(address, id)?,
-                Step::Index { index, size } => {
+                Step::Index { index, size, .. } => {
                     let offset = (self.operand(index) as u64).wrapping_mul(size);
                     address.wrapping_add(offset) & wrap
                 }

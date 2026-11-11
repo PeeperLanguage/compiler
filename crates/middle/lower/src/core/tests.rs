@@ -184,7 +184,7 @@ fn main() -> i64 { let p = Point.{ x = 1, y = 2 }; return sum(p); }",
     );
     assert!(
         text.contains(
-            "    moved p.0\n    copy 16 .1, p.0\n    %4 = address .1\n    %5 = call sum(%4)\n"
+            "    moved 16 p.0\n    copy 16 .1, p.0\n    %4 = address 16 .1\n    %5 = call sum(%4)\n"
         ),
         "{text}"
     );
@@ -225,7 +225,7 @@ fn main() -> i32 { let p = make(); return p.x; }
 fn make() -> Point { return Point.{ x = 1, y = 2 }; }",
     );
     assert!(
-        text.contains("    %0 = address p.0\n    call make(%0)\n    %2 = load i32 p.0[+0]\n"),
+        text.contains("    %0 = address 16 p.0\n    call make(%0)\n    %2 = load i32 p.0[+0]\n"),
         "{text}"
     );
 }
@@ -263,7 +263,7 @@ fn and_keeps_its_result_in_a_hidden_byte() {
 fn a_reference_is_a_borrow_and_a_dereference_goes_through() {
     let text = lowered("fn main() -> i32 { let mut a = 1; let r = &mut a; r.* = 2; return a; }");
     assert!(
-        text.contains("    %1 = borrow mut a.0 as reference\n    store ptr r.1, %1\n"),
+        text.contains("    %1 = borrow mut 4 a.0 as reference\n    store ptr r.1, %1\n"),
         "{text}"
     );
     assert!(text.contains("    store i32 r.1[*], 2\n"), "{text}");
@@ -276,7 +276,7 @@ fn an_array_index_is_checked_and_scaled() {
     assert!(
         text.contains(
             "    %4 = load i64 i.1\n    %5 = ule i64 3, %4\n    \
-             check %5, \"index out of bounds: the length is 3\"\n    %7 = load i32 a.0[%4 * 4]\n"
+             check %5, \"index out of bounds: the length is 3\"\n    %7 = load i32 a.0[%4 * 4 of 3]\n"
         ),
         "{text}"
     );
@@ -286,7 +286,10 @@ fn an_array_index_is_checked_and_scaled() {
 fn a_slice_is_two_words_and_its_elements_are_behind_the_first() {
     let text =
         lowered("fn main() -> i32 { let a = [3]i32{1, 2, 3}; let s = &a[1..]; return s[0]; }");
-    assert!(text.contains("borrow a.0[1 * 4] as slice\n"), "{text}");
+    assert!(
+        text.contains("borrow 8 a.0[1 * 4 of 3] as slice\n"),
+        "{text}"
+    );
     assert!(text.contains("load i64 s.1[+8]\n"), "{text}");
     assert!(text.contains("load i32 s.1[*, 0 * 4]\n"), "{text}");
 }
@@ -347,14 +350,12 @@ iface Shape { fn area(&self) -> i32 }
 fn Square::area(&self) -> i32 { return self.side * self.side; }
 fn main() -> i32 { let s = Square.{ side = 3 }; let shape: &Shape = &s; return shape.area(); }",
     );
-    assert!(text.contains("borrow s.0 as reference\n"), "{text}");
+    assert!(text.contains("borrow 4 s.0 as reference\n"), "{text}");
     assert!(text.contains("store ptr shape.1[+8], global 0\n"), "{text}");
     // The call lends what the reference views again, then reads the
     // method from the table.
     assert!(
-        text.contains(
-            "    %4 = borrow shape.1[*] as interface reference\n    %5 = load ptr shape.1[+8]\n"
-        ),
+        text.contains("    %4 = borrow shape.1[*] as reference\n    %5 = load ptr shape.1[+8]\n"),
         "{text}"
     );
     assert!(
@@ -493,4 +494,28 @@ fn a_narrow_range_reads_its_distance_with_the_other_sign_cut_back() {
         text.contains("    %5 = sub i8 %3, %2\n    %6 = shl i8 %5, 1\n    %7 = sshr i8 %6, 1\n    %8 = and i8 %7, 127\n"),
         "{text}"
     );
+}
+
+/// A `&mut` moves though it is one register, and a `&` copies; the step
+/// that lends one again comes with the move, for the message.
+#[test]
+fn a_mutable_reference_or_slice_moves_with_how_to_lend_it_again() {
+    let text = lowered(
+        "fn main() {
+    let mut x = 1;
+    let mut a = [2]i32{1, 2};
+    let r = &mut x;
+    let s = &mut a[..];
+    let q = &x;
+    let r2 = r;
+    let s2 = s;
+    let q2 = q;
+}",
+    );
+    assert!(text.contains("moved 8 r.2 lent again with .*\n"), "{text}");
+    assert!(
+        text.contains("moved 16 s.3 lent again with [..]\n"),
+        "{text}"
+    );
+    assert!(!text.contains("moved q."), "{text}");
 }

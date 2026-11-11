@@ -13,10 +13,13 @@ use model::core_mir::Conversion;
 use model::core_mir::Global;
 use model::core_mir::InstructionKind;
 use model::core_mir::IntegerOp;
+use model::core_mir::LoanWords;
 use model::core_mir::Operand;
 use model::core_mir::Passing;
 use model::core_mir::Place;
+use model::core_mir::REFERENCE_WORDS;
 use model::core_mir::Root;
+use model::core_mir::SLICE_WORDS;
 use model::core_mir::Signature;
 use model::core_mir::Step;
 use model::layout::layout;
@@ -126,14 +129,18 @@ impl Lowering<'_> {
                         unreachable!("a borrow's type is a reference, slice or interface reference")
                     };
                     let place = self.place_of(*borrowed)?;
-                    Value::Register(self.borrow(place, mutable, "reference", span))
+                    let borrowed_type = self.types.real(self.thir.exprs[*borrowed].ty);
+                    let (size, _) = layout(self.types, borrowed_type, self.target);
+                    Value::Register(self.borrow(place, Some(size), mutable, &REFERENCE_WORDS, span))
                 }
                 thir::ExprKind::Slice { .. } => {
                     self.in_temporary(ty, span, |this, place| this.lower_slice(expression, place))?
                 }
-                thir::ExprKind::Address(place) => {
-                    let place = self.place_of(*place)?;
-                    Value::Register(self.emit(InstructionKind::Address(place), span))
+                thir::ExprKind::Address(addressed) => {
+                    let place = self.place_of(*addressed)?;
+                    let addressed_type = self.types.real(self.thir.exprs[*addressed].ty);
+                    let (size, _) = layout(self.types, addressed_type, self.target);
+                    Value::Register(self.emit(InstructionKind::Address { place, size }, span))
                 }
                 thir::ExprKind::Print { newline, values } => {
                     self.lower_print(*newline, *values, span)?;
@@ -371,9 +378,12 @@ impl Lowering<'_> {
             unreachable!("the caller found an index")
         };
         let viewed = self.types.real(self.thir.exprs[array].ty);
-        let (element, checked) = match self.types[viewed] {
-            Type::Array { element, .. } if let Some(at) = self.known_position(index) => {
-                (element, self.integer_constant(self.types.usize, at, span))
+        let (element, checked, count) = match self.types[viewed] {
+            Type::Array {
+                element, length, ..
+            } if let Some(at) = self.known_position(index) => {
+                let at = self.integer_constant(self.types.usize, at, span);
+                (element, at, Some(length))
             }
             Type::Array {
                 element, length, ..
@@ -390,7 +400,7 @@ impl Lowering<'_> {
                     &message,
                     span,
                 );
-                (element, checked)
+                (element, checked, Some(length))
             }
             Type::Slice { element, .. } => {
                 let value = self.lower_expr(index)?.register();
@@ -411,7 +421,7 @@ impl Lowering<'_> {
                     SLICE_INDEX_MESSAGE,
                     span,
                 );
-                (element, checked)
+                (element, checked, None)
             }
             _ => unreachable!("the checker indexes only an array or a slice"),
         };
@@ -419,6 +429,7 @@ impl Lowering<'_> {
         Some(Step::Index {
             index: checked,
             size,
+            count,
         })
     }
 
@@ -934,7 +945,10 @@ impl Lowering<'_> {
         destination: Option<Place>,
         span: Span,
     ) -> Option<Value> {
-        let Type::Function { variadic, .. } = self.types[self.types.real(signature)] else {
+        let Type::Function {
+            variadic, origins, ..
+        } = &self.types[self.types.real(signature)]
+        else {
             unreachable!("a call's signature is a function type")
         };
         let mut passed = Vec::with_capacity(arguments.len() + 1);
@@ -948,9 +962,13 @@ impl Lowering<'_> {
         let mut argument_types = Vec::new();
         let result = self.result_passing(ty);
         let result_place = match result {
-            Some(Passing::Memory { .. }) => {
+            Some(Passing::Memory { size, .. }) => {
                 let place = destination.unwrap_or_else(|| Place::whole(self.temporary(ty, span)));
-                let address = self.emit(InstructionKind::Address(place.clone()), span);
+                let kind = InstructionKind::Address {
+                    place: place.clone(),
+                    size,
+                };
+                let address = self.emit(kind, span);
                 passed.push(address);
                 Some(place)
             }
@@ -992,10 +1010,14 @@ impl Lowering<'_> {
             argument_types.push(argument_type);
             match passing {
                 Passing::Register { .. } => passed.push(self.lower_expr(argument)?.register()),
-                Passing::Memory { .. } => {
+                Passing::Memory { size, .. } => {
                     let copy = self.temporary(argument_type, span);
                     self.lower_into(argument, Place::whole(copy))?;
-                    passed.push(self.emit(InstructionKind::Address(Place::whole(copy)), span));
+                    let kind = InstructionKind::Address {
+                        place: Place::whole(copy),
+                        size,
+                    };
+                    passed.push(self.emit(kind, span));
                 }
             }
         }
@@ -1005,8 +1027,9 @@ impl Lowering<'_> {
         self.mir.signatures.push(Signature {
             parameters: parameters.into(),
             result,
-            variadic,
+            variadic: *variadic,
             c,
+            origins: origins.clone(),
         });
         let kind = InstructionKind::Call {
             callee,
@@ -1052,7 +1075,10 @@ impl Lowering<'_> {
         let table = (methods.iter().zip(signatures))
             .map(|(&definition, &signature)| {
                 let Type::Function {
-                    parameters, result, ..
+                    parameters,
+                    result,
+                    origins,
+                    ..
                 } = &self.types[signature]
                 else {
                     unreachable!("a method's signature is a function type")
@@ -1072,6 +1098,7 @@ impl Lowering<'_> {
                     result: self.result_passing(*result),
                     variadic: false,
                     c: None,
+                    origins: origins.clone(),
                 };
                 (copy, signature)
             })
@@ -1101,15 +1128,17 @@ impl Lowering<'_> {
         match (&self.types[borrowed_type], &self.types[ty]) {
             // A slice of an array's elements, or a slice's elements lent again.
             (_, Type::Slice { .. } | Type::Str) => {
-                let (elements, length) =
+                let (elements, size, length) =
                     if let Type::Array { length, .. } = self.types[borrowed_type] {
-                        (place, self.integer_constant(self.types.usize, length, span))
+                        let (size, _) = layout(self.types, borrowed_type, self.target);
+                        let length = self.integer_constant(self.types.usize, length, span);
+                        (place, Some(size), length)
                     } else {
                         let length = self.second_word(place.clone());
                         let length = self.load(self.usize, length, span);
-                        (Self::through_slice(place), length)
+                        (Self::through_slice(place), None, length)
                     };
-                let address = self.borrow(elements, mutable, "slice", span);
+                let address = self.borrow(elements, size, mutable, &SLICE_WORDS, span);
                 self.slice_words(address, length, to, span);
             }
             // An interface's struct lent again as an interface reference, under a
@@ -1127,7 +1156,8 @@ impl Lowering<'_> {
                     ),
                     _ => (place.clone(), Self::through_slice(place)),
                 };
-                let address = self.borrow(struct_place, mutable, "interface reference", span);
+                // Only the program knows which struct it views.
+                let address = self.borrow(struct_place, None, mutable, &REFERENCE_WORDS, span);
                 let table_place = words.then(Step::Offset(self.pointer_bytes));
                 let table = self.load(Class::Pointer, table_place, span);
                 self.store(Class::Pointer, to.clone(), address, span);
@@ -1139,18 +1169,21 @@ impl Lowering<'_> {
         Some(())
     }
 
-    /// A loan of `place`, called `noun` in messages: its address.
+    /// A loan of `size` bytes from `place` (`None`: all there are),
+    /// named by `words` in messages: its address.
     pub(super) fn borrow(
         &mut self,
         place: Place,
+        size: Option<u64>,
         mutable: bool,
-        noun: &'static str,
+        words: &'static LoanWords,
         span: Span,
     ) -> Operand {
         let kind = InstructionKind::Borrow {
             place,
+            size,
             mutable,
-            noun,
+            words,
         };
         self.emit(kind, span)
     }

@@ -491,7 +491,7 @@ impl Writer<'_, '_, '_> {
     fn write_operand(&self, out: &mut fmt::Formatter, operand: Operand) -> fmt::Result {
         match operand {
             Operand::Value(id) => match &self.body.instructions[id].kind {
-                InstructionKind::Address(place) | InstructionKind::Borrow { place, .. }
+                InstructionKind::Address { place, .. } | InstructionKind::Borrow { place, .. }
                     if place
                         .steps
                         .iter()
@@ -586,7 +586,7 @@ impl Writer<'_, '_, '_> {
                 }
                 Step::Through => _ = writeln!(out, "  {to} = load ptr, ptr {at}{location}"),
                 // Lowering checked the index is inside.
-                Step::Index { index, size } => {
+                Step::Index { index, size, .. } => {
                     _ = writeln!(
                         out,
                         "  {to} = getelementptr inbounds [{size} x i8], ptr {at}, {}{location}",
@@ -667,7 +667,7 @@ impl Writer<'_, '_, '_> {
     fn write_instruction(&mut self, out: &mut String, id: Id<Instruction>) {
         let body = self.body;
         let Instruction { kind, debug_scope } = &body.instructions[id];
-        if let InstructionKind::Moved(_) | InstructionKind::Dead(_) = kind {
+        if let InstructionKind::Moved { .. } | InstructionKind::Dead(_) = kind {
             return; // for the path checks only
         }
         let location = self.location(body.instructions.span(id), *debug_scope);
@@ -836,7 +836,7 @@ impl Writer<'_, '_, '_> {
                 );
             }
             // With no step, the address is the root's (`write_operand`).
-            InstructionKind::Address(place) | InstructionKind::Borrow { place, .. } => {
+            InstructionKind::Address { place, .. } | InstructionKind::Borrow { place, .. } => {
                 self.write_place(out, place, &name, &location);
             }
             InstructionKind::Call {
@@ -869,7 +869,9 @@ impl Writer<'_, '_, '_> {
                 panics.push('\n');
                 self.panics = panics;
             }
-            InstructionKind::Moved(_) | InstructionKind::Dead(_) => unreachable!("returned above"),
+            InstructionKind::Moved { .. } | InstructionKind::Dead(_) => {
+                unreachable!("returned above")
+            }
         }
     }
 
@@ -1149,7 +1151,7 @@ fn jump_targets(body: &Body) -> Vec<Id<Block>> {
         let writes = body.lists.items(data.instructions).any(|id| {
             !matches!(
                 body.instructions[id].kind,
-                InstructionKind::Moved(_) | InstructionKind::Dead(_)
+                InstructionKind::Moved { .. } | InstructionKind::Dead(_)
             )
         });
         (!writes).then_some(next)
@@ -1227,9 +1229,9 @@ fn values_read(body: &Body) -> Vec<bool> {
             | InstructionKind::Compare { left, right, .. } => operands.extend([*left, *right]),
             InstructionKind::Convert { value, .. } => operands.push(*value),
             InstructionKind::Load { place, .. }
-            | InstructionKind::Address(place)
+            | InstructionKind::Address { place, .. }
             | InstructionKind::Borrow { place, .. }
-            | InstructionKind::Moved(place) => place_operands(place, &mut operands),
+            | InstructionKind::Moved { place, .. } => place_operands(place, &mut operands),
             InstructionKind::Store { place, value, .. } => {
                 place_operands(place, &mut operands);
                 operands.push(*value);
@@ -1280,6 +1282,7 @@ fn folded(step: Step) -> Step {
         Step::Index {
             index: Operand::Constant { bits, .. },
             size,
+            ..
         } => Step::Offset(bits[0] * size),
         step => step,
     }

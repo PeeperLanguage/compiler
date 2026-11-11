@@ -32,11 +32,14 @@ use model::core_mir::DebugType;
 use model::core_mir::DebugTypeId;
 use model::core_mir::DebugTypes;
 use model::core_mir::Global;
+use model::core_mir::Holder;
 use model::core_mir::InstructionKind;
 use model::core_mir::IntegerOp;
 use model::core_mir::Operand;
 use model::core_mir::Passing;
 use model::core_mir::Place;
+use model::core_mir::REFERENCE_WORDS;
+use model::core_mir::SLICE_WORDS;
 use model::core_mir::Signature;
 use model::core_mir::Slot;
 use model::core_mir::Step;
@@ -96,8 +99,14 @@ pub fn lower(
                 result: None,
                 variadic: false,
                 c: None,
+                origins: Box::default(),
             },
-            origins: origins.clone(),
+            returned: match &types[types.real(*result)] {
+                Type::Interface { .. } => Some("an interface holding"),
+                Type::Slice { .. } => Some("a slice of"),
+                _ if types.holds_loans(*result).is_some() => Some("a reference into"),
+                _ => None,
+            },
             debug_scopes: Arena::default(),
             result_debug_type: None, // below, once a debug type can be made
             globals: Vec::new(),
@@ -118,6 +127,7 @@ pub fn lower(
         result: lowering.result_passing(*result),
         variadic: false,
         c: None,
+        origins: origins.clone(),
     };
     lowering.mir.result_debug_type =
         (types.real(*result) != TypeId::VOID).then(|| lowering.debug_type(*result));
@@ -396,15 +406,29 @@ impl Lowering<'_> {
     }
 
     /// The value of the type `ty` at `place`: a load, or the place itself
-    /// for a value kept in memory, which is moved out when its type moves.
+    /// for a value kept in memory; moved out when its type moves.
     fn read(&mut self, place: Place, ty: TypeId, span: Span) -> Value {
-        if let Some(class) = self.class(ty) {
-            return Value::Register(self.load(class, place, span));
-        }
+        let value = match self.class(ty) {
+            Some(class) => Value::Register(self.load(class, place.clone(), span)),
+            None => Value::Memory(place.clone()),
+        };
         if !self.types.is_copy(ty) {
-            self.emit(InstructionKind::Moved(place.clone()), span);
+            // As the checker lends one again (`ThirBuilder::reborrow`).
+            let lent_again = match self.types[ty] {
+                Type::Reference { mutable: true, .. }
+                | Type::InterfaceReference { mutable: true, .. } => Some(".*"),
+                Type::Slice { mutable: true, .. } => Some("[..]"),
+                _ => None,
+            };
+            let (size, _) = layout(self.types, ty, self.target);
+            let kind = InstructionKind::Moved {
+                place,
+                size,
+                lent_again,
+            };
+            self.emit(kind, span);
         }
-        Value::Memory(place)
+        value
     }
 
     /// A new slot for a value of the type `ty` made at `span`, in scope
@@ -427,7 +451,13 @@ impl Lowering<'_> {
     }
 
     /// A new slot of `size` bytes with no name, declared by whoever asks.
-    fn hidden_slot(&mut self, size: u64, align: u64, holders: Box<[u64]>, span: Span) -> Id<Slot> {
+    fn hidden_slot(
+        &mut self,
+        size: u64,
+        align: u64,
+        holders: Box<[Holder]>,
+        span: Span,
+    ) -> Id<Slot> {
         self.mir.slots.push(
             Slot {
                 size,
@@ -493,22 +523,28 @@ impl Lowering<'_> {
         (self.types.real(result) != TypeId::VOID).then(|| self.passing(result))
     }
 
-    /// The offsets, from `at`, of the pointers in a value of the type `ty`
-    /// that may hold a loan: a reference, a slice, an interface reference or
+    /// The pointers, from `at`, in a value of the type `ty` that may hold
+    /// a loan, with the words a message names each by: a reference, a slice, an interface reference or
     /// an owned interface (on the struct it took) is one, at its start; a
     /// struct's fields' and an array's elements' are each at theirs.
-    fn holders(&self, ty: TypeId, at: u64) -> Vec<u64> {
+    fn holders(&self, ty: TypeId, at: u64) -> Vec<Holder> {
         let mut holders = Vec::new();
         self.add_holders(ty, at, &mut holders);
         holders
     }
 
-    fn add_holders(&self, ty: TypeId, at: u64, holders: &mut Vec<u64>) {
+    fn add_holders(&self, ty: TypeId, at: u64, holders: &mut Vec<Holder>) {
         match &self.types[ty] {
-            Type::Reference { .. }
-            | Type::Slice { .. }
-            | Type::InterfaceReference { .. }
-            | Type::Interface { .. } => holders.push(at),
+            Type::Slice { .. } => holders.push(Holder {
+                offset: at,
+                words: &SLICE_WORDS,
+            }),
+            Type::Reference { .. } | Type::InterfaceReference { .. } | Type::Interface { .. } => {
+                holders.push(Holder {
+                    offset: at,
+                    words: &REFERENCE_WORDS,
+                });
+            }
             Type::Struct {
                 fields, internals, ..
             } => {

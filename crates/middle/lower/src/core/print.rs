@@ -108,7 +108,11 @@ impl Lowering<'_> {
                 };
                 let limbs = self.register_slot(wide, span);
                 self.store(wide, Place::whole(limbs), value, span);
-                let address = self.emit(InstructionKind::Address(Place::whole(limbs)), span);
+                let kind = InstructionKind::Address {
+                    place: Place::whole(limbs),
+                    size: wide.bytes(self.pointer_bytes),
+                };
+                let address = self.emit(kind, span);
                 self.print_text(text, span);
                 let signed = Operand::integer(Class::I32, u64::from(integer.signed));
                 let count = Operand::integer(Class::I32, u64::from(count));
@@ -215,7 +219,12 @@ impl Lowering<'_> {
                 self.print_text(&mut separator, span);
                 self.finish(Terminator::Jump(element_block));
                 self.block = element_block;
-                let at_element = place.then(Step::Index { index: at, size });
+                let count = Some(length);
+                let at_element = place.then(Step::Index {
+                    index: at,
+                    size,
+                    count,
+                });
                 let value = self.read_for_print(at_element, element, span);
                 let mut piece = Vec::new();
                 source::grow_stack(|| self.print_value(&mut piece, value, element, span));
@@ -309,6 +318,7 @@ impl Lowering<'_> {
             result: signature.result.as_ref().map(passing),
             variadic: false,
             c: None,
+            origins: Box::default(), // the runtime returns no pointer
         });
         let kind = InstructionKind::Call {
             callee: Callee::Runtime(signature.symbol),
