@@ -246,3 +246,34 @@
   when a constant ran it: the run's build is not reused). Mutation: with
   `copy_new` copying nothing, 8+ llvm tests fail. check.sh ok. Speed not
   measured.
+- Untangle fix 2, one table of what each instruction touches:
+  `InstructionKind::accesses` gives each place with its `AccessKind`
+  (read, write, borrow, address, move) and its width
+  (`PlaceAccess::width`), `InstructionKind::operands` each value operand,
+  `Place::operands` a place's address and indexes. Readers moved onto
+  them: variable_state's `accesses` (gone) and one `whole_slot_change`
+  for `Facts::step`, `move_sites` and `tracked_slots`; loans `uses`,
+  `defines`, `accesses` and the lines-that-matter scan; llvm
+  `values_read`. Not moved: loans `step_held` (a transfer per kind),
+  `holds`, `move_of_read` (still relies on lowering's order), mir
+  `own_class` (another question). Removed the wrong "events" comment over
+  `Borrow`. Speed (`check mixed`, instructions): an iterator table cost
+  +23% (1,165 -> 1,433 M; not inlined across crates, then arrays and
+  chains built per line); as `#[inline]` functions taking a closure it is
+  1,193 M (+2%: `uses` now dispatches on the kind three times). Mutation:
+  a move read as a read, a store as a read, a copy's write dropped, a
+  store's value dropped each fail the fixtures; call arguments dropped
+  failed nothing, though clang refuses `f(a == 2)` then: added that case
+  to `comparisons_widen_only_when_kept`, which fails on it (2 vs 3).
+  check.sh ok.
+  Then (Fuad: "yes do a and b"): `Dead` is in the table as
+  `AccessKind::End` of all of its slot; `PlaceAccess` holds a
+  `PlaceRef` (root and steps, borrowed; `Place::as_place_ref`), which
+  now owns `whole_slot`, `is_behind_pointer` and `operands`.
+  variable_state's `SlotChange`/`whole_slot_change` and the loan check's
+  hand-made "gone" access and `Dead` arm went; the loan check's `Access`
+  holds a `PlaceRef`. `AccessKind::Borrow` lost `words` (message text):
+  `Loans::accesses` reads them from the `Borrow` until fix 3's per-loan
+  lookup. A `Dead`'s width is now `None` (all there is) for `Some(size)`:
+  the same bytes. Mutation: `Dead` giving no access fails the fixtures.
+  `check mixed` 1,207 M (was 1,193). check.sh ok.

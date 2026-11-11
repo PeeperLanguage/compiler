@@ -372,14 +372,21 @@ fn jumps_skip_empty_blocks_and_unreached_ones_are_left_out() {
 }
 
 /// A comparison is widened to a byte only where its value is kept: here the
-/// one stored in `b` and the one returned, not the `if` condition's.
+/// one stored in `b`, the one passed to `g` and the one returned, not the
+/// `if` condition's.
 #[test]
 fn comparisons_widen_only_when_kept() {
     let text = ll(
-        "fn f(a: i32) -> bool { let b = a > 1; if a < 0 { return b; } return a == 3; }",
+        "fn g(b: bool) -> bool { return b; }
+        fn f(a: i32) -> bool {
+            let b = a > 1;
+            if a < 0 { return b; }
+            if g(a == 2) { return true; }
+            return a == 3;
+        }",
         "x86_64-linux",
     );
-    assert_eq!(text.matches("zext i1").count(), 2, "{text}");
+    assert_eq!(text.matches("zext i1").count(), 3, "{text}");
 }
 
 /// A pointer breaks a flat array, so its debug type recurses through each one,

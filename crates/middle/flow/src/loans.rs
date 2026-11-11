@@ -67,12 +67,13 @@ use std::sync::Arc;
 use arena::Id;
 use diagnostics::Diagnostic;
 use model::mir;
+use model::mir::AccessKind;
 use model::mir::Class;
 use model::mir::InstructionKind;
 use model::mir::LoanWords;
 use model::mir::Operand;
 use model::mir::Passing;
-use model::mir::Place;
+use model::mir::PlaceRef;
 use model::mir::REFERENCE_WORDS;
 use model::mir::Root;
 use model::mir::Slot;
@@ -181,10 +182,10 @@ fn known_until_through(steps: &[Step]) -> bool {
 /// new value and a read copies each: it is in a slot's own storage, and
 /// each index is known while compiling. An index known only when the
 /// program runs may be any element.
-fn names_exactly(place: &Place) -> bool {
+fn names_exactly(place: PlaceRef) -> bool {
     matches!(place.root, Root::Slot(_))
         && !place.steps.contains(&Step::Through)
-        && known_until_through(&place.steps)
+        && known_until_through(place.steps)
 }
 
 /// The bytes a place covers at one level: `count` runs of `width` bytes,
@@ -313,8 +314,7 @@ struct Loans<'b> {
 
 /// What an instruction does to a place, as the loan rules see it.
 struct Access<'p> {
-    root: Root,
-    steps: &'p [Step],
+    place: PlaceRef<'p>,
     width: Option<u64>,    // how many bytes from the place; `None`: all there are
     subject: &'static str, // what is done to: "" (the place) or "address of "
     event: &'static str,   // for the message: "changed", "read", ...
@@ -452,7 +452,7 @@ impl<'b> Loans<'b> {
     /// The holders in `place`, `width` bytes or all there are when `None`:
     /// those in its slot's bytes; for a place through a pointer, that
     /// pointer's.
-    fn place_holders(&self, place: &Place, width: Option<u64>) -> Range<usize> {
+    fn place_holders(&self, place: PlaceRef, width: Option<u64>) -> Range<usize> {
         match place.root {
             // Most slots hold no pointer: none of their bytes need finding.
             Root::Slot(slot) if self.body.slots[slot].holders.is_empty() => {
@@ -460,7 +460,7 @@ impl<'b> Loans<'b> {
                 start..start
             }
             Root::Slot(slot) => {
-                let Some(bytes) = self.levels(&place.steps, width).next() else {
+                let Some(bytes) = self.levels(place.steps, width).next() else {
                     unreachable!("a place has a level")
                 };
                 self.slot_holders(slot, &bytes.span())
@@ -474,7 +474,9 @@ impl<'b> Loans<'b> {
     fn argument_holders(&self, argument: Operand) -> Range<usize> {
         match argument {
             Operand::Value(id) => match &self.body.instructions[id].kind {
-                InstructionKind::Address { place, size } => self.place_holders(place, Some(*size)),
+                InstructionKind::Address { place, size } => {
+                    self.place_holders(place.as_place_ref(), Some(*size))
+                }
                 _ => self.value_holders(id),
             },
             Operand::Constant { .. } | Operand::Parameter(_) | Operand::Global(_) => 0..0,
@@ -483,7 +485,7 @@ impl<'b> Loans<'b> {
 
     /// Where the call `id` writes a result kept in memory, and its size:
     /// the place its hidden first argument is the address of.
-    fn destination(&self, id: Id<mir::Instruction>) -> Option<(&'b Place, u64)> {
+    fn destination(&self, id: Id<mir::Instruction>) -> Option<(PlaceRef<'b>, u64)> {
         let InstructionKind::Call {
             signature,
             arguments,
@@ -500,7 +502,7 @@ impl<'b> Loans<'b> {
             unreachable!("a result kept in memory is written to an address")
         };
         match &self.body.instructions[address].kind {
-            InstructionKind::Address { place, size } => Some((place, *size)),
+            InstructionKind::Address { place, size } => Some((place.as_place_ref(), *size)),
             _ => unreachable!("a result kept in memory is written to a place"),
         }
     }
@@ -540,37 +542,23 @@ impl<'b> Loans<'b> {
     /// `Moved` follows the read it marks, so it uses nothing more.
     fn uses(&self, id: Id<mir::Instruction>, mut used: impl FnMut(Id<Holder>)) {
         let mut use_range = |range: Range<usize>| holder_ids(range).for_each(&mut used);
-        let through = |place: &Place| {
+        let through = |place: PlaceRef| {
             if place.is_behind_pointer() {
                 self.place_holders(place, None)
             } else {
                 0..0
             }
         };
-        match &self.body.instructions[id].kind {
-            InstructionKind::Load { class, place } => {
-                use_range(self.place_holders(place, Some(class.bytes(self.pointer_bytes))));
+        let kind = &self.body.instructions[id].kind;
+        kind.accesses(|access| match access.kind {
+            AccessKind::Read | AccessKind::Borrow { .. } => {
+                let width = access.width(self.pointer_bytes);
+                use_range(self.place_holders(access.place, width));
             }
-            InstructionKind::Borrow { place, size, .. } => {
-                use_range(self.place_holders(place, *size));
-            }
-            InstructionKind::Copy { to, from, size } => {
-                use_range(self.place_holders(from, Some(*size)));
-                use_range(through(to));
-            }
-            InstructionKind::Store { place, value, .. } => {
-                use_range(through(place));
-                use_range(self.operand_holders(*value));
-            }
-            InstructionKind::Address { place, .. } => use_range(through(place)),
-            InstructionKind::Integer { left, right, .. }
-            | InstructionKind::Float { left, right, .. }
-            | InstructionKind::Compare { left, right, .. } => {
-                use_range(self.operand_holders(*left));
-                use_range(self.operand_holders(*right));
-            }
-            InstructionKind::Convert { value, .. } => use_range(self.operand_holders(*value)),
-            InstructionKind::Check { failed, .. } => use_range(self.operand_holders(*failed)),
+            AccessKind::Write | AccessKind::Address => use_range(through(access.place)),
+            AccessKind::Move | AccessKind::End => {}
+        });
+        match kind {
             InstructionKind::Call {
                 callee, arguments, ..
             } => {
@@ -583,23 +571,23 @@ impl<'b> Loans<'b> {
                     use_range(self.argument_holders(argument));
                 }
             }
-            InstructionKind::Moved { .. } | InstructionKind::Dead(_) => {}
+            _ => kind.operands(|operand| use_range(self.operand_holders(operand))),
         }
     }
 
     /// The holders the instruction `id` gives a new value: its own value,
     /// or those of the place it writes when it replaces them.
     fn defines(&self, id: Id<mir::Instruction>) -> Range<usize> {
-        let written = match &self.body.instructions[id].kind {
-            InstructionKind::Store { class, place, .. } => {
-                Some((place, class.bytes(self.pointer_bytes)))
+        let mut written = None;
+        self.body.instructions[id].kind.accesses(|access| {
+            if let AccessKind::Write = access.kind {
+                written = Some((access.place, access.width(self.pointer_bytes)));
             }
-            InstructionKind::Copy { to, size, .. } => Some((to, *size)),
-            InstructionKind::Call { .. } => self.destination(id),
-            _ => None,
-        };
+        });
+        let written =
+            written.or_else(|| (self.destination(id)).map(|(place, size)| (place, Some(size))));
         match written {
-            Some((place, width)) if names_exactly(place) => self.place_holders(place, Some(width)),
+            Some((place, width)) if names_exactly(place) => self.place_holders(place, width),
             Some(_) => 0..0,
             None => self.value_holders(id),
         }
@@ -648,8 +636,11 @@ impl<'b> Loans<'b> {
                     call,
                     carrier: None,
                 }),
-                (_, InstructionKind::Store { class, place, .. }) if names_exactly(place) => {
-                    let carrier = self.place_holders(place, Some(class.bytes(self.pointer_bytes)));
+                (_, InstructionKind::Store { class, place, .. })
+                    if names_exactly(place.as_place_ref()) =>
+                {
+                    let carrier = self
+                        .place_holders(place.as_place_ref(), Some(class.bytes(self.pointer_bytes)));
                     if carrier.len() != 1 {
                         return None;
                     }
@@ -690,22 +681,25 @@ impl<'b> Loans<'b> {
         }
         let mut matters = Bits::new(body.instructions.len());
         for id in body.instructions.ids() {
-            let writes_holder = match &body.instructions[id].kind {
+            let kind = &body.instructions[id].kind;
+            let gives_or_breaks = match kind {
                 InstructionKind::Borrow { .. } | InstructionKind::Call { .. } => true,
-                InstructionKind::Store { class, place, .. } => {
-                    let width = class.bytes(self.pointer_bytes);
-                    !self.place_holders(place, Some(width)).is_empty()
+                _ => {
+                    let mut found = false;
+                    kind.accesses(|access| {
+                        let width = access.width(self.pointer_bytes);
+                        found |= matches!(access.place.root, Root::Slot(slot) if borrowed.has(slot))
+                            || (matches!(access.kind, AccessKind::Write)
+                                && !self.place_holders(access.place, width).is_empty());
+                    });
+                    found
                 }
-                InstructionKind::Copy { to, size, .. } => {
-                    !self.place_holders(to, Some(*size)).is_empty()
-                }
-                _ => false,
             };
             let mut uses_holder = false;
-            self.uses(id, |_| uses_holder = true);
-            let accesses_borrowed = (self.accesses(id).into_iter().flatten())
-                .any(|access| matches!(access.root, Root::Slot(slot) if borrowed.has(slot)));
-            if writes_holder || uses_holder || accesses_borrowed || !self.defines(id).is_empty() {
+            if !gives_or_breaks {
+                self.uses(id, |_| uses_holder = true);
+            }
+            if gives_or_breaks || uses_holder || !self.defines(id).is_empty() {
                 matters.set(id);
             }
         }
@@ -732,9 +726,11 @@ impl<'b> Loans<'b> {
                 };
                 let width = class.bytes(self.pointer_bytes);
                 let sources = [self.operand_holders(*value)];
+                let place = place.as_place_ref();
                 self.step_write(held, place, width, &sources, true, parameter);
             }
             InstructionKind::Copy { to, from, size } => {
+                let (to, from) = (to.as_place_ref(), from.as_place_ref());
                 let sources = [self.place_holders(from, Some(*size))];
                 self.step_write(held, to, *size, &sources, names_exactly(from), None);
             }
@@ -743,13 +739,14 @@ impl<'b> Loans<'b> {
             // come from.
             InstructionKind::Load { class, place } if !target.is_empty() => {
                 let width = class.bytes(self.pointer_bytes);
-                let loans = self.loans_of(held, self.place_holders(place, Some(width)));
+                let loans =
+                    self.loans_of(held, self.place_holders(place.as_place_ref(), Some(width)));
                 held.set(Id::from_index(target.start), &loans);
             }
             // What the place holds, or goes through, stays borrowed while
             // the new reference is in use.
             InstructionKind::Borrow { place, size, .. } => {
-                let loans = self.loans_of(held, self.place_holders(place, *size));
+                let loans = self.loans_of(held, self.place_holders(place.as_place_ref(), *size));
                 let holder = Id::from_index(target.start);
                 held.set(holder, &loans);
                 held.add(holder, self.loan(id));
@@ -786,7 +783,7 @@ impl<'b> Loans<'b> {
     fn step_write(
         &self,
         held: &mut Held,
-        place: &Place,
+        place: PlaceRef,
         width: u64,
         sources: &[Range<usize>],
         paired: bool,
@@ -825,7 +822,7 @@ impl<'b> Loans<'b> {
         let Root::Slot(slot) = place.root else {
             unreachable!("a place named exactly is in a slot")
         };
-        let Some(written) = self.levels(&place.steps, Some(width)).next() else {
+        let Some(written) = self.levels(place.steps, Some(width)).next() else {
             unreachable!("a place has a level")
         };
         let under_place =
@@ -1093,7 +1090,7 @@ impl<'b> Loans<'b> {
                 let Root::Slot(slot) = place.root else {
                     continue;
                 };
-                if place.is_behind_pointer() {
+                if place.as_place_ref().is_behind_pointer() {
                     continue;
                 }
                 let name = self.slot_name(slot, file);
@@ -1131,93 +1128,47 @@ impl<'b> Loans<'b> {
     /// so it is checked as a shared borrow.
     fn accesses(&self, id: Id<mir::Instruction>) -> [Option<Access<'b>>; 2] {
         let span = self.body.instructions.span(id);
-        let on = |place: &'b Place, width, event, reads, own_storage| {
-            Some(Access {
-                root: place.root,
-                steps: &place.steps,
-                width,
+        let kind = &self.body.instructions[id].kind;
+        let mut accesses = [None, None];
+        let mut next = accesses.iter_mut();
+        kind.accesses(|access| {
+            let on = |event, reads, own_storage| Access {
+                place: access.place,
+                width: access.width(self.pointer_bytes),
                 subject: "",
                 event,
                 label: event,
                 reads,
                 own_storage,
                 span,
-            })
-        };
-        let pointer_bytes = self.pointer_bytes;
-        match &self.body.instructions[id].kind {
-            InstructionKind::Load { class, place } => [
-                on(place, Some(class.bytes(pointer_bytes)), "read", true, false),
-                None,
-            ],
-            InstructionKind::Store { class, place, .. } => [
-                on(
-                    place,
-                    Some(class.bytes(pointer_bytes)),
-                    "changed",
-                    false,
-                    true,
-                ),
-                None,
-            ],
-            InstructionKind::Copy { to, from, size } => [
-                on(from, Some(*size), "read", true, false),
-                on(to, Some(*size), "changed", false, true),
-            ],
-            InstructionKind::Moved { place, size, .. } => {
-                [on(place, Some(*size), "moved", false, false), None]
-            }
-            InstructionKind::Borrow {
-                place,
-                size,
-                mutable: false,
-                ..
-            } => [on(place, *size, "borrowed", true, false), None],
-            InstructionKind::Borrow {
-                place,
-                size,
-                mutable: true,
-                words,
-            } => {
-                let reserves = self.reserved[self.loan(id).index()].is_some();
-                [
-                    on(place, *size, words.mutably_borrowed, reserves, false),
-                    None,
-                ]
-            }
-            // `@x` can write `x`, so no reference to it may be in use; it
-            // looks like no borrow, so the message names the address.
-            InstructionKind::Address { place, size } => {
-                let access = Access {
+            };
+            let found = match access.kind {
+                AccessKind::Read => on("read", true, false),
+                AccessKind::Write => on("changed", false, true),
+                AccessKind::Move => on("moved", false, false),
+                AccessKind::End => on("gone", false, true),
+                AccessKind::Borrow { mutable: false } => on("borrowed", true, false),
+                AccessKind::Borrow { mutable: true } => {
+                    let InstructionKind::Borrow { words, .. } = kind else {
+                        unreachable!("only a `Borrow` borrows")
+                    };
+                    let reserves = self.reserved[self.loan(id).index()].is_some();
+                    on(words.mutably_borrowed, reserves, false)
+                }
+                // `@x` can write `x`, so no reference to it may be in use; it
+                // looks like no borrow, so the message names the address.
+                AccessKind::Address => Access {
                     subject: "address of ",
                     event: "being taken",
                     label: "address taken",
-                    ..on(place, Some(*size), "", false, false).expect("an access")
-                };
-                [Some(access), None]
-            }
-            InstructionKind::Dead(slot) => {
-                let access = Access {
-                    root: Root::Slot(*slot),
-                    steps: &[],
-                    width: Some(self.body.slots[*slot].size),
-                    subject: "",
-                    event: "gone",
-                    label: "gone",
-                    reads: false,
-                    own_storage: true,
-                    span,
-                };
-                [Some(access), None]
-            }
-            // These use values only, never a place.
-            InstructionKind::Integer { .. }
-            | InstructionKind::Float { .. }
-            | InstructionKind::Compare { .. }
-            | InstructionKind::Convert { .. }
-            | InstructionKind::Call { .. }
-            | InstructionKind::Check { .. } => [None, None],
-        }
+                    ..on("", false, false)
+                },
+            };
+            *next
+                .next()
+                .expect("an instruction touches at most two places") = Some(found);
+        });
+        accesses
     }
 
     /// The move of what the instruction `id` reads, if a `Moved` marks it
@@ -1265,7 +1216,7 @@ impl<'b> Loans<'b> {
         reported: &mut Bits<Loan>,
         file: &Arc<SourceFile>,
     ) -> Option<(Id<Holder>, Diagnostic)> {
-        let Root::Slot(slot) = access.root else {
+        let Root::Slot(slot) = access.place.root else {
             return None; // memory no loan names
         };
         let pairs = held.pairs.iter().filter(|&&(holder, loan)| {
@@ -1285,12 +1236,12 @@ impl<'b> Loans<'b> {
             else {
                 unreachable!("each loan is a `Borrow`")
             };
-            if loaned.root != access.root {
+            if loaned.root != access.place.root {
                 continue;
             }
             // Level by level while both go on; an access to its own
             // storage does not reach a loan that goes on through it.
-            let mut accessed = self.levels(access.steps, access.width);
+            let mut accessed = self.levels(access.place.steps, access.width);
             let mut borrowed = self.levels(&loaned.steps, *size);
             let breaks = loop {
                 match (accessed.next(), borrowed.next()) {

@@ -8,8 +8,9 @@ use std::sync::Arc;
 use arena::Id;
 use diagnostics::Diagnostic;
 use model::mir;
+use model::mir::AccessKind;
 use model::mir::InstructionKind;
-use model::mir::Place;
+use model::mir::PlaceRef;
 use model::mir::Root;
 use model::mir::Slot;
 use model::mir::Step;
@@ -81,18 +82,25 @@ pub fn report_variable_state_errors(
             if let InstructionKind::Moved {
                 place, lent_again, ..
             } = kind
-                && place.whole_slot().is_none()
+                && place.as_place_ref().whole_slot().is_none()
             {
+                let place = place.as_place_ref();
                 errors.push((span.start, partial_move(file, span, place, *lent_again)));
             }
-            for access in accesses(kind) {
+            kind.accesses(|access| {
+                let writes = match access.kind {
+                    AccessKind::Write => true,
+                    AccessKind::Read | AccessKind::Borrow { .. } | AccessKind::Address => false,
+                    AccessKind::Move => return, // the read before it is the use
+                    AccessKind::End => return,
+                };
                 let Root::Slot(slot) = access.place.root else {
-                    continue;
+                    return;
                 };
                 let Some(followed) = tracked(slot) else {
-                    continue;
+                    return;
                 };
-                let error = if access.writes && access.place.whole_slot().is_some() {
+                let error = if writes && access.place.whole_slot().is_some() {
                     // A slot declared with a value: the checker refuses a
                     // second assignment to one without `mut`.
                     let declared = &body.slots[slot];
@@ -108,7 +116,7 @@ pub fn report_variable_state_errors(
                     })
                 } else if !facts.always.has(followed) {
                     // Writing through a reference only reads the variable.
-                    let writes_part = access.writes && !access.place.is_behind_pointer();
+                    let writes_part = writes && !access.place.is_behind_pointer();
                     let written = writes_part.then(|| part_and_holder(access.place)[0]);
                     Some(if facts.moved.has(followed) {
                         let moves = move_sites(body, slot, block, position);
@@ -129,7 +137,7 @@ pub fn report_variable_state_errors(
                 {
                     errors.push((span.start, error));
                 }
-            }
+            });
             facts.step(body, kind, tracked);
         }
     }
@@ -137,51 +145,16 @@ pub fn report_variable_state_errors(
     diagnostics.extend(errors.into_iter().map(|(_, error)| error));
 }
 
-/// A place an instruction reads or writes, as this check sees it.
-struct Access<'p> {
-    place: &'p Place,
-    writes: bool,
-}
-
-/// The places `kind` reads or writes, a read first. `Moved` is not one: the
-/// read before it is.
-fn accesses(kind: &InstructionKind) -> impl Iterator<Item = Access<'_>> {
-    let read = |place| Access {
-        place,
-        writes: false,
-    };
-    let write = |place| Access {
-        place,
-        writes: true,
-    };
-    let (first, second) = match kind {
-        InstructionKind::Load { place, .. }
-        | InstructionKind::Borrow { place, .. }
-        | InstructionKind::Address { place, .. } => (Some(read(place)), None),
-        InstructionKind::Store { place, .. } => (Some(write(place)), None),
-        InstructionKind::Copy { to, from, .. } => (Some(read(from)), Some(write(to))),
-        InstructionKind::Integer { .. }
-        | InstructionKind::Float { .. }
-        | InstructionKind::Compare { .. }
-        | InstructionKind::Convert { .. }
-        | InstructionKind::Call { .. }
-        | InstructionKind::Check { .. }
-        | InstructionKind::Moved { .. }
-        | InstructionKind::Dead(_) => (None, None),
-    };
-    first.into_iter().chain(second)
-}
-
 /// Each slot's number if the check follows it: its `let` has no value, or a
 /// `Moved` takes it whole somewhere. Also how many are followed.
 fn tracked_slots(body: &mir::Body) -> (Vec<Option<Id<Tracked>>>, usize) {
     let mut moved = vec![false; body.slots.len()];
     for id in body.instructions.ids() {
-        if let InstructionKind::Moved { place, .. } = &body.instructions[id].kind
-            && let Some(slot) = place.whole_slot()
-        {
-            moved[slot.index()] = true;
-        }
+        body.instructions[id].kind.accesses(|access| {
+            if let (AccessKind::Move, Some(slot)) = (access.kind, access.place.whole_slot()) {
+                moved[slot.index()] = true;
+            }
+        });
     }
     let mut count = 0;
     let tracked = (body.slots.ids())
@@ -239,23 +212,23 @@ impl Facts {
         kind: &InstructionKind,
         tracked: impl Fn(Id<Slot>) -> Option<Id<Tracked>>,
     ) {
-        match kind {
-            InstructionKind::Store { place, .. } | InstructionKind::Copy { to: place, .. }
-                if let Some(followed) = place.whole_slot().and_then(&tracked) =>
-            {
-                self.declare(followed, true);
+        kind.accesses(|access| {
+            let Some(slot) = access.place.whole_slot() else {
+                return;
+            };
+            let Some(followed) = tracked(slot) else {
+                return;
+            };
+            match access.kind {
+                AccessKind::Write => self.declare(followed, true),
+                AccessKind::Move => {
+                    self.always.clear(followed);
+                    self.moved.set(followed);
+                }
+                AccessKind::End => self.declare(followed, body.slots[slot].initialized),
+                AccessKind::Read | AccessKind::Borrow { .. } | AccessKind::Address => {}
             }
-            InstructionKind::Moved { place, .. }
-                if let Some(followed) = place.whole_slot().and_then(&tracked) =>
-            {
-                self.always.clear(followed);
-                self.moved.set(followed);
-            }
-            InstructionKind::Dead(slot) if let Some(followed) = tracked(*slot) => {
-                self.declare(followed, body.slots[*slot].initialized);
-            }
-            _ => {}
-        }
+        });
     }
 
     /// The facts where paths with `self` and `other` meet.
@@ -287,18 +260,18 @@ fn move_sites(
         // The last move, whole write or end of `slot` before `end`: the move
         // is a site; the others end the path.
         let last = before.iter().rev().find_map(|&instruction| {
-            match &body.instructions[instruction].kind {
-                InstructionKind::Moved { place, .. } if place.whole_slot() == Some(slot) => {
-                    Some(Some(body.instructions.span(instruction)))
+            let mut last = None;
+            body.instructions[instruction].kind.accesses(|access| {
+                if access.place.whole_slot() != Some(slot) {
+                    return;
                 }
-                InstructionKind::Store { place, .. } | InstructionKind::Copy { to: place, .. }
-                    if place.whole_slot() == Some(slot) =>
-                {
-                    Some(None)
+                match access.kind {
+                    AccessKind::Move => last = Some(Some(body.instructions.span(instruction))),
+                    AccessKind::Write | AccessKind::End => last = Some(None),
+                    AccessKind::Read | AccessKind::Borrow { .. } | AccessKind::Address => {}
                 }
-                InstructionKind::Dead(ended) if *ended == slot => Some(None),
-                _ => None,
-            }
+            });
+            last
         });
         match last {
             Some(site) => sites.extend(site),
@@ -387,7 +360,7 @@ fn moved_use(
 fn partial_move(
     file: &Arc<SourceFile>,
     span: Span,
-    place: &Place,
+    place: PlaceRef,
     lent_again: Option<&str>,
 ) -> Diagnostic {
     let (message, help) = if place.is_behind_pointer() {
@@ -413,7 +386,7 @@ fn partial_move(
 
 /// The part of a value that `place`, not a whole slot, names last, and what
 /// holds it: "a field" of a "struct" or "an element" of an "array".
-fn part_and_holder(place: &Place) -> [&'static str; 2] {
+fn part_and_holder(place: PlaceRef) -> [&'static str; 2] {
     match place.steps.last() {
         Some(Step::Index { .. }) => ["an element", "array"],
         _ => ["a field", "struct"],

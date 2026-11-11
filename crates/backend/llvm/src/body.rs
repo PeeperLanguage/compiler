@@ -1208,44 +1208,12 @@ fn reached_blocks(body: &Body, targets: &[Id<Block>]) -> Vec<bool> {
 /// (`Writer::write_truth`).
 fn values_read(body: &Body) -> Vec<bool> {
     let mut operands = Vec::new();
-    let place_operands = |place: &Place, operands: &mut Vec<Operand>| {
-        if let Root::At(at) = place.root {
-            operands.push(at);
-        }
-        for step in &place.steps {
-            if let Step::Index { index, .. } = *step {
-                operands.push(index);
-            }
-        }
-    };
     for id in body.instructions.ids() {
-        match &body.instructions[id].kind {
-            InstructionKind::Integer { left, right, .. }
-            | InstructionKind::Float { left, right, .. }
-            | InstructionKind::Compare { left, right, .. } => operands.extend([*left, *right]),
-            InstructionKind::Convert { value, .. } => operands.push(*value),
-            InstructionKind::Load { place, .. }
-            | InstructionKind::Address { place, .. }
-            | InstructionKind::Borrow { place, .. }
-            | InstructionKind::Moved { place, .. } => place_operands(place, &mut operands),
-            InstructionKind::Store { place, value, .. } => {
-                place_operands(place, &mut operands);
-                operands.push(*value);
-            }
-            InstructionKind::Copy { to, from, .. } => {
-                place_operands(to, &mut operands);
-                place_operands(from, &mut operands);
-            }
-            InstructionKind::Call {
-                callee, arguments, ..
-            } => {
-                if let Callee::Pointer(pointer) = callee {
-                    operands.push(*pointer);
-                }
-                operands.extend(arguments.iter().copied());
-            }
-            InstructionKind::Check { .. } | InstructionKind::Dead(_) => {}
+        let kind = &body.instructions[id].kind;
+        if !matches!(kind, InstructionKind::Check { .. }) {
+            kind.operands(|operand| operands.push(operand));
         }
+        kind.accesses(|access| operands.extend(access.place.operands()));
     }
     for block in body.blocks.ids() {
         if let Terminator::Return {

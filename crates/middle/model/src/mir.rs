@@ -453,17 +453,11 @@ impl Place {
         }
     }
 
-    /// The slot when the place is all of its memory.
-    pub fn whole_slot(&self) -> Option<Id<Slot>> {
-        match self.root {
-            Root::Slot(slot) if self.steps.is_empty() => Some(slot),
-            _ => None,
+    pub fn as_place_ref(&self) -> PlaceRef<'_> {
+        PlaceRef {
+            root: self.root,
+            steps: &self.steps,
         }
-    }
-
-    /// Whether it is memory a pointer leads to, not a slot's own.
-    pub fn is_behind_pointer(&self) -> bool {
-        matches!(self.root, Root::At(_)) || self.steps.contains(&Step::Through)
     }
 
     /// The place `step` further in.
@@ -472,6 +466,43 @@ impl Place {
         steps.push(step);
         self.steps = steps.into();
         self
+    }
+}
+
+/// A place, borrowed: a stored `Place`, or all of a slot, which a `Dead`
+/// names without one.
+#[derive(Clone, Copy)]
+pub struct PlaceRef<'p> {
+    pub root: Root,
+    pub steps: &'p [Step],
+}
+
+impl PlaceRef<'_> {
+    /// The slot when the place is all of its memory.
+    pub fn whole_slot(self) -> Option<Id<Slot>> {
+        match self.root {
+            Root::Slot(slot) if self.steps.is_empty() => Some(slot),
+            _ => None,
+        }
+    }
+
+    /// Whether it is memory a pointer leads to, not a slot's own.
+    pub fn is_behind_pointer(self) -> bool {
+        matches!(self.root, Root::At(_)) || self.steps.contains(&Step::Through)
+    }
+
+    /// The values finding it reads: the address it starts at, and each
+    /// index.
+    pub fn operands(self) -> impl Iterator<Item = Operand> {
+        let root = match self.root {
+            Root::At(address) => Some(address),
+            Root::Slot(_) => None,
+        };
+        let indexes = self.steps.iter().filter_map(|step| match *step {
+            Step::Index { index, .. } => Some(index),
+            Step::Offset(_) | Step::Through => None,
+        });
+        root.into_iter().chain(indexes)
     }
 }
 
@@ -631,7 +662,6 @@ pub enum InstructionKind {
         failed: Operand,
         message: Box<str>,
     },
-    // The events, for the path checks only; removed before a backend runs.
     /// A reference to the place, `&mut` when `mutable`: a loan. Its value
     /// is the place's address. `size` is how many bytes from the place
     /// the loan covers, `None` for all there are, which only the program
@@ -667,7 +697,130 @@ pub enum Callee {
     Pointer(Operand),
 }
 
+/// A place an instruction touches (`InstructionKind::accesses`).
+pub struct PlaceAccess<'p> {
+    pub place: PlaceRef<'p>,
+    pub kind: AccessKind,
+    width: AccessWidth,
+}
+
+/// How many bytes an access touches: a register's, or a size.
+#[derive(Clone, Copy)]
+enum AccessWidth {
+    Class(Class),
+    Bytes(Option<u64>), // `None`: all there are
+}
+
+impl PlaceAccess<'_> {
+    /// How many bytes from the place it touches, on a target whose pointers
+    /// are `pointer_bytes` wide; `None` for all there are.
+    #[inline]
+    pub fn width(&self, pointer_bytes: u64) -> Option<u64> {
+        match self.width {
+            AccessWidth::Class(class) => Some(class.bytes(pointer_bytes)),
+            AccessWidth::Bytes(size) => size,
+        }
+    }
+}
+
+/// What an instruction does to a place it touches.
+#[derive(Clone, Copy)]
+pub enum AccessKind {
+    Read,
+    Write,
+    Borrow {
+        mutable: bool,
+    },
+    /// Takes its address, which holds no loan.
+    Address,
+    /// Moves out the value just read there (`Moved`).
+    Move,
+    /// Ends the storage of all of a slot (`Dead`).
+    End,
+}
+
 impl InstructionKind {
+    /// Gives `each` the places it touches, a copy's read first. A function,
+    /// not a list: the path checks ask for every line, so it compiles to a
+    /// `match`.
+    #[inline]
+    pub fn accesses<'p>(&'p self, mut each: impl FnMut(PlaceAccess<'p>)) {
+        let mut on = |place: &'p Place, width, kind| {
+            let place = place.as_place_ref();
+            each(PlaceAccess { place, kind, width });
+        };
+        let bytes = |size: &u64| AccessWidth::Bytes(Some(*size));
+        match self {
+            InstructionKind::Load { class, place } => {
+                on(place, AccessWidth::Class(*class), AccessKind::Read);
+            }
+            InstructionKind::Store { class, place, .. } => {
+                on(place, AccessWidth::Class(*class), AccessKind::Write);
+            }
+            InstructionKind::Copy { to, from, size } => {
+                on(from, bytes(size), AccessKind::Read);
+                on(to, bytes(size), AccessKind::Write);
+            }
+            InstructionKind::Borrow {
+                place,
+                size,
+                mutable,
+                ..
+            } => {
+                let kind = AccessKind::Borrow { mutable: *mutable };
+                on(place, AccessWidth::Bytes(*size), kind);
+            }
+            InstructionKind::Address { place, size } => on(place, bytes(size), AccessKind::Address),
+            InstructionKind::Moved { place, size, .. } => on(place, bytes(size), AccessKind::Move),
+            InstructionKind::Integer { .. }
+            | InstructionKind::Float { .. }
+            | InstructionKind::Compare { .. }
+            | InstructionKind::Convert { .. }
+            | InstructionKind::Call { .. }
+            | InstructionKind::Check { .. } => {}
+            InstructionKind::Dead(slot) => each(PlaceAccess {
+                place: PlaceRef {
+                    root: Root::Slot(*slot),
+                    steps: &[],
+                },
+                kind: AccessKind::End,
+                width: AccessWidth::Bytes(None),
+            }),
+        }
+    }
+
+    /// Gives `each` the values it reads as its operands, a call's callee
+    /// first; not those a place it touches reads (`PlaceRef::operands`).
+    #[inline]
+    pub fn operands(&self, mut each: impl FnMut(Operand)) {
+        match self {
+            InstructionKind::Integer { left, right, .. }
+            | InstructionKind::Float { left, right, .. }
+            | InstructionKind::Compare { left, right, .. } => {
+                each(*left);
+                each(*right);
+            }
+            InstructionKind::Convert { value, .. } | InstructionKind::Store { value, .. } => {
+                each(*value);
+            }
+            InstructionKind::Check { failed, .. } => each(*failed),
+            InstructionKind::Call {
+                callee, arguments, ..
+            } => {
+                if let Callee::Pointer(pointer) = callee {
+                    each(*pointer);
+                }
+                arguments.iter().copied().for_each(each);
+            }
+            InstructionKind::Load { .. }
+            | InstructionKind::Copy { .. }
+            | InstructionKind::Address { .. }
+            | InstructionKind::Borrow { .. }
+            | InstructionKind::Moved { .. }
+            | InstructionKind::Dead(_) => {}
+        }
+    }
+
     /// Whether it is code a compiled program runs: all but `Moved` and
     /// `Dead`, which only mark a point for the path checks.
     pub fn runs(&self) -> bool {
