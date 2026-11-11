@@ -11,7 +11,6 @@ use model::ModuleId;
 use model::ast;
 use model::constant::Value;
 use model::mir;
-use model::mir::DebugTypes;
 use model::semantic_types::ConstArguments;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
@@ -39,11 +38,10 @@ impl Checker<'_> {
     /// `thir`, only to run it at compile time when `to_run`: checks it
     /// (`check_body`), lowers it to MIR and runs the path checks. `None` when
     /// it has no body or its signature had an error; else its MIR, `None`
-    /// when it had an error. The MIR's debug types are in a table only this
-    /// build saw, so it is for a run at compile time, not for a backend.
-    /// What it finds is reported by its first build only: a later one (the
-    /// compile's, after a run at compile time, or the other way round) finds
-    /// the same and drops it.
+    /// when it had an error, naming the program's debug types
+    /// (`debug_types`). What it finds is reported by its first build only:
+    /// a later one (the compile's, after a run at compile time, or the other
+    /// way round) finds the same and drops it.
     pub fn build_function(
         &mut self,
         copy: FunctionCopy,
@@ -207,10 +205,7 @@ impl Checker<'_> {
         let Type::Function { result, .. } = &self.types[ty] else {
             unreachable!("a checked body has a function type")
         };
-        // shortcut: the path checks and a run at compile time read no debug
-        // type, but lowering makes them; the table goes once lowering stops
-        // making what nothing reads.
-        let debug_types = &mut DebugTypes::default();
+        let debug_types = &mut self.debug_types;
         let mir = lower::lower(thir, ty, &self.types, self.target, modules, debug_types)?;
         let file = &modules[module].ast.file;
         let diagnostics = &mut self.module_checks[module].diagnostics;

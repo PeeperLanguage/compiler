@@ -8,7 +8,6 @@ use super::Results;
 use super::run;
 use diagnostics::Diagnostic;
 use model::machine::Machine;
-use model::mir::DebugTypes;
 
 /// The machine the tests check for, but where they test another.
 fn x86_64() -> &'static Machine {
@@ -429,7 +428,7 @@ fn a_loading_error_leaves_no_entry_point() {
     assert!(found.entry_point().is_none());
 }
 
-/// In the MIR the path checks read, each way out of a block ends the
+/// In a function's MIR, each way out of a block ends the
 /// variables it leaves, newest first.
 #[test]
 fn each_way_out_of_a_block_ends_its_variables_newest_first() {
@@ -463,10 +462,11 @@ fn each_way_out_of_a_block_ends_its_variables_newest_first() {
         false,
         |output| {
             if let Output::Function(checked) = output {
-                let modules = &program.modules;
-                let mir = checked.mir(x86_64(), modules, &mut DebugTypes::default());
-                let file = &modules[checked.function.definition.module.index()].ast.file;
-                text.push_str(&mir.expect("it lowers").text(file, |_| String::new()));
+                let file = &program.modules[checked.function.definition.module.index()]
+                    .ast
+                    .file;
+                let mir = checked.mir.expect("it lowers");
+                text.push_str(&mir.text(file, |_| String::new()));
             }
         },
     );
@@ -512,9 +512,7 @@ fn a_function_whose_path_checks_fail_gives_no_mir() {
         false,
         |output| {
             if let Output::Function(checked) = output {
-                let modules = &program.modules;
-                let mir = checked.mir(x86_64(), modules, &mut DebugTypes::default());
-                lowered.push(mir.is_some());
+                lowered.push(checked.mir.is_some());
             }
         },
     );
@@ -715,10 +713,7 @@ fn an_invalid_declaration_lowers_nothing_using_it() {
         false,
         false,
         |output| {
-            if let Output::Function(CheckedFunction {
-                has_errors: false, ..
-            }) = output
-            {
+            if let Output::Function(CheckedFunction { mir: Some(_), .. }) = output {
                 lowered += 1;
             }
         },

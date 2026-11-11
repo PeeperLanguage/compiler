@@ -27,6 +27,7 @@ use model::ModuleId;
 use model::ast;
 use model::constant::Constant;
 use model::machine::Machine;
+use model::mir::DebugTypes;
 use model::semantic_types::ConstArgument;
 use model::semantic_types::ConstArguments;
 use model::semantic_types::ImplementationId;
@@ -49,6 +50,9 @@ pub struct Checker<'p> {
     /// What checking each module found so far, by `ModuleId`.
     pub module_checks: Vec<ModuleChecks<'p>>,
     pub types: Types, // the program's types, built-in and declared
+    /// The debug type of each type the program's lowered bodies name so far
+    /// (`lower::lower`); only a backend reads them.
+    pub debug_types: DebugTypes,
     /// The machine the program is for: the width of `isize` and `usize` is
     /// its `pointer_bits`, and a value may take its `largest_object` bytes.
     pub target: &'static Machine,
@@ -197,6 +201,7 @@ impl<'p> Checker<'p> {
             modules,
             module_checks,
             types: Types::new(target.pointer_bits),
+            debug_types: DebugTypes::default(),
             target,
             internals: CheckerInternals {
                 known_implementations: FxHashMap::default(),

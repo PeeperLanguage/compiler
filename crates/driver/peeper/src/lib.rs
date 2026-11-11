@@ -39,15 +39,16 @@ pub fn write_program<'p>(
                     function,
                     module,
                     thir,
+                    mir,
                     types,
+                    debug_types,
                     ..
                 } = checked;
-                let modules = &program.modules;
-                let Some(body) = checked.mir(target, modules, &mut queue.debug_types) else {
+                let Some(body) = mir else {
                     return; // it has errors
                 };
                 each_function(function, thir, &body, types);
-                queue.add(module, function, body, types);
+                queue.add(module, function, body, types, debug_types);
             },
         )
     });

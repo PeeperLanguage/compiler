@@ -13,7 +13,6 @@ use diagnostics::printer;
 use eval::interpreter::program::Stream;
 use llvm::BuildMode;
 use model::machine::Machine;
-use model::mir::DebugTypes;
 
 use crate::dump::Dump;
 use crate::dump::Dumps;
@@ -265,8 +264,6 @@ fn compile<'p>(
         let dump = |function, thir: &_, mir: &_, types: &_| dumped.add(function, thir, mir, types);
         peeper::write_program(program, target, mode, links, dump)
     } else {
-        // shortcut: a dump shows no debug type, but lowering makes them.
-        let mut debug_types = DebugTypes::default();
         let results = compile::run(
             program,
             target,
@@ -274,16 +271,10 @@ fn compile<'p>(
             false,
             false, // names are for editors
             |output| {
-                // `peeper check` with no dump lowers no function again.
-                let compile::Output::Function(checked) = output else {
-                    return;
-                };
-                if dumps.is_empty() {
-                    return;
-                }
-                let modules = &program.modules;
-                if let Some(mir) = checked.mir(target, modules, &mut debug_types) {
-                    dumped.add(checked.function, checked.thir, &mir, checked.types);
+                if let compile::Output::Function(checked) = output
+                    && let Some(mir) = &checked.mir
+                {
+                    dumped.add(checked.function, checked.thir, mir, checked.types);
                 }
             },
         );

@@ -102,6 +102,10 @@ impl ModuleResults {
 
 /// What a compile hands on as it goes (`run`), each piece used once and
 /// dropped after.
+#[expect(
+    clippy::large_enum_variant,
+    reason = "each is moved once to `use_output`, never kept in a list"
+)]
 pub enum Output<'c> {
     Function(CheckedFunction<'c>),
     /// A module constant `definition`, of a module checked, with its type and
@@ -126,7 +130,6 @@ pub enum Output<'c> {
 /// after.
 pub struct CheckedFunction<'c> {
     pub function: FunctionCopy,
-    pub ty: TypeId, // its function type, or its copy's
     /// The module whose compile built it: its own, or, for a copy, the one
     /// that first called it.
     pub module: ModuleId,
@@ -136,25 +139,10 @@ pub struct CheckedFunction<'c> {
     /// the compile records facts (as for an editor); otherwise none. Only
     /// this function's locals are among their names, explained by `thir`.
     pub facts: &'c [thir::Fact],
-    has_errors: bool,     // checking it, path checks included, found an error
+    /// Its path-checked MIR, `None` when checking it found an error.
+    pub mir: Option<mir::Body>,
     pub types: &'c Types, // the program's types so far, which the bodies name
-}
-
-impl CheckedFunction<'_> {
-    /// Its MIR of core concepts, for `target`, with the debug types it
-    /// names added to `debug_types` (`lower::lower`). `None` when
-    /// checking it found an error.
-    pub fn mir(
-        &self,
-        target: &'static Machine,
-        modules: &[model::program::Module],
-        debug_types: &mut DebugTypes,
-    ) -> Option<mir::Body> {
-        if self.has_errors {
-            return None;
-        }
-        lower::lower(self.thir, self.ty, self.types, target, modules, debug_types)
-    }
+    pub debug_types: &'c DebugTypes, // the program's so far, which `mir` names
 }
 
 /// What a program did when `interpret` ran it.
@@ -174,12 +162,9 @@ pub fn interpret(
 ) -> (Results, Option<Interpreted>) {
     let modules = program.modules.as_slice();
     let mut bodies = HashMap::new();
-    // shortcut: the run reads no debug type, but lowering makes them; the
-    // table goes once lowering stops making what nothing reads.
-    let mut debug_types = DebugTypes::default();
     let results = run(program, target, Results::default(), true, false, |output| {
         if let Output::Function(checked) = output
-            && let Some(body) = checked.mir(target, modules, &mut debug_types)
+            && let Some(body) = checked.mir
         {
             bodies.insert(checked.function, body);
         }
@@ -469,19 +454,15 @@ fn build_function(
     let Some(mir) = checker.build_function(function, span, thir, false) else {
         return;
     };
-    // Its MIR's debug types are this build's own, so a backend lowers it
-    // again into the program's (`mir`).
-    let has_errors = mir.is_none();
-    let ty = checker.copy_type(function, span); // made by the build
     let facts = std::mem::take(&mut checker.module_checks[module.index()].facts);
     use_output(Output::Function(CheckedFunction {
         function,
-        ty,
         module,
         thir,
         facts: &facts,
-        has_errors,
+        mir,
         types: &checker.types,
+        debug_types: &checker.debug_types,
     }));
 }
 

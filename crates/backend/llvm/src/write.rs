@@ -43,18 +43,26 @@ pub struct FunctionQueue<'p> {
     symbols: FxHashMap<FunctionCopy, String>,
     sent: Vec<bool>, // by module: whether its functions went to a worker
     batches: mpsc::Sender<Batch>,
-    /// The debug type of each type the program's bodies name so far, which
-    /// lowering adds to (`lower::lower`).
-    pub debug_types: DebugTypes,
+    /// In a debug build, a copy of the program's debug types so far, sent
+    /// with each batch: the compile's table is gone when the last one goes.
+    debug_types: DebugTypes,
 }
 
 impl FunctionQueue<'_> {
     /// Adds the function `copy`, whose MIR is `body`, to the LLVM module of
     /// `module`, the module whose compile built it: its own, or the first
-    /// to call a copy of another module's function. `types` is the
-    /// program's types so far. A program's functions come module by module,
-    /// so a function of another module sends the one before to a worker.
-    pub fn add(&mut self, module: ModuleId, copy: FunctionCopy, body: mir::Body, types: &Types) {
+    /// to call a copy of another module's function. `types` and
+    /// `debug_types` are the program's so far. A program's functions come
+    /// module by module, so a function of another module sends the one
+    /// before to a worker.
+    pub fn add(
+        &mut self,
+        module: ModuleId,
+        copy: FunctionCopy,
+        body: mir::Body,
+        types: &Types,
+        debug_types: &DebugTypes,
+    ) {
         if self.module != Some(module) {
             self.send();
             assert!(
@@ -74,6 +82,7 @@ impl FunctionQueue<'_> {
         body.named_functions().for_each(name);
         let shown_name = match self.mode {
             BuildMode::Debug => {
+                self.debug_types.copy_new(debug_types);
                 let modules = &program.modules;
                 let declared = model::program::declared_path(modules, copy.definition);
                 let name_of = |definition| model::program::declared_text(modules, definition);

@@ -55,13 +55,12 @@ fn program_ll(text: &str, target: &str) -> HashMap<String, String> {
                 false,
                 |output| {
                     if let compile::Output::Function(checked) = output {
-                        let modules = &program.modules;
-                        let body = checked.mir(target, modules, &mut queue.debug_types);
                         queue.add(
                             checked.module,
                             checked.function,
-                            body.unwrap(),
+                            checked.mir.unwrap(),
                             checked.types,
+                            checked.debug_types,
                         );
                     }
                 },

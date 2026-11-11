@@ -229,16 +229,29 @@ pub struct DebugMember {
 pub struct DebugTypeId(pub u32);
 
 /// The debug types of a program, one per language type that has a value
-/// (`of_type`). Lowering fills it; a backend reads `types` by id.
+/// (`of_type`). Lowering fills it; a backend reads each by id (`get`).
 #[derive(Clone, Default)]
 pub struct DebugTypes {
     /// Each type, at its `DebugTypeId`; `None` while it is being made
     /// (`reserve`), as a struct's members may name the struct.
-    pub types: Vec<Option<DebugType>>,
+    types: Vec<Option<DebugType>>,
     of_type: FxHashMap<TypeId, DebugTypeId>,
 }
 
 impl DebugTypes {
+    pub fn get(&self, id: DebugTypeId) -> &DebugType {
+        self.types[id.0 as usize]
+            .as_ref()
+            .expect("lowering defined each debug type it reserved")
+    }
+
+    /// Adds to `self`, a copy of `from` made earlier, the types `from` made
+    /// since. A copy is read by id only: it finds no type by language type.
+    pub fn copy_new(&mut self, from: &DebugTypes) {
+        self.types
+            .extend_from_slice(&from.types[self.types.len()..]);
+    }
+
     /// The debug type made for the language type `ty`, if one was.
     pub fn of_type(&self, ty: TypeId) -> Option<DebugTypeId> {
         self.of_type.get(&ty).copied()

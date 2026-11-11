@@ -98,10 +98,7 @@ impl Metadata {
         let mut pending = Vec::new();
         let node = self.debug_type_node(id, &mut pending);
         while let Some((id, node)) = pending.pop() {
-            let debug_type = debug_types.types[id.0 as usize]
-                .as_ref()
-                .expect("lowering defined each debug type it reserved");
-            match debug_type {
+            match debug_types.get(id) {
                 DebugType::Basic {
                     name,
                     bits,

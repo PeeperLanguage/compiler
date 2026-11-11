@@ -197,3 +197,43 @@
   New test `a_function_whose_path_checks_fail_gives_no_mir`: with the
   `has_errors` check removed no other test failed; this one does
   (`[true, true]`). check.sh ok.
+- Old vs new MIR, measured 2026-11-11 (`a77e760c`, before the MIR work,
+  vs `784d4831`; `target/step12-probes/perf/`, fastest of 5 runs, taking
+  turns). 54k-line `mixed` program (structs, arrays, slices, loops, `&&`):
+  `check` 0.27 -> 0.40 s; `check -dump mir` 0.43 -> 0.66 s; `build`
+  7.41 -> 6.73 s; `build -release` 23.5 -> 24.3 s; memory the same.
+  `run -interpret` of a 2M-round loop 6.79 -> 3.15 s. Built loop of 200M
+  rounds: debug 4.49 -> 3.92 s, release 1.19 -> 1.17 s. Benchmark (no
+  clang) 3,890 -> 4,697 M instructions (+21%). Profile of `check`
+  (samples): loan check 251 -> 539, lowering 94 -> 204, malloc 345 -> 430.
+  MIR is 41% longer (3,640 -> 5,151 lines for 30 functions: hidden slots
+  in place of `phi`, `dead` lines, a literal stored field by field); LLVM
+  text 8% longer (37 -> 39 MB).
+- Cause of the slower `check` (2026-11-11, `perf stat` instructions of
+  `check mixed`): old 1,016 M, new 1,378 M. Loan check 444 -> 642 M: it
+  walks 29% more lines (291,360 -> 375,567, `dead`s included in both) at
+  12% more per line (1,524 -> 1,709). The rest 572 -> 736 M (variable
+  state only 10 M). A quarter of the MIR is lowering's hidden slots (301
+  `dead`, 871 loads and stores, most of them `for` loop state). Prototype
+  (`target/step12-probes/perf/skip-lines.patch`, not applied): the loan
+  check walks only lines that can give, use or break a loan (20% of
+  them), found once from its own `defines`/`uses`/`accesses`: 1,196 M,
+  0.33 s (was 0.40); building that set costs 172 M. A line is 96 bytes
+  (old 48): `Operand` 24 (old 8), constants inline.
+- Untangle (2026-11-11, Fuad: "use untangled to fix all issues including
+  past commits", "ok go on"); decision log
+  `target/step12-probes/untangle/decisions.md`, fixes 1-11, then
+  comments, then tests.
+- Untangle fix 1, lower once: `Checker::debug_types` is the program's one
+  table, which every lowering writes (the path checks' and a run at
+  compile time's too). `CheckedFunction` carries the path-checked
+  `mir: Option<mir::Body>` and `&DebugTypes`; `ty`, `has_errors` and
+  `CheckedFunction::mir` (which lowered again) are gone, with the four
+  throwaway tables and their `shortcut:` comments. `DebugTypes::types` is
+  private (`get`); `FunctionQueue::add` takes the table and, in a debug
+  build, copies the types made since its last copy (`copy_new`): the last
+  batch goes after the checker is dropped. The backend now writes the
+  MIR the path checks read; a build lowers each function once (twice
+  when a constant ran it: the run's build is not reused). Mutation: with
+  `copy_new` copying nothing, 8+ llvm tests fail. check.sh ok. Speed not
+  measured.
