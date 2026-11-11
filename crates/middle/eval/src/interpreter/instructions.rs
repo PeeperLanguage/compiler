@@ -5,17 +5,17 @@
 
 use arena::Id;
 use bigint::Limbs;
-use model::core_mir::Class;
-use model::core_mir::Comparison;
-use model::core_mir::Conversion;
-use model::core_mir::FloatOp;
-use model::core_mir::Instruction;
-use model::core_mir::InstructionKind;
-use model::core_mir::IntegerOp;
-use model::core_mir::Operand;
-use model::core_mir::Place;
-use model::core_mir::Root;
-use model::core_mir::Step;
+use model::mir::Class;
+use model::mir::Comparison;
+use model::mir::Conversion;
+use model::mir::FloatOp;
+use model::mir::Instruction;
+use model::mir::InstructionKind;
+use model::mir::IntegerOp;
+use model::mir::Operand;
+use model::mir::Place;
+use model::mir::Root;
+use model::mir::Step;
 use runtime_abi::messages::DIVISION_BY_ZERO;
 use runtime_abi::messages::shift_count_message;
 

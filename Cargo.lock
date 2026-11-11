@@ -97,7 +97,6 @@ dependencies = [
  "check",
  "diagnostics",
  "eval",
- "flow",
  "lower",
  "model",
  "project",

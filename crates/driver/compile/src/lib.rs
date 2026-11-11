@@ -27,10 +27,9 @@ use model::FunctionCopy;
 use model::ModuleId;
 use model::ast;
 use model::constant::Constant;
-use model::core_mir;
-use model::core_mir::DebugTypes;
 use model::machine::Machine;
 use model::mir;
+use model::mir::DebugTypes;
 use model::semantic_types::ConstArguments;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
@@ -103,10 +102,6 @@ impl ModuleResults {
 
 /// What a compile hands on as it goes (`run`), each piece used once and
 /// dropped after.
-#[expect(
-    clippy::large_enum_variant,
-    reason = "each is moved once into the callback, never stored; a box would allocate per function"
-)]
 pub enum Output<'c> {
     Function(CheckedFunction<'c>),
     /// A module constant `definition`, of a module checked, with its type and
@@ -128,7 +123,7 @@ pub enum Output<'c> {
 
 /// A function with a body, or a copy of one with `const T: type`
 /// parameters, as a compile hands it on: built, used once, and dropped
-/// after, except its MIR, which is handed over (`into_mir`).
+/// after.
 pub struct CheckedFunction<'c> {
     pub function: FunctionCopy,
     pub ty: TypeId, // its function type, or its copy's
@@ -141,31 +136,24 @@ pub struct CheckedFunction<'c> {
     /// the compile records facts (as for an editor); otherwise none. Only
     /// this function's locals are among their names, explained by `thir`.
     pub facts: &'c [thir::Fact],
-    mir: Option<mir::Body>, // `None` when checking it found an error
-    pub types: &'c Types,   // the program's types so far, which the bodies name
+    has_errors: bool,     // checking it, path checks included, found an error
+    pub types: &'c Types, // the program's types so far, which the bodies name
 }
 
 impl CheckedFunction<'_> {
     /// Its MIR of core concepts, for `target`, with the debug types it
-    /// names added to `debug_types` (`lower::core::lower`). `None` when
+    /// names added to `debug_types` (`lower::lower`). `None` when
     /// checking it found an error.
-    pub fn core_mir(
+    pub fn mir(
         &self,
         target: &'static Machine,
         modules: &[model::program::Module],
         debug_types: &mut DebugTypes,
-    ) -> Option<core_mir::Body> {
-        lower::core::lower(self.thir, self.ty, self.types, target, modules, debug_types)
-    }
-
-    /// Its MIR, as every reader of MIR takes it: with the code no path
-    /// reaches removed (`flow::cleanup`). `None` when checking it found an
-    /// error. Only a compile that reads MIR pays for the cleanup: in
-    /// `peeper check` of a large program it is about 5% of the work.
-    pub fn into_mir(self) -> Option<mir::Body> {
-        let mut mir = self.mir?;
-        flow::cleanup::remove_unused_code(&mut mir);
-        Some(mir)
+    ) -> Option<mir::Body> {
+        if self.has_errors {
+            return None;
+        }
+        lower::lower(self.thir, self.ty, self.types, target, modules, debug_types)
     }
 }
 
@@ -191,7 +179,7 @@ pub fn interpret(
     let mut debug_types = DebugTypes::default();
     let results = run(program, target, Results::default(), true, false, |output| {
         if let Output::Function(checked) = output
-            && let Some(body) = checked.core_mir(target, modules, &mut debug_types)
+            && let Some(body) = checked.mir(target, modules, &mut debug_types)
         {
             bodies.insert(checked.function, body);
         }
@@ -481,6 +469,9 @@ fn build_function(
     let Some(mir) = checker.build_function(function, span, thir, false) else {
         return;
     };
+    // Its MIR's debug types are this build's own, so a backend lowers it
+    // again into the program's (`mir`).
+    let has_errors = mir.is_none();
     let ty = checker.copy_type(function, span); // made by the build
     let facts = std::mem::take(&mut checker.module_checks[module.index()].facts);
     use_output(Output::Function(CheckedFunction {
@@ -489,7 +480,7 @@ fn build_function(
         module,
         thir,
         facts: &facts,
-        mir,
+        has_errors,
         types: &checker.types,
     }));
 }

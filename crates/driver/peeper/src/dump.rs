@@ -65,24 +65,22 @@ impl<'p> Dumps<'p> {
         mir: &mir::Body,
         types: &Types,
     ) {
-        let program = self.program;
-        let name = |definition: DefId| model::program::declared_path(&program.modules, definition);
+        let modules = &self.program.modules;
+        let name = |definition: DefId| model::program::declared_path(modules, definition);
+        let declared = |definition| model::program::declared_text(modules, definition);
+        let copy_name =
+            |copy: FunctionCopy| types.copy_text(name(copy.definition), copy.arguments, declared);
         let module = function.definition.module.index();
-        let file = &program.modules[module].ast.file;
+        let file = &modules[module].ast.file;
         let texts = &mut self.texts[module];
         for (text, kind) in texts.iter_mut().zip(self.kinds) {
             let body = match kind {
                 Dump::Thir => thir.text(types, file, name),
-                Dump::Mir => mir.text(types, file, name),
+                Dump::Mir => mir.text(file, copy_name),
                 Dump::Ll => continue,
             };
             text.push_str("fn ");
-            let declared = |definition| model::program::declared_text(&program.modules, definition);
-            text.push_str(&types.copy_text(
-                name(function.definition),
-                function.arguments,
-                declared,
-            ));
+            text.push_str(&copy_name(function));
             text.push_str(":\n");
             text.push_str(&body);
         }

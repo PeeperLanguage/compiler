@@ -8,8 +8,8 @@ use model::DefId;
 use model::FunctionCopy;
 use model::ModuleId;
 use model::ast;
-use model::core_mir::DebugTypes;
 use model::machine::Machine;
+use model::mir::DebugTypes;
 use model::semantic_types::ConstArguments;
 use model::thir;
 use source::SourceFile;
@@ -73,8 +73,7 @@ fn lowered_for(text: &str, target: &str) -> String {
     mir.text(&file, name_of)
 }
 
-// The block after a `return` is unreachable; it still ends the scopes, as
-// the old lowering does, and cleanup removes it.
+// The block after a `return` is unreachable; it still ends the scopes.
 
 #[test]
 fn integers_are_registers_and_variables_are_slots() {
@@ -352,6 +351,10 @@ fn main() -> i32 { let s = Square.{ side = 3 }; let shape: &Shape = &s; return s
     );
     assert!(text.contains("borrow 4 s.0 as reference\n"), "{text}");
     assert!(text.contains("store ptr shape.1[+8], global 0\n"), "{text}");
+    assert!(
+        text.contains("  global 0 = table [Square::area]\n"),
+        "{text}"
+    );
     // The call lends what the reference views again, then reads the
     // method from the table.
     assert!(
@@ -369,7 +372,7 @@ fn main() -> i32 { let s = Square.{ side = 3 }; let shape: &Shape = &s; return s
 
 /// Every fixture program lowers, on its own target: no THIR shape makes
 /// the lowering give up. Errors a negative fixture expects leave its
-/// bodies unlowered, as the old lowering does.
+/// bodies unlowered.
 #[test]
 fn every_fixture_lowers() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");

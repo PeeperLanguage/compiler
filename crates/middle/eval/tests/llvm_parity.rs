@@ -7,7 +7,7 @@
 //! lib.rs cover them. `MIN / -1` runs through the backend's guard.
 //!
 //! Each binary operator becomes the MIR operation lowering makes of it
-//! (`lower::core::binary::binary_operation`), written with the instruction
+//! (`lower::binary::binary_operation`), written with the instruction
 //! the backend writes for that operation (`integer_instruction`,
 //! `comparison_instruction`, `signed_division`, `conversion_instruction`,
 //! `saturating_conversion`).
@@ -32,12 +32,12 @@ use llvm::body::integer_instruction;
 use llvm::body::saturating_conversion;
 use llvm::body::signed_division;
 use llvm::link::TOOLCHAIN_FOLDER;
-use lower::core::binary::BinaryOperation;
-use lower::core::binary::binary_operation;
+use lower::binary::BinaryOperation;
+use lower::binary::binary_operation;
 use model::constant::Value;
-use model::core_mir::Class;
-use model::core_mir::Conversion;
-use model::core_mir::IntegerOp;
+use model::mir::Class;
+use model::mir::Conversion;
+use model::mir::IntegerOp;
 use model::operators::BinaryOp;
 use model::operators::UnaryOp;
 use model::semantic_types::Float;
@@ -529,7 +529,7 @@ fn write_conversions(
         writeln!(calls, "  call void @{function}()").unwrap();
         let from_llvm = llvm_type(from);
         for to in &types {
-            // The conversion lowering makes (`lower::core`'s `lower_cast`).
+            // The conversion lowering makes (`lower`'s `lower_cast`).
             let cast = |conversion| conversion_instruction(conversion).to_string();
             let instruction = match (from, to) {
                 _ if from == to => continue,

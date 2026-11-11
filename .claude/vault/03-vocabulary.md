@@ -17,7 +17,7 @@ The codebase's fixed terms: use these words, with these meanings.
 | middle | `model` | data only: `ast`, `thir`, `mir`, `semantic_types`, `constant`, `machine`, ids, operators |
 | middle | `check` | `Checker`: scopes, names, types, THIR, signatures, folding; builds bodies |
 | middle | `lower` | THIR to MIR |
-| middle | `flow` | path checks over MIR, and `cleanup` |
+| middle | `flow` | path checks over MIR |
 | middle | `eval` | operators on constants; the MIR interpreter |
 | backend | `llvm` | MIR to LLVM text; clang and the linker; the runtime build |
 | driver | `compile` | one compile: module walk, reuse, `Output` |
@@ -54,13 +54,16 @@ return (origins), T0043 not supported yet, T0044 evaluation failed.
 
 ## MIR terms (`docs/ir-design.md` MIR)
 
-Variable slot, instruction (`load`, `length`, `store`, `move`, `borrow`,
-`address`, binary, unary, `convert`, `call`, `phi`, `aggregate`, `field`,
-`array parts`, `check`, `print`, `scope end`), terminator (`goto`, `branch`,
-`return`, `panic`, `fall off`), `Place` = variable + `Projection` steps
-(field, dereference, index, slice elements, subslice), operand = constant,
-argument or earlier value. Holder: a reference or slice in a variable or
-value, per field. Loan: one `borrow`, then one parameter loan per parameter.
+Slot (a variable or hidden temporary: size, alignment, holders),
+instruction (`load`, `store`, `copy`, integer, float, `compare`, `convert`,
+pointer cast, `address`, `call`, `check`, `borrow`; `moved` and `dead` mark
+points for the path checks and run no code), terminator (`jump`, `branch`,
+`return`, `panic`, `fall off`), `Place` = root (slot or pointer) + steps
+(offset, `*` through a pointer, index of size and count), operand =
+constant, parameter, global or earlier value; globals are bytes or a
+function table. No `phi`: `&&` and `||` use a hidden `i8` slot. Holder: a
+pointer in a slot that may hold loans (a reference, slice or interface, per
+field). Loan: one `borrow`, then one parameter loan per parameter.
 Two-phase: a `&mut` used once, as a call argument, is reserved until the
 call.
 

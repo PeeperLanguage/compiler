@@ -7,12 +7,12 @@ use std::sync::Arc;
 
 use arena::Id;
 use diagnostics::Diagnostic;
-use model::core_mir;
-use model::core_mir::InstructionKind;
-use model::core_mir::Place;
-use model::core_mir::Root;
-use model::core_mir::Slot;
-use model::core_mir::Step;
+use model::mir;
+use model::mir::InstructionKind;
+use model::mir::Place;
+use model::mir::Root;
+use model::mir::Slot;
+use model::mir::Step;
 use source::SourceFile;
 use source::Span;
 
@@ -40,7 +40,7 @@ enum Tracked {}
 /// at each block's start; the loop walks each block again from them and
 /// reports at each use and whole write.
 pub fn report_variable_state_errors(
-    body: &core_mir::Body,
+    body: &mir::Body,
     file: &Arc<SourceFile>,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
@@ -57,8 +57,7 @@ pub fn report_variable_state_errors(
             entry.declare(followed, true);
         }
     }
-    let instructions =
-        |block: Id<core_mir::Block>| body.lists.items(body.blocks[block].instructions);
+    let instructions = |block: Id<mir::Block>| body.lists.items(body.blocks[block].instructions);
     let starts = dataflow(
         body.blocks.len(),
         [(Id::from_index(0), entry)],
@@ -175,7 +174,7 @@ fn accesses(kind: &InstructionKind) -> impl Iterator<Item = Access<'_>> {
 
 /// Each slot's number if the check follows it: its `let` has no value, or a
 /// `Moved` takes it whole somewhere. Also how many are followed.
-fn tracked_slots(body: &core_mir::Body) -> (Vec<Option<Id<Tracked>>>, usize) {
+fn tracked_slots(body: &mir::Body) -> (Vec<Option<Id<Tracked>>>, usize) {
     let mut moved = vec![false; body.slots.len()];
     for id in body.instructions.ids() {
         if let InstructionKind::Moved { place, .. } = &body.instructions[id].kind
@@ -236,7 +235,7 @@ impl Facts {
     /// pass of a loop.
     fn step(
         &mut self,
-        body: &core_mir::Body,
+        body: &mir::Body,
         kind: &InstructionKind,
         tracked: impl Fn(Id<Slot>) -> Option<Id<Tracked>>,
     ) {
@@ -273,9 +272,9 @@ impl Facts {
 /// `block` that do not set it again or end it: searched back only for an
 /// error.
 fn move_sites(
-    body: &core_mir::Body,
+    body: &mir::Body,
     slot: Id<Slot>,
-    block: Id<core_mir::Block>,
+    block: Id<mir::Block>,
     position: usize,
 ) -> Vec<Span> {
     let predecessors = predecessors(body);
@@ -321,7 +320,7 @@ fn move_sites(
 /// there, as `state` says. A use that sets a `written` part, such as "a
 /// field", needs the whole value set.
 fn unset_use(
-    body: &core_mir::Body,
+    body: &mir::Body,
     file: &Arc<SourceFile>,
     slot: Id<Slot>,
     span: Span,
@@ -348,7 +347,7 @@ fn unset_use(
 /// The error for `slot`, used at `span` where some path moved it at one of
 /// `moves`; a use that sets a `written` part, such as "a field".
 fn moved_use(
-    body: &core_mir::Body,
+    body: &mir::Body,
     file: &Arc<SourceFile>,
     slot: Id<Slot>,
     span: Span,
@@ -424,7 +423,7 @@ fn part_and_holder(place: &Place) -> [&'static str; 2] {
 /// The error for `slot`, without `mut`, assigned at `span` where some path
 /// already set it, as `set` says.
 fn second_assignment(
-    body: &core_mir::Body,
+    body: &mir::Body,
     file: &Arc<SourceFile>,
     slot: Id<Slot>,
     span: Span,

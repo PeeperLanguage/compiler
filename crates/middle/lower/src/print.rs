@@ -3,17 +3,17 @@
 //! runtime function for its kind.
 
 use arena::List;
-use model::core_mir::Callee;
-use model::core_mir::Class;
-use model::core_mir::Conversion;
-use model::core_mir::Global;
-use model::core_mir::InstructionKind;
-use model::core_mir::Operand;
-use model::core_mir::Passing;
-use model::core_mir::Place;
-use model::core_mir::Root;
-use model::core_mir::Signature;
-use model::core_mir::Terminator;
+use model::mir::Callee;
+use model::mir::Class;
+use model::mir::Conversion;
+use model::mir::Global;
+use model::mir::InstructionKind;
+use model::mir::Operand;
+use model::mir::Passing;
+use model::mir::Place;
+use model::mir::Root;
+use model::mir::Signature;
+use model::mir::Terminator;
 use model::semantic_types::Float;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
@@ -27,8 +27,8 @@ use runtime_abi::symbols::PRINT_POINTER;
 use runtime_abi::symbols::PRINT_TEXT;
 use source::Span;
 
-use crate::core::Lowering;
-use crate::core::Value;
+use crate::Lowering;
+use crate::Value;
 
 impl Lowering<'_> {
     /// `print(values)`, or `println(values)` when `newline`: the values

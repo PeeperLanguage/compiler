@@ -2,8 +2,8 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::Command;
 
-use model::core_mir::Class;
 use model::machine::Machine;
+use model::mir::Class;
 
 use crate::link::call_tool;
 use crate::link::run_tool;
@@ -56,7 +56,7 @@ fn program_ll(text: &str, target: &str) -> HashMap<String, String> {
                 |output| {
                     if let compile::Output::Function(checked) = output {
                         let modules = &program.modules;
-                        let body = checked.core_mir(target, modules, &mut queue.debug_types);
+                        let body = checked.mir(target, modules, &mut queue.debug_types);
                         queue.add(
                             checked.module,
                             checked.function,

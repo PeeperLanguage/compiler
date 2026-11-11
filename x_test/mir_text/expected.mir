@@ -1,10 +1,29 @@
 fn main:
   bb0:
-    store text.0, "hi\t"
-    store c_text.1, c"bye"
-    %2 = load text.0: &str
-    %3 = load c_text.1: &cstr
-    %4 = load text.0: &str
-    %5 = field %4[1]: u64
-    println(%2, %3, %5)
+    store ptr text.0, global 0
+    store i64 text.0[+8], 3
+    store ptr c_text.1, global 1
+    copy 16 .2, text.0
+    %4 = load ptr c_text.1
+    %5 = load i64 text.0[+8]
+    %6 = load ptr .2
+    %7 = load i64 .2[+8]
+    call peeper_rt_v1_print_bytes(%6, %7)
+    call peeper_rt_v1_print_bytes(global 2, 1)
+    call peeper_rt_v1_print_text(%4)
+    store i64 .3, %5
+    %12 = address 8 .3
+    call peeper_rt_v1_print_bytes(global 3, 1)
+    call peeper_rt_v2_print_int(0, 1, %12)
+    call peeper_rt_v1_print_bytes(global 4, 1)
+    call peeper_rt_v1_flush()
+    dead .3
+    dead .2
+    dead c_text.1
+    dead text.0
     fall off at `}`
+  global 0 = "hi\t"
+  global 1 = "bye\x00"
+  global 2 = " "
+  global 3 = " "
+  global 4 = "\n"

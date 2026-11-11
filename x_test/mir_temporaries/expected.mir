@@ -1,68 +1,110 @@
 fn make:
   bb0:
     return 1
+  bb1:
+    fall off at `}`
 fn look:
   bb0:
-    store value.0, arg0
-    %1 = load value.0.*: i32
-    %2 = EqualTo %1, 1: bool
+    store ptr value.0, arg0
+    %1 = load i32 value.0[*]
+    %2 = eq i32 %1, 1
+    dead value.0
     return %2
+  bb1:
+    dead value.0
+    fall off at `}`
 fn main:
   bb0:
-    %0 = call make(): i32
-    store _.0, %0
-    %2 = borrow _.0: &i32
-    %3 = call look(%2): bool
-    %5 = call make(): i32
-    store _.1, %5
-    %7 = borrow _.1: &i32
-    store kept.2, %7
-    %9 = call make(): i32
-    store _.3, %9
-    %11 = borrow _.3: &i32
-    %12 = call look(%11): bool
-    branch %12 (look(&make())) bb1 bb2
+    %0 = call make()
+    store i32 .0, %0
+    %2 = borrow 4 .0 as reference
+    %3 = call look(%2)
+    dead .0
+    %5 = call make()
+    store i32 .1, %5
+    %7 = borrow 4 .1 as reference
+    store ptr kept.2, %7
+    %9 = call make()
+    store i32 .3, %9
+    %11 = borrow 4 .3 as reference
+    %12 = call look(%11)
+    dead .3
+    branch %12, bb1, bb2
   bb1:
-    %14 = load kept.2.*: i32
-    println(%14)
-    goto bb2
+    %14 = load i32 kept.2[*]
+    %15 = sext i32 %14 to i64
+    store i64 .10, %15
+    %17 = address 8 .10
+    call peeper_rt_v2_print_int(1, 1, %17)
+    call peeper_rt_v1_print_bytes(global 0, 1)
+    call peeper_rt_v1_flush()
+    dead .10
+    jump bb2
   bb2:
-    %16 = call make(): i32
-    store _.4, %16
-    %18 = borrow _.4: &i32
-    %19 = call look(%18): bool
-    branch %19 (look(&make())) bb3 bb3
+    jump bb3
   bb3:
-    %21 = call make(): i32
-    store _.5, %21
-    %23 = borrow _.5: &i32
-    %24 = call look(%23): bool
-    branch %24 (look(&make())) bb4 bb5
+    %22 = call make()
+    store i32 .4, %22
+    %24 = borrow 4 .4 as reference
+    %25 = call look(%24)
+    dead .4
+    branch %25, bb5, bb4
   bb4:
-    %26 = call make(): i32
-    store _.6, %26
-    %28 = borrow _.6: &i32
-    %29 = call look(%28): bool
-    goto bb5
+    %27 = call make()
+    store i32 .5, %27
+    %29 = borrow 4 .5 as reference
+    %30 = call look(%29)
+    dead .5
+    store i8 .11, 0
+    branch %30, bb7, bb8
   bb5:
-    %31 = phi bb3: false, bb4: %29: bool
-    branch %31 (look(&make()) && look(&make())) bb6 bb7
+    jump bb4
   bb6:
-    println(2)
-    goto bb7
+    jump bb3
   bb7:
-    %33 = call make(): i32
-    store _.7, %33
-    %35 = borrow _.7: &i32
-    %36 = call look(%35): bool
-    branch %36 (look(&make())) bb8 bb9
+    %33 = call make()
+    store i32 .6, %33
+    %35 = borrow 4 .6 as reference
+    %36 = call look(%35)
+    store i8 .11, %36
+    dead .6
+    jump bb8
   bb8:
-    %37 = call make(): i32
-    store _.8, %37
-    %39 = borrow _.8: &i32
-    %40 = call look(%39): bool
-    goto bb9
+    %39 = load i8 .11
+    dead .11
+    branch %39, bb9, bb10
   bb9:
-    %41 = phi bb7: false, bb8: %40: bool
-    store both.9, %41
+    %41 = sext i32 2 to i64
+    store i64 .12, %41
+    %43 = address 8 .12
+    call peeper_rt_v2_print_int(1, 1, %43)
+    call peeper_rt_v1_print_bytes(global 1, 1)
+    call peeper_rt_v1_flush()
+    dead .12
+    jump bb10
+  bb10:
+    %48 = call make()
+    store i32 .7, %48
+    %50 = borrow 4 .7 as reference
+    %51 = call look(%50)
+    store i8 .13, 0
+    branch %51, bb11, bb12
+  bb11:
+    %53 = call make()
+    store i32 .8, %53
+    %55 = borrow 4 .8 as reference
+    %56 = call look(%55)
+    store i8 .13, %56
+    jump bb12
+  bb12:
+    %58 = load i8 .13
+    store i8 both.9, %58
+    dead .13
+    dead both.9
+    dead .8
+    dead .7
+    dead kept.2
+    dead .1
     fall off at `}`
+  global 0 = "\n"
+  global 1 = "\n"

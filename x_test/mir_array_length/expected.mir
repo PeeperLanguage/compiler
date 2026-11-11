@@ -1,49 +1,83 @@
 fn make:
   bb0:
-    %0 = aggregate(1, 2, 3): [3]i32
-    return %0
+    store i32 at arg0[+0], 1
+    store i32 at arg0[+4], 2
+    store i32 at arg0[+8], 3
+    return
+  bb1:
+    fall off at `}`
 fn pick:
   bb0:
     return 1
+  bb1:
+    fall off at `}`
 fn sum:
   bb0:
-    store values.0, arg0
-    store total.1, 0
-    %2 = NotEqualTo 4, 0: bool
-    goto bb1
+    store ptr values.0, arg0
+    store i32 total.1, 0
+    %2 = ne i64 4, 0
+    store i64 .3, 0
+    store i64 .4, 4
+    store i8 .5, %2
+    jump bb1
   bb1:
-    %3 = phi bb0: 0, bb4: %8: u64
-    %4 = phi bb0: 4, bb4: %9: u64
-    %5 = phi bb0: %2, bb4: %7: bool
-    branch %5 (0..values.len) bb2 bb3
+    %6 = load i8 .5
+    branch %6, bb2, bb3
   bb2:
-    store i.2, %3
-    %7 = GreaterThan %4, 1: bool
-    %8 = Add %3, 1: u64
-    %9 = Subtract %4, 1: u64
-    %10 = load total.1: i32
-    %11 = load i.2: u64
-    %12 = GreaterOrEqual %11, 4: bool
-    check %12, "index out of bounds: the length is 4"
-    %14 = load values.0.*[at %11]: i32
-    %15 = Add %10, %14: i32
-    store total.1, %15
-    goto bb4
+    %7 = load i64 .3
+    %8 = load i64 .4
+    store i64 i.2, %7
+    %10 = ult i64 1, %8
+    %11 = add i64 %7, 1
+    %12 = sub i64 %8, 1
+    store i64 .3, %11
+    store i64 .4, %12
+    store i8 .5, %10
+    %16 = load i32 total.1
+    %17 = load i64 i.2
+    %18 = ule i64 4, %17
+    check %18, "index out of bounds: the length is 4"
+    %20 = load i32 values.0[*, %17 * 4 of 4]
+    %21 = add i32 %16, %20
+    store i32 total.1, %21
+    dead i.2
+    jump bb4
   bb3:
-    %18 = load total.1: i32
-    return %18
+    dead .5
+    dead .4
+    dead .3
+    %27 = load i32 total.1
+    dead total.1
+    dead values.0
+    return %27
   bb4:
-    goto bb1
+    jump bb1
+  bb5:
+    dead total.1
+    dead values.0
+    fall off at `}`
 fn lengths:
   bb0:
-    %0 = aggregate(1, 2, 3): [3]i32
-    %1 = aggregate(4, 5, 6): [3]i32
-    %2 = aggregate(%0, %1): [2][3]i32
-    store grid.0, %2
-    %4 = call pick(): i32
-    %5 = convert %4: u64
-    %6 = GreaterOrEqual %5, 2: bool
-    check %6, "index out of bounds: the length is 2"
-    %8 = call make(): [3]i32
-    %9 = Add 3, 3: u64
-    return %9
+    store i32 .1[+0], 1
+    store i32 .1[+4], 2
+    store i32 .1[+8], 3
+    store i32 .2[+0], 4
+    store i32 .2[+4], 5
+    store i32 .2[+8], 6
+    copy 12 grid.0[+0], .1
+    copy 12 grid.0[+12], .2
+    dead .2
+    dead .1
+    %10 = call pick()
+    %11 = sext i32 %10 to i64
+    %12 = ule i64 2, %11
+    check %12, "index out of bounds: the length is 2"
+    %14 = address 12 .3
+    call make(%14)
+    %16 = add i64 3, 3
+    dead .3
+    dead grid.0
+    return %16
+  bb1:
+    dead grid.0
+    fall off at `}`

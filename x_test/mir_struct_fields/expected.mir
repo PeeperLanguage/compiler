@@ -1,14 +1,20 @@
 fn main:
   bb0:
-    %0 = aggregate(1, 2): Point
-    store p.0, %0
-    %2 = move p.0: Point
-    %3 = aggregate(3, 4): Point
-    %4 = aggregate(%2, %3): Segment
-    store s.1, %4
-    %6 = load s.1[1, 0]: i32
-    store x.2, %6
-    %8 = aggregate(5, 6): Point
-    %9 = field %8[1]: i32
-    store y.3, %9
+    store i32 p.0[+4], 2
+    store i32 p.0[+0], 1
+    copy 8 s.1[+0], p.0
+    moved 8 p.0
+    store i32 s.1[+8, +0], 3
+    store i32 s.1[+8, +4], 4
+    %6 = load i32 s.1[+8, +0]
+    store i32 x.2, %6
+    store i32 .4[+0], 5
+    store i32 .4[+4], 6
+    %10 = load i32 .4[+4]
+    store i32 y.3, %10
+    dead .4
+    dead y.3
+    dead x.2
+    dead s.1
+    dead p.0
     fall off at `}`

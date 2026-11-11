@@ -2,11 +2,11 @@
 //! machine (`CAbi`, measured with clang 23): lowering works it out from the
 //! types, so the MIR carries it and no backend reads a type.
 
-use model::core_mir::CPassing;
-use model::core_mir::CSignature;
-use model::core_mir::Extension;
 use model::machine::CAbi;
 use model::machine::Machine;
+use model::mir::CPassing;
+use model::mir::CSignature;
+use model::mir::Extension;
 use model::semantic_types::Integer;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;

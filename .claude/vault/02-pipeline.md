@@ -70,14 +70,15 @@ reported once (T0013). Tables: `declared_type(d)`, `function_type(d)`,
 
 ## After the checks
 
-- `flow::cleanup::remove_unused_code` drops `scope end`s, jump-only blocks
-  and unreachable blocks; only readers of a compiled body run it (backend,
-  dumps). The interpreter reads the MIR of core concepts instead.
-- `llvm`: one walk per function's MIR of core concepts to LLVM text; `clang -c` per module;
+- One MIR (`model::mir`, made by `lower`) is read by the path checks, the
+  dumps, the interpreter and the LLVM writer. A function whose checks found
+  an error has none (`CheckedFunction::mir`). Unreached blocks stay in it;
+  the LLVM writer skips them.
+- `llvm`: one walk per function's MIR to LLVM text; `clang -c` per module;
   link with `libpeeper_rt_v1.a` and `-lm` (`docs/ir-design.md`, LLVM).
-- `eval::interpreter::program::run`: the MIR of core concepts
-  (`lower::core`), for `run -interpret` and the browser; compile-time calls
-  run on it too (`eval::interpreter::run_function`).
+- `eval::interpreter::program::run`: the same MIR, for `run -interpret` and
+  the browser; compile-time calls run on it too
+  (`eval::interpreter::run_function`).
 
 ## Ownership rules the machine relies on (`docs/architecture.md`)
 

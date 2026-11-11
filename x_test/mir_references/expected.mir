@@ -1,31 +1,43 @@
 fn shift:
   bb0:
-    store point.0, arg0
-    %1 = load point.0.*[1]: i32
-    %2 = Add %1, 1: i32
-    store point.0.*[0], %2
+    store ptr point.0, arg0
+    %1 = load i32 point.0[*, +4]
+    %2 = add i32 %1, 1
+    store i32 point.0[*, +0], %2
+    dead point.0
     fall off at `}`
 fn set:
   bb0:
-    store n.0, arg0
-    store n.0.*, 3
+    store ptr n.0, arg0
+    store i32 n.0[*], 3
+    dead n.0
     fall off at `}`
 fn main:
   bb0:
-    %0 = aggregate(1, 2): Point
-    store p.0, %0
-    %2 = borrow mut p.0: &mut Point
-    store r.1, %2
-    %4 = borrow mut r.1.*: &mut Point
+    store i32 p.0[+0], 1
+    store i32 p.0[+4], 2
+    %2 = borrow mut 8 p.0 as reference
+    store ptr r.1, %2
+    %4 = borrow mut 8 r.1[*] as reference
     call shift(%4)
-    %6 = borrow mut r.1.*: &mut Point
+    %6 = borrow mut 8 r.1[*] as reference
     call shift(%6)
-    store n.2, 0
-    %9 = borrow mut n.2: &mut i32
+    store i32 n.2, 0
+    %9 = borrow mut 4 n.2 as reference
     call set(%9)
-    %11 = borrow p.0[1]: &i32
-    store shared.3, %11
-    %13 = load shared.3.*: i32
-    %14 = load n.2: i32
-    %15 = Add %13, %14: i32
+    %11 = borrow 4 p.0[+4] as reference
+    store ptr shared.3, %11
+    %13 = load i32 shared.3[*]
+    %14 = load i32 n.2
+    %15 = add i32 %13, %14
+    dead shared.3
+    dead n.2
+    dead r.1
+    dead p.0
     return %15
+  bb1:
+    dead shared.3
+    dead n.2
+    dead r.1
+    dead p.0
+    fall off at `}`

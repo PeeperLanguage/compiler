@@ -2,9 +2,9 @@
 //! concepts. One rule: lowering follows it, and eval's LLVM parity test
 //! runs it against the interpreter's arithmetic.
 
-use model::core_mir::Comparison;
-use model::core_mir::FloatOp;
-use model::core_mir::IntegerOp;
+use model::mir::Comparison;
+use model::mir::FloatOp;
+use model::mir::IntegerOp;
 use model::operators::BinaryOp;
 use model::semantic_types::Integer;
 use model::semantic_types::Type;

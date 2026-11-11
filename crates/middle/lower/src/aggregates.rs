@@ -4,18 +4,18 @@
 use arena::Id;
 use arena::List;
 use bigint::Limbs;
-use model::core_mir::Class;
-use model::core_mir::Comparison;
-use model::core_mir::Conversion;
-use model::core_mir::InstructionKind;
-use model::core_mir::IntegerOp;
-use model::core_mir::Operand;
-use model::core_mir::Place;
-use model::core_mir::SLICE_WORDS;
-use model::core_mir::Slot;
-use model::core_mir::Step;
-use model::core_mir::Terminator;
 use model::layout::layout;
+use model::mir::Class;
+use model::mir::Comparison;
+use model::mir::Conversion;
+use model::mir::InstructionKind;
+use model::mir::IntegerOp;
+use model::mir::Operand;
+use model::mir::Place;
+use model::mir::SLICE_WORDS;
+use model::mir::Slot;
+use model::mir::Step;
+use model::mir::Terminator;
 use model::operators::BinaryOp;
 use model::semantic_types::Integer;
 use model::semantic_types::Type;
@@ -28,11 +28,11 @@ use runtime_abi::messages::SLICE_ORDER_MESSAGE;
 use runtime_abi::messages::array_parts_message;
 use source::Span;
 
-use crate::core::Loop;
-use crate::core::Lowering;
-use crate::core::Value;
-use crate::core::expression::Length;
-use crate::core::slot_of;
+use crate::Loop;
+use crate::Lowering;
+use crate::Value;
+use crate::expression::Length;
+use crate::slot_of;
 
 /// A range's walk: its five fields in the order of `range_fields`, each by
 /// its `range_field` index. Its values are `start`, then each `delta` more

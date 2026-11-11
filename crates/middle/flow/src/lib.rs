@@ -22,11 +22,8 @@
 //! How they work: they only read the graph. A block's terminator gives the
 //! edges out of it (`Terminator::targets`), and `predecessors` the edges in.
 //! Whether a block can be reached is found from the entry. The variable state
-//! and loan checks are dataflow (`dataflow`): they carry facts along the edges
+//! and loan checks are dataflow: they carry facts along the edges
 //! until nothing changes, which also works once loops add edges back.
-//!
-//! After them `cleanup::remove_unused_code` drops what only the checks needed.
-//! It is the one part of this crate that changes the MIR.
 //!
 //! What they do not do:
 //!
@@ -53,13 +50,12 @@ use std::sync::Arc;
 use arena::Id;
 use diagnostics::Diagnostic;
 use model::DefId;
-use model::core_mir;
+use model::mir;
 use model::semantic_types::TypeId;
 use model::semantic_types::Types;
 use source::SourceFile;
 use source::Span;
 
-pub mod cleanup;
 pub mod loans;
 pub mod variable_state;
 
@@ -76,7 +72,7 @@ const SHOWN_CAUSES: usize = 3;
 /// runs statements of the function body, only the end is named, since one
 /// `return` there fixes every path.
 pub fn report_missing_return<'n>(
-    body: &core_mir::Body,
+    body: &mir::Body,
     file: &Arc<SourceFile>,
     types: &Types,
     result: TypeId,
@@ -90,7 +86,7 @@ pub fn report_missing_return<'n>(
         .blocks
         .ids()
         .find_map(|block| match body.blocks[block].terminator {
-            core_mir::Terminator::FallOff(span) => Some((block, span)),
+            mir::Terminator::FallOff(span) => Some((block, span)),
             _ => None,
         });
     let Some((end, end_span)) = end else {
@@ -131,8 +127,8 @@ pub fn report_missing_return<'n>(
 /// Where each path arrives at `end`, a reachable block, and the label for it:
 /// nothing when `end` itself runs code, as one `return` there fixes every path.
 fn missing_return_causes(
-    body: &core_mir::Body,
-    end: Id<core_mir::Block>,
+    body: &mir::Body,
+    end: Id<mir::Block>,
     reachable: &[bool],
 ) -> Vec<(Span, &'static str)> {
     let mut causes = Vec::new();
@@ -151,12 +147,12 @@ fn missing_return_causes(
             if !reachable[predecessor.index()] {
                 continue;
             }
-            let core_mir::Block {
+            let mir::Block {
                 instructions,
                 terminator,
                 ..
             } = &body.blocks[predecessor];
-            if let core_mir::Terminator::Branch {
+            if let mir::Terminator::Branch {
                 condition,
                 span,
                 then,
@@ -167,7 +163,7 @@ fn missing_return_causes(
                 // and Rust, so whether code compiles never depends on a
                 // constant's value; the label only says which side it takes.
                 let always = match condition {
-                    core_mir::Operand::Constant { bits, .. } => Some(bits[0] != 0),
+                    mir::Operand::Constant { bits, .. } => Some(bits[0] != 0),
                     _ => None,
                 };
                 let side = then == block;
@@ -241,7 +237,7 @@ fn dataflow<B, F: Clone + PartialEq, E: IntoIterator<Item = Id<B>>>(
 }
 
 /// The blocks that go straight to each block, by index.
-fn predecessors(body: &core_mir::Body) -> Vec<Vec<Id<core_mir::Block>>> {
+fn predecessors(body: &mir::Body) -> Vec<Vec<Id<mir::Block>>> {
     let mut predecessors = vec![Vec::new(); body.blocks.len()];
     for from in body.blocks.ids() {
         for target in body.blocks[from].terminator.targets() {
@@ -327,27 +323,27 @@ impl<T> Bits<T> {
 /// again. Code is an instruction, a `return` or a branch; a jump between
 /// blocks or the closing brace is not.
 pub fn warn_unreachable_code(
-    body: &core_mir::Body,
+    body: &mir::Body,
     file: &Arc<SourceFile>,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
     let mut seen = reachable(body);
     // (the first code written, its block) of each block not reached.
-    let mut starts: Vec<(Span, Id<core_mir::Block>)> = body
+    let mut starts: Vec<(Span, Id<mir::Block>)> = body
         .blocks
         .ids()
         .filter(|block| !seen[block.index()])
         .filter_map(|block| {
-            let core_mir::Block {
+            let mir::Block {
                 instructions,
                 terminator,
                 ..
             } = &body.blocks[block];
             let terminator = match *terminator {
-                core_mir::Terminator::Return { span, .. }
-                | core_mir::Terminator::Panic { span, .. }
-                | core_mir::Terminator::Branch { span, .. } => Some(span),
-                core_mir::Terminator::Jump(_) | core_mir::Terminator::FallOff(_) => None,
+                mir::Terminator::Return { span, .. }
+                | mir::Terminator::Panic { span, .. }
+                | mir::Terminator::Branch { span, .. } => Some(span),
+                mir::Terminator::Jump(_) | mir::Terminator::FallOff(_) => None,
             };
             let spans = body.lists.items(*instructions);
             let spans = spans
@@ -377,7 +373,7 @@ pub fn warn_unreachable_code(
 }
 
 /// Which blocks control can reach from the entry, by index.
-fn reachable(body: &core_mir::Body) -> Vec<bool> {
+fn reachable(body: &mir::Body) -> Vec<bool> {
     let mut reachable = vec![false; body.blocks.len()];
     mark_reachable(body, Id::from_index(0), &mut reachable);
     reachable
@@ -385,7 +381,7 @@ fn reachable(body: &core_mir::Body) -> Vec<bool> {
 
 /// Marks in `marked` `from` and every block control can reach from it,
 /// stopping at blocks already marked.
-fn mark_reachable(body: &core_mir::Body, from: Id<core_mir::Block>, marked: &mut [bool]) {
+fn mark_reachable(body: &mir::Body, from: Id<mir::Block>, marked: &mut [bool]) {
     let mut pending = vec![from];
     while let Some(block) = pending.pop() {
         if !std::mem::replace(&mut marked[block.index()], true) {

@@ -1,4 +1,4 @@
-// A `&str` constant shows as a plain literal, a `&cstr` with its `c`.
+// A `&str` literal is a global of its bytes, a `&cstr` one ends with a zero.
 fn main() {
     let text = "hi\t";
     let c_text = c"bye";

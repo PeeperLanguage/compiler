@@ -10,9 +10,8 @@ use model::FunctionCopy;
 use model::ModuleId;
 use model::ast;
 use model::constant::Value;
-use model::core_mir;
-use model::core_mir::DebugTypes;
 use model::mir;
+use model::mir::DebugTypes;
 use model::semantic_types::ConstArguments;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
@@ -32,7 +31,7 @@ pub(crate) enum Built {
     Reported,
     /// Built for a run at compile time and kept for the next run: its MIR
     /// of core concepts, `None` when it has no body or had an error.
-    Kept(Option<Box<core_mir::Body>>),
+    Kept(Option<Box<mir::Body>>),
 }
 
 impl Checker<'_> {
@@ -40,9 +39,11 @@ impl Checker<'_> {
     /// `thir`, only to run it at compile time when `to_run`: checks it
     /// (`check_body`), lowers it to MIR and runs the path checks. `None` when
     /// it has no body or its signature had an error; else its MIR, `None`
-    /// when it had an error. What it finds is reported by its first build
-    /// only: a later one (the compile's, after a run at compile time, or the
-    /// other way round) finds the same and drops it.
+    /// when it had an error. The MIR's debug types are in a table only this
+    /// build saw, so it is for a run at compile time, not for a backend.
+    /// What it finds is reported by its first build only: a later one (the
+    /// compile's, after a run at compile time, or the other way round) finds
+    /// the same and drops it.
     pub fn build_function(
         &mut self,
         copy: FunctionCopy,
@@ -203,26 +204,24 @@ impl Checker<'_> {
     ) -> Option<mir::Body> {
         let modules = self.modules;
         let module = definition.module.index();
-        let Type::Function {
-            parameters, result, ..
-        } = &self.types[ty]
-        else {
+        let Type::Function { result, .. } = &self.types[ty] else {
             unreachable!("a checked body has a function type")
         };
-        let mir = lower::lower(thir, parameters.len(), *result, &self.types)?;
-        // shortcut: no debug type is read here, as in `evaluate_call`.
+        // shortcut: the path checks and a run at compile time read no debug
+        // type, but lowering makes them; the table goes once lowering stops
+        // making what nothing reads.
         let debug_types = &mut DebugTypes::default();
-        let core = lower::core::lower(thir, ty, &self.types, self.target, modules, debug_types)?;
+        let mir = lower::lower(thir, ty, &self.types, self.target, modules, debug_types)?;
         let file = &modules[module].ast.file;
         let diagnostics = &mut self.module_checks[module].diagnostics;
         let types = &self.types;
-        flow::variable_state::report_variable_state_errors(&core, file, diagnostics);
+        flow::variable_state::report_variable_state_errors(&mir, file, diagnostics);
         let pointer_bytes = u64::from(self.target.pointer_bits / 8);
-        flow::loans::report_loan_errors(&core, pointer_bytes, file, diagnostics);
-        flow::warn_unreachable_code(&core, file, diagnostics);
+        flow::loans::report_loan_errors(&mir, pointer_bytes, file, diagnostics);
+        flow::warn_unreachable_code(&mir, file, diagnostics);
         // Last: it points at the closing brace.
         flow::report_missing_return(
-            &core,
+            &mir,
             file,
             types,
             *result,
@@ -264,22 +263,7 @@ impl Checker<'_> {
                     continue;
                 }
                 let mut thir = thir::Body::default();
-                let checked = self.build_function(next, span, &mut thir, true).flatten();
-                // shortcut: the run reads no debug type, but lowering makes
-                // them; the table goes once lowering stops making what
-                // nothing reads.
-                let body = checked.and_then(|_| {
-                    let ty = self.copy_type(next, span); // made by the build
-                    let debug_types = &mut DebugTypes::default();
-                    lower::core::lower(
-                        &thir,
-                        ty,
-                        &self.types,
-                        self.target,
-                        self.modules,
-                        debug_types,
-                    )
-                });
+                let body = self.build_function(next, span, &mut thir, true).flatten();
                 self.internals
                     .built_bodies
                     .insert(next, Built::Kept(body.map(Box::new)));

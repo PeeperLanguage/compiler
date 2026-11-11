@@ -1,16 +1,40 @@
 fn cube:
   bb0:
-    store n.0, arg0
-    %1 = load n.0: i64
-    %2 = load n.0: i64
-    %3 = Multiply %1, %2: i64
-    %4 = load n.0: i64
-    %5 = Multiply %3, %4: i64
+    store i64 n.0, arg0
+    %1 = load i64 n.0
+    %2 = load i64 n.0
+    %3 = mul i64 %1, %2
+    %4 = load i64 n.0
+    %5 = mul i64 %3, %4
+    dead n.0
     return %5
+  bb1:
+    dead n.0
+    fall off at `}`
 fn text:
   bb0:
-    return "ab\x00cd"
+    store ptr at arg0, global 0
+    store i64 at arg0[+8], 5
+    return
+  bb1:
+    fall off at `}`
+  global 0 = "ab\x00cd"
 fn main:
   bb0:
-    println(1000000001, "ab\x00cd")
+    store ptr .0, global 0
+    store i64 .0[+8], 5
+    store i64 .1, 1000000001
+    %3 = address 8 .1
+    call peeper_rt_v2_print_int(1, 1, %3)
+    %5 = load ptr .0
+    %6 = load i64 .0[+8]
+    call peeper_rt_v1_print_bytes(global 1, 1)
+    call peeper_rt_v1_print_bytes(%5, %6)
+    call peeper_rt_v1_print_bytes(global 2, 1)
+    call peeper_rt_v1_flush()
+    dead .1
+    dead .0
     fall off at `}`
+  global 0 = "ab\x00cd"
+  global 1 = " "
+  global 2 = "\n"

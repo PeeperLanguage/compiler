@@ -7,12 +7,12 @@ use std::path::Path;
 
 use arena::Id;
 use model::FunctionCopy;
-use model::core_mir::Body;
-use model::core_mir::DebugScope;
-use model::core_mir::DebugType;
-use model::core_mir::DebugTypeId;
-use model::core_mir::DebugTypes;
-use model::core_mir::Passing;
+use model::mir::Body;
+use model::mir::DebugScope;
+use model::mir::DebugType;
+use model::mir::DebugTypeId;
+use model::mir::DebugTypes;
+use model::mir::Passing;
 use rustc_hash::FxHashMap;
 use source::SourceFile;
 

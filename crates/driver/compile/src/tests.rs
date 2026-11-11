@@ -8,6 +8,7 @@ use super::Results;
 use super::run;
 use diagnostics::Diagnostic;
 use model::machine::Machine;
+use model::mir::DebugTypes;
 
 /// The machine the tests check for, but where they test another.
 fn x86_64() -> &'static Machine {
@@ -428,8 +429,7 @@ fn a_loading_error_leaves_no_entry_point() {
     assert!(found.entry_point().is_none());
 }
 
-/// The MIR `run` gives is what the path checks read, with the `scope end`s a
-/// compiled body has lost (`flow::cleanup`): each way out of a block ends the
+/// In the MIR the path checks read, each way out of a block ends the
 /// variables it leaves, newest first.
 #[test]
 fn each_way_out_of_a_block_ends_its_variables_newest_first() {
@@ -462,26 +462,22 @@ fn each_way_out_of_a_block_ends_its_variables_newest_first() {
         false,
         false,
         |output| {
-            if let Output::Function(CheckedFunction {
-                function,
-                mir: Some(mir),
-                types,
-                ..
-            }) = output
-            {
-                let file = &program.modules[function.definition.module.index()].ast.file;
-                text.push_str(&mir.text(types, file, |_| ""));
+            if let Output::Function(checked) = output {
+                let modules = &program.modules;
+                let mir = checked.mir(x86_64(), modules, &mut DebugTypes::default());
+                let file = &modules[checked.function.definition.module.index()].ast.file;
+                text.push_str(&mir.expect("it lowers").text(file, |_| String::new()));
             }
         },
     );
     assert_eq!(messages(&results), Vec::<String>::new());
     let ends: Vec<&str> = (text.lines())
         .map(str::trim)
-        .filter(|line| line.starts_with("scope end"))
+        .filter(|line| line.starts_with("dead "))
         .collect();
     let (outer, inner) = (
-        ["scope end first.1", "scope end limit.0"],
-        ["scope end third.3", "scope end second.2"],
+        ["dead first.1", "dead limit.0"],
+        ["dead third.3", "dead second.2"],
     );
     let expected = [
         &outer[..], // after the loop, which `break` jumps to
@@ -493,6 +489,38 @@ fn each_way_out_of_a_block_ends_its_variables_newest_first() {
         &outer, // at the function's `}`
     ];
     assert_eq!(ends, expected.concat());
+}
+
+#[test]
+fn a_function_whose_path_checks_fail_gives_no_mir() {
+    let program = load(&[(
+        "app:main",
+        "fn broken() {
+            let mut x = 0;
+            let r = &mut x;
+            x = 1;
+            r.* = 2;
+        }
+        fn main() {}",
+    )]);
+    let mut lowered = Vec::new();
+    let results = run(
+        &program,
+        x86_64(),
+        Results::default(),
+        false,
+        false,
+        |output| {
+            if let Output::Function(checked) = output {
+                let modules = &program.modules;
+                let mir = checked.mir(x86_64(), modules, &mut DebugTypes::default());
+                lowered.push(mir.is_some());
+            }
+        },
+    );
+    assert_eq!(messages(&results).len(), 1, "{:?}", messages(&results));
+    lowered.sort();
+    assert_eq!(lowered, [false, true]); // `broken` has none, `main` has one
 }
 
 /// A cycle gets one error with a place for each step, however often it
@@ -687,7 +715,10 @@ fn an_invalid_declaration_lowers_nothing_using_it() {
         false,
         false,
         |output| {
-            if let Output::Function(CheckedFunction { mir: Some(_), .. }) = output {
+            if let Output::Function(CheckedFunction {
+                has_errors: false, ..
+            }) = output
+            {
                 lowered += 1;
             }
         },

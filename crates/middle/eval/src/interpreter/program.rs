@@ -8,11 +8,11 @@
 use arena::Id;
 use model::DefId;
 use model::FunctionCopy;
-use model::core_mir::Body;
-use model::core_mir::Instruction;
-use model::core_mir::Operand;
-use model::core_mir::Passing;
 use model::machine::Machine;
+use model::mir::Body;
+use model::mir::Instruction;
+use model::mir::Operand;
+use model::mir::Passing;
 use runtime_abi::abi::STDERR;
 use runtime_abi::abi::STDIN;
 use runtime_abi::abi::STDOUT;

@@ -65,18 +65,18 @@ use std::sync::Arc;
 
 use arena::Id;
 use diagnostics::Diagnostic;
-use model::core_mir;
-use model::core_mir::Class;
-use model::core_mir::InstructionKind;
-use model::core_mir::LoanWords;
-use model::core_mir::Operand;
-use model::core_mir::Passing;
-use model::core_mir::Place;
-use model::core_mir::REFERENCE_WORDS;
-use model::core_mir::Root;
-use model::core_mir::Slot;
-use model::core_mir::Step;
-use model::core_mir::Terminator;
+use model::mir;
+use model::mir::Class;
+use model::mir::InstructionKind;
+use model::mir::LoanWords;
+use model::mir::Operand;
+use model::mir::Passing;
+use model::mir::Place;
+use model::mir::REFERENCE_WORDS;
+use model::mir::Root;
+use model::mir::Slot;
+use model::mir::Step;
+use model::mir::Terminator;
 use source::SourceFile;
 use source::Span;
 
@@ -98,12 +98,12 @@ enum Loan {}
 /// A body with no `Borrow` and a result that holds no loan has no loan to
 /// break and is not walked.
 pub fn report_loan_errors(
-    body: &core_mir::Body,
+    body: &mir::Body,
     pointer_bytes: u64,
     file: &Arc<SourceFile>,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
-    let borrows: Vec<Id<core_mir::Instruction>> = (body.instructions.ids())
+    let borrows: Vec<Id<mir::Instruction>> = (body.instructions.ids())
         .filter(|&id| matches!(body.instructions[id].kind, InstructionKind::Borrow { .. }))
         .collect();
     if borrows.is_empty() && body.returned.is_none() {
@@ -284,7 +284,7 @@ impl Held {
 /// A `&mut` loan reserved until a call (two-phase).
 #[derive(Clone, Copy)]
 struct Reservation {
-    call: Id<core_mir::Instruction>,
+    call: Id<mir::Instruction>,
     /// The holder of the call's memory argument the reference was stored
     /// in, if it was passed in memory.
     carrier: Option<Id<Holder>>,
@@ -292,9 +292,9 @@ struct Reservation {
 
 /// One function's loans and holders.
 struct Loans<'b> {
-    body: &'b core_mir::Body,
+    body: &'b mir::Body,
     pointer_bytes: u64,
-    borrows: Vec<Id<core_mir::Instruction>>, // each `Borrow` loan's instruction
+    borrows: Vec<Id<mir::Instruction>>, // each `Borrow` loan's instruction
     /// Where the holders of each slot, then of each instruction's value,
     /// then of a result kept in memory start; last, how many there are.
     holder_starts: Vec<usize>,
@@ -403,7 +403,7 @@ impl<'b> Loans<'b> {
         self.holder_starts[index]..self.holder_starts[index + 1]
     }
 
-    fn value_holders(&self, value: Id<core_mir::Instruction>) -> Range<usize> {
+    fn value_holders(&self, value: Id<mir::Instruction>) -> Range<usize> {
         self.holders_at(self.body.slots.len() + value.index())
     }
 
@@ -424,7 +424,7 @@ impl<'b> Loans<'b> {
     /// The holders a `return` ending `block` hands back, used there, and
     /// the `return`'s span; none when the result holds no loan, as a raw
     /// pointer does not.
-    fn returned(&self, block: Id<core_mir::Block>) -> Option<(Range<usize>, Span)> {
+    fn returned(&self, block: Id<mir::Block>) -> Option<(Range<usize>, Span)> {
         let Terminator::Return { value, span } = &self.body.blocks[block].terminator else {
             return None;
         };
@@ -472,7 +472,7 @@ impl<'b> Loans<'b> {
 
     /// Where the call `id` writes a result kept in memory, and its size:
     /// the place its hidden first argument is the address of.
-    fn destination(&self, id: Id<core_mir::Instruction>) -> Option<(&'b Place, u64)> {
+    fn destination(&self, id: Id<mir::Instruction>) -> Option<(&'b Place, u64)> {
         let InstructionKind::Call {
             signature,
             arguments,
@@ -496,7 +496,7 @@ impl<'b> Loans<'b> {
 
     /// The holders of the arguments a call's origins name (`in`): what its
     /// returned pointer may point into.
-    fn origin_holders(&self, id: Id<core_mir::Instruction>) -> Vec<Range<usize>> {
+    fn origin_holders(&self, id: Id<mir::Instruction>) -> Vec<Range<usize>> {
         let InstructionKind::Call {
             signature,
             arguments,
@@ -527,7 +527,7 @@ impl<'b> Loans<'b> {
     /// and those of each operand. Reading `p.second` uses only the holders
     /// of `p.second`, so what `p.first` holds may be changed meanwhile. A
     /// `Moved` follows the read it marks, so it uses nothing more.
-    fn uses(&self, id: Id<core_mir::Instruction>, mut used: impl FnMut(Id<Holder>)) {
+    fn uses(&self, id: Id<mir::Instruction>, mut used: impl FnMut(Id<Holder>)) {
         let mut use_range = |range: Range<usize>| holder_ids(range).for_each(&mut used);
         let through = |place: &Place| {
             if place.is_behind_pointer() {
@@ -563,7 +563,7 @@ impl<'b> Loans<'b> {
             InstructionKind::Call {
                 callee, arguments, ..
             } => {
-                if let core_mir::Callee::Pointer(pointer) = callee {
+                if let mir::Callee::Pointer(pointer) = callee {
                     use_range(self.operand_holders(*pointer));
                 }
                 // Not the destination: the call writes it.
@@ -578,7 +578,7 @@ impl<'b> Loans<'b> {
 
     /// The holders the instruction `id` gives a new value: its own value,
     /// or those of the place it writes when it replaces them.
-    fn defines(&self, id: Id<core_mir::Instruction>) -> Range<usize> {
+    fn defines(&self, id: Id<mir::Instruction>) -> Range<usize> {
         let written = match &self.body.instructions[id].kind {
             InstructionKind::Store { class, place, .. } => {
                 Some((place, class.bytes(self.pointer_bytes)))
@@ -595,7 +595,7 @@ impl<'b> Loans<'b> {
     }
 
     /// The loan the `Borrow` instruction `borrow` makes.
-    fn loan(&self, borrow: Id<core_mir::Instruction>) -> Id<Loan> {
+    fn loan(&self, borrow: Id<mir::Instruction>) -> Id<Loan> {
         let loan = self
             .borrows
             .partition_point(|other| other.index() < borrow.index());
@@ -630,7 +630,7 @@ impl<'b> Loans<'b> {
             let user = users[holder].filter(|_| use_counts[holder] == 1)?;
             Some((user, &self.body.instructions[user].kind))
         };
-        let reservation = |borrow: Id<core_mir::Instruction>| {
+        let reservation = |borrow: Id<mir::Instruction>| {
             let holder = self.value_holders(borrow).start;
             match used_once_by(holder)? {
                 (call, InstructionKind::Call { .. }) => Some(Reservation {
@@ -663,7 +663,7 @@ impl<'b> Loans<'b> {
 
     /// `held`, the loans of each holder, after the instruction `id`. What
     /// is not listed gives no value that holds a loan.
-    fn step_held(&self, held: &mut Held, id: Id<core_mir::Instruction>) {
+    fn step_held(&self, held: &mut Held, id: Id<mir::Instruction>) {
         let kind = &self.body.instructions[id].kind;
         let target = self.value_holders(id);
         match kind {
@@ -805,7 +805,7 @@ impl<'b> Loans<'b> {
     fn step_live(
         &self,
         live: &mut Bits<Holder>,
-        id: Id<core_mir::Instruction>,
+        id: Id<mir::Instruction>,
         mut flipped: impl FnMut(Id<Holder>),
     ) {
         for holder in holder_ids(self.defines(id)) {
@@ -899,7 +899,7 @@ impl<'b> Loans<'b> {
         let mut reported = Bits::new(self.borrows.len() + body.parameters);
         // The reserved loans by the call they wait for, so each call finds
         // its own without a walk over every borrow.
-        let mut reservations: Vec<(Id<core_mir::Instruction>, usize)> = (self.reserved.iter())
+        let mut reservations: Vec<(Id<mir::Instruction>, usize)> = (self.reserved.iter())
             .enumerate()
             .filter_map(|(loan, reservation)| Some((reservation.as_ref()?.call, loan)))
             .collect();
@@ -993,7 +993,7 @@ impl<'b> Loans<'b> {
         &self,
         error: Diagnostic,
         holder: Id<Holder>,
-        block: Id<core_mir::Block>,
+        block: Id<mir::Block>,
         position: usize,
         file: &Arc<SourceFile>,
     ) -> Diagnostic {
@@ -1070,7 +1070,7 @@ impl<'b> Loans<'b> {
     /// What the instruction `id` does to places: a copy reads one and
     /// changes another. A reserved `&mut` borrow only reserves its place,
     /// so it is checked as a shared borrow.
-    fn accesses(&self, id: Id<core_mir::Instruction>) -> [Option<Access<'b>>; 2] {
+    fn accesses(&self, id: Id<mir::Instruction>) -> [Option<Access<'b>>; 2] {
         let span = self.body.instructions.span(id);
         let on = |place: &'b Place, width, event, reads, own_storage| {
             Some(Access {
@@ -1167,8 +1167,8 @@ impl<'b> Loans<'b> {
     /// a read, so the read is checked as the move.
     fn move_of_read(
         &self,
-        id: Id<core_mir::Instruction>,
-        after: &[Id<core_mir::Instruction>],
+        id: Id<mir::Instruction>,
+        after: &[Id<mir::Instruction>],
     ) -> Option<Access<'b>> {
         let instructions = &self.body.instructions;
         let (InstructionKind::Load { place: read, .. } | InstructionKind::Copy { from: read, .. }) =
@@ -1176,7 +1176,7 @@ impl<'b> Loans<'b> {
         else {
             return None;
         };
-        let reads = |id: &&Id<core_mir::Instruction>| {
+        let reads = |id: &&Id<mir::Instruction>| {
             matches!(
                 instructions[**id].kind,
                 InstructionKind::Load { .. } | InstructionKind::Copy { .. }
@@ -1318,12 +1318,7 @@ impl<'b> Loans<'b> {
     /// Where `holder` is next used after the instruction at `position` of
     /// `block`, on the nearest path that does not set it again: searched
     /// only for an error.
-    fn next_use(
-        &self,
-        holder: Id<Holder>,
-        block: Id<core_mir::Block>,
-        position: usize,
-    ) -> Option<Span> {
+    fn next_use(&self, holder: Id<Holder>, block: Id<mir::Block>, position: usize) -> Option<Span> {
         let body = self.body;
         let mut seen = vec![false; body.blocks.len()];
         let mut pending = VecDeque::from([(block, position + 1)]);

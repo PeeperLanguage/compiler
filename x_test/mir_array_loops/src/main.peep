@@ -1,7 +1,7 @@
 // The MIR of `for` over an array: the array is stored once in a hidden
 // variable, then a counted loop reads one element each pass; a slice's
-// length is read once, before the first pass. The hidden variables print as
-// `_`; only `i`, `value` and `total` have names.
+// length counts the passes before the first. The hidden variables print
+// with no name (`.5`); only `i`, `value` and `total` have names.
 fn sum(values: &[3]i32) -> i32 {
     let mut total = 0;
     for value in values {

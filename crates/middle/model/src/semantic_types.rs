@@ -296,8 +296,8 @@ impl Type {
         }
     }
 
-    /// Whether a value of this type is laid out as a slice, its fields in
-    /// `slice_field`: a slice, or a `&str`, which views bytes.
+    /// Whether a value of this type is laid out as a slice, an address then
+    /// a length: a slice, or a `&str`, which views bytes.
     pub fn is_slice_shaped(&self) -> bool {
         matches!(self, Type::Slice { .. } | Type::Str)
     }
@@ -473,13 +473,6 @@ pub fn range_fields(element: TypeId, step: TypeId) -> [(&'static str, TypeId); 5
         ("delta", element),
         ("inclusive", TypeId::BOOL),
     ]
-}
-
-/// Where each of the two fields of a slice value is, and of a `&str`, which
-/// is laid out as a slice of its bytes (`Type::is_slice_shaped`).
-pub mod slice_field {
-    pub const ADDRESS: u32 = 0; // of its first element
-    pub const LENGTH: u32 = 1;
 }
 
 /// Where each field of a range value is in `range_fields`.

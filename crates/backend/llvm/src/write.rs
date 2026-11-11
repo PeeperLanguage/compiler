@@ -9,9 +9,9 @@ use std::sync::mpsc;
 
 use model::FunctionCopy;
 use model::ModuleId;
-use model::core_mir;
-use model::core_mir::DebugTypes;
 use model::machine::Machine;
+use model::mir;
+use model::mir::DebugTypes;
 use model::semantic_types::Types;
 use rustc_hash::FxHashMap;
 
@@ -44,7 +44,7 @@ pub struct FunctionQueue<'p> {
     sent: Vec<bool>, // by module: whether its functions went to a worker
     batches: mpsc::Sender<Batch>,
     /// The debug type of each type the program's bodies name so far, which
-    /// lowering adds to (`lower::core::lower`).
+    /// lowering adds to (`lower::lower`).
     pub debug_types: DebugTypes,
 }
 
@@ -54,13 +54,7 @@ impl FunctionQueue<'_> {
     /// to call a copy of another module's function. `types` is the
     /// program's types so far. A program's functions come module by module,
     /// so a function of another module sends the one before to a worker.
-    pub fn add(
-        &mut self,
-        module: ModuleId,
-        copy: FunctionCopy,
-        body: core_mir::Body,
-        types: &Types,
-    ) {
+    pub fn add(&mut self, module: ModuleId, copy: FunctionCopy, body: mir::Body, types: &Types) {
         if self.module != Some(module) {
             self.send();
             assert!(

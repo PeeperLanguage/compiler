@@ -1,5 +1,5 @@
 //! One function's `define`, written from its MIR of core concepts
-//! (`model::core_mir`): each MIR block a jump reaches is an LLVM block
+//! (`model::mir`): each MIR block a jump reaches is an LLVM block
 //! (`bb3`), and a `Check` branches to a panic block and goes on in a new
 //! one (`bb3.1`).
 //! Every slot is bytes on the stack, so no language type is read here: the
@@ -11,30 +11,30 @@ use std::fmt::Write;
 
 use arena::Id;
 use model::FunctionCopy;
-use model::core_mir::Block;
-use model::core_mir::Body;
-use model::core_mir::CPassing;
-use model::core_mir::CSignature;
-use model::core_mir::Callee;
-use model::core_mir::Class;
-use model::core_mir::Comparison;
-use model::core_mir::Conversion;
-use model::core_mir::DebugScope;
-use model::core_mir::DebugTypes;
-use model::core_mir::Extension;
-use model::core_mir::FloatOp;
-use model::core_mir::Global;
-use model::core_mir::Instruction;
-use model::core_mir::InstructionKind;
-use model::core_mir::IntegerOp;
-use model::core_mir::Operand;
-use model::core_mir::Passing;
-use model::core_mir::Place;
-use model::core_mir::Root;
-use model::core_mir::Signature;
-use model::core_mir::Slot;
-use model::core_mir::Step;
-use model::core_mir::Terminator;
+use model::mir::Block;
+use model::mir::Body;
+use model::mir::CPassing;
+use model::mir::CSignature;
+use model::mir::Callee;
+use model::mir::Class;
+use model::mir::Comparison;
+use model::mir::Conversion;
+use model::mir::DebugScope;
+use model::mir::DebugTypes;
+use model::mir::Extension;
+use model::mir::FloatOp;
+use model::mir::Global;
+use model::mir::Instruction;
+use model::mir::InstructionKind;
+use model::mir::IntegerOp;
+use model::mir::Operand;
+use model::mir::Passing;
+use model::mir::Place;
+use model::mir::Root;
+use model::mir::Signature;
+use model::mir::Slot;
+use model::mir::Step;
+use model::mir::Terminator;
 use runtime_abi::abi::PANIC_EXIT_CODE;
 use runtime_abi::abi::STDERR;
 use runtime_abi::messages::panic_text;

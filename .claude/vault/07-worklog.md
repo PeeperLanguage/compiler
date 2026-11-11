@@ -179,3 +179,21 @@
   a literal now carry the literal's span: 4 `ll_` dumps re-blessed (debug
   locations only). `path_check_memory` bound 45 MB while `check` builds
   both MIRs (back to 30 at step 16).
+- Steps 15 and 16 together (2026-11-11, this commit): one MIR. The MIR of
+  core concepts is `model::mir` (decision 9.3, the name stays) and
+  `lower::core` is the `lower` crate root; the old MIR, its lowering
+  (`ranges.rs`, `slices.rs`, old `expression.rs`/`statement.rs`),
+  `flow::cleanup` and `semantic_types::slice_field` are deleted, and
+  `compile` no longer depends on `flow`. Check lowers each body once, into
+  throwaway debug types, for the path checks and compile-time runs; a
+  backend or a dump lowers it again into the program's debug types through
+  `CheckedFunction::mir`, which gives none when `has_errors`. `lower_call`
+  returns on an argument of an invalid type (a reused-module test
+  panicked). The MIR printer lists each body's globals after its blocks;
+  blocks no path reaches stay in dumps and the LLVM writer skips them. The
+  19 `mir_` dumps re-blessed after review. `path_check_memory` `branching`
+  bound back to 30 MB (25 MB measured). Docs: `ir-design.md` MIR section
+  rewritten for slots, places and `dead`; design page status done.
+  New test `a_function_whose_path_checks_fail_gives_no_mir`: with the
+  `has_errors` check removed no other test failed; this one does
+  (`[true, true]`). check.sh ok.

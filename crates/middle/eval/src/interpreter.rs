@@ -1,4 +1,4 @@
-//! Running a function's MIR (`model::core_mir`) with no backend: a
+//! Running a function's MIR (`model::mir`) with no backend: a
 //! constant's call (`run_function`), or a whole program (`program::run`).
 //! The run knows registers and bytes, never a type: only a constant's
 //! arguments and result are read through their types, where they cross
@@ -23,19 +23,19 @@ use bigint::Limbs;
 use model::DefId;
 use model::FunctionCopy;
 use model::constant::Value;
-use model::core_mir::Block;
-use model::core_mir::Body;
-use model::core_mir::Callee;
-use model::core_mir::Class;
-use model::core_mir::Global;
-use model::core_mir::Instruction;
-use model::core_mir::InstructionKind;
-use model::core_mir::Operand;
-use model::core_mir::Passing;
-use model::core_mir::Signature;
-use model::core_mir::Slot;
-use model::core_mir::Terminator;
 use model::machine::Machine;
+use model::mir::Block;
+use model::mir::Body;
+use model::mir::Callee;
+use model::mir::Class;
+use model::mir::Global;
+use model::mir::Instruction;
+use model::mir::InstructionKind;
+use model::mir::Operand;
+use model::mir::Passing;
+use model::mir::Signature;
+use model::mir::Slot;
+use model::mir::Terminator;
 use model::semantic_types::Float;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
