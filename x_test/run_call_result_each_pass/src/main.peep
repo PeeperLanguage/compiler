@@ -1,0 +1,15 @@
+// A call writes a slice it returns into the variable it is given to: each
+// pass of the loop replaces the last pass's slice, so the array may change
+// once the slice is used, though the next pass uses the variable again.
+fn same(view: &[]i32) -> &[]i32 in view {
+    return view;
+}
+
+fn main() {
+    let mut values = [3]i32{1, 2, 3};
+    for pass in 0..2 {
+        let view = same(&values);
+        println("first:", view[0]);
+        values[0] = values[0] + 10;
+    }
+}

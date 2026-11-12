@@ -323,3 +323,24 @@
   and the written parameters renumbered from 0. Mutation: the loan
   check's `Root::Result` giving no holders, and the interpreter without
   the shift, each fail the fixtures. check.sh ok.
+- Untangle fix 4, third part (Fuad: option 1): a call names the place it
+  writes a result kept in memory into, `Call { .., result: Option<(Place,
+  u64)> }`, instead of an `Address` instruction passed as its first
+  argument. The access table gives it as a `Write` of that place, so the
+  loan check's `call_arguments` (split off the first argument, then find
+  the `Address` that made it, two `unreachable!`s) and the `Call` arm of
+  `defines` are gone; `uses`, `reserved_loans` and `step_held` read the
+  arguments and the place directly. LLVM writes the place's address and
+  passes it first (`write_call`'s `result_at`); the interpreter pushes it
+  as the first register. The write now happens at the call, not before
+  the arguments: every place lowering writes a call result into
+  (`lower_into`'s four callers) is a new variable, `Root::Result`, part
+  of a value being built or an argument's copy, which no reference can
+  reach; `x = grow(&x)` already goes through a temporary (probe in
+  `target/step12-probes/alias`). Dump: `call make() into 16 p.0`. Four
+  dumps re-blessed, numbering only; LLVM writes the same instructions.
+  Mutation: the table giving no write for the call passed every test, so
+  `x_test/run_call_result_each_pass` was added (a slice result in a loop:
+  without the write the next pass keeps the last pass's slice live and
+  `values[0] = ..` is refused); the loan check skipping the place fails
+  the fixtures. `check mixed` 1,174-1,180 M (was 1,178). check.sh ok.

@@ -235,6 +235,7 @@ impl Lowering<'_> {
             callee: Callee::Runtime(signature.symbol),
             signature: (self.mir.signatures.len() - 1) as u32,
             arguments: arguments.into(),
+            result: None, // the runtime gives no result in memory
         };
         self.emit(kind, span)
     }

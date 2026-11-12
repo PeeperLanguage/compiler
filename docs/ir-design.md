@@ -400,8 +400,8 @@ the program's types.
   address; for a C function, how C passes it too), `check` with the message
   a failure prints, `borrow` and `address` of a place, and two events only
   the path checks read, `moved` and `dead`. A result kept in memory is
-  written to the place `result`; a call passes its address as a hidden
-  first argument. Operands are a constant, an
+  written to the place `result`, and a call names the place it writes
+  such a result into (`call make() into 16 p.0`). Operands are a constant, an
   argument, a global or an earlier instruction's value, never a slot. Every
   instruction keeps the span of the expression it came from: LLVM's `!dbg`
   line, and where an error points.

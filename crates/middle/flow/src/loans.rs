@@ -521,34 +521,12 @@ impl<'b> Holders<'b> {
         }
     }
 
-    /// What a call of the signature `signature` with `arguments` passes:
-    /// through its hidden first argument, the place it writes a result kept
-    /// in memory and its size; then the arguments its code wrote.
-    fn call_arguments(
-        &self,
-        signature: u32,
-        arguments: &'b [Operand],
-    ) -> (Option<(PlaceRef<'b>, u64)>, &'b [Operand]) {
-        let hidden = self.body.signatures[signature as usize].hidden_parameters();
-        let (hidden, written) = arguments.split_at(hidden as usize);
-        let destination = hidden.first().map(|&address| {
-            let Operand::Value(address) = address else {
-                unreachable!("a result kept in memory is written to an address")
-            };
-            match &self.body.instructions[address].kind {
-                InstructionKind::Address { place, size } => (place.as_place_ref(), *size),
-                _ => unreachable!("a result kept in memory is written to a place"),
-            }
-        });
-        (destination, written)
-    }
-
-    /// The holders of the `written` arguments a call of the signature
-    /// `signature` passes that its origins name (`in`): what its returned
-    /// pointer may point into.
-    fn origin_holders(&self, signature: u32, written: &[Operand]) -> Vec<Range<usize>> {
+    /// The holders of the `arguments` a call of the signature `signature`
+    /// passes that its origins name (`in`): what its returned pointer may
+    /// point into.
+    fn origin_holders(&self, signature: u32, arguments: &[Operand]) -> Vec<Range<usize>> {
         (self.body.signatures[signature as usize].origins.iter())
-            .map(|&position| self.argument_holders(written[position as usize]))
+            .map(|&position| self.argument_holders(arguments[position as usize]))
             .collect()
     }
 
@@ -587,16 +565,12 @@ impl<'b> Holders<'b> {
         });
         match kind {
             InstructionKind::Call {
-                callee,
-                signature,
-                arguments,
+                callee, arguments, ..
             } => {
                 if let mir::Callee::Pointer(pointer) = callee {
                     use_range(self.operand_holders(*pointer));
                 }
-                // Not the destination: the call writes it.
-                let (_, written) = self.call_arguments(*signature, arguments);
-                for &argument in written {
+                for &argument in arguments {
                     use_range(self.argument_holders(argument));
                 }
             }
@@ -607,25 +581,12 @@ impl<'b> Holders<'b> {
     /// The holders the instruction `id` gives a new value: its own value,
     /// or those of the place it writes when it replaces them.
     fn defines(&self, id: Id<mir::Instruction>) -> Range<usize> {
-        let written = match &self.body.instructions[id].kind {
-            InstructionKind::Call {
-                signature,
-                arguments,
-                ..
-            } => {
-                let (destination, _) = self.call_arguments(*signature, arguments);
-                destination.map(|(place, size)| (place, Some(size)))
+        let mut written = None;
+        self.body.instructions[id].kind.accesses(|access| {
+            if let AccessKind::Write = access.kind {
+                written = Some((access.place, access.width(self.pointer_bytes)));
             }
-            kind => {
-                let mut written = None;
-                kind.accesses(|access| {
-                    if let AccessKind::Write = access.kind {
-                        written = Some((access.place, access.width(self.pointer_bytes)));
-                    }
-                });
-                written
-            }
-        };
+        });
         match written {
             Some((place, width)) if names_exactly(place) => self.place_holders(place, width),
             Some(_) => 0..0,
@@ -688,8 +649,7 @@ impl<'b> Holders<'b> {
             {
                 // Used again through the returned reference, so its loan
                 // outlives the call.
-                let (_, written) = self.call_arguments(*signature, arguments);
-                for holders in self.origin_holders(*signature, written) {
+                for holders in self.origin_holders(*signature, arguments) {
                     holders.for_each(|holder| use_counts[holder] += 1);
                 }
             }
@@ -827,13 +787,14 @@ impl<'b> Holders<'b> {
             InstructionKind::Call {
                 signature,
                 arguments,
+                result,
                 ..
             } => {
-                let (destination, written) = self.call_arguments(*signature, arguments);
-                let sources = self.origin_holders(*signature, written);
-                match (destination, target) {
+                let sources = self.origin_holders(*signature, arguments);
+                match (result, target) {
                     (Some((place, size)), _) => {
-                        self.step_write(held, place, size, &sources, false, None);
+                        let place = place.as_place_ref();
+                        self.step_write(held, place, *size, &sources, false, None);
                     }
                     (None, Some(target)) => {
                         let loans = self.loans_of(held, sources.into_iter().flatten());

@@ -852,14 +852,21 @@ impl Writer<'_, '_, '_> {
                 callee,
                 signature,
                 arguments,
+                result,
             } => {
                 let signature = &body.signatures[*signature as usize];
-                match (&signature.c, callee) {
-                    (Some(c), &Callee::Function(function)) => {
-                        let symbol = &self.symbols[&function];
-                        self.write_c_call(out, &name, symbol, signature, c, arguments, &location);
-                    }
-                    _ => self.write_call(out, &name, *callee, signature, arguments, &location),
+                // The checker gives a C function no result in memory.
+                if let (Some(c), &Callee::Function(function)) = (&signature.c, callee) {
+                    let symbol = &self.symbols[&function];
+                    self.write_c_call(out, &name, symbol, signature, c, arguments, &location);
+                } else {
+                    // A result kept in memory is written where the hidden
+                    // first argument points.
+                    let result_at = (result.as_ref()).map(|(place, _)| {
+                        self.write_place(out, place, &format!("{name}.a"), &location)
+                    });
+                    let (callee, at) = (*callee, result_at.as_deref());
+                    self.write_call(out, &name, callee, signature, at, arguments, &location);
                 }
             }
             InstructionKind::Check { failed, message } => {
@@ -895,14 +902,17 @@ impl Writer<'_, '_, '_> {
     }
 
     /// Writes the call, as `name`, of `callee` in Peeper's convention, or
-    /// of a runtime function, with `arguments`, after noting its
+    /// of a runtime function, with `arguments` after `result_at`, the
+    /// address a result kept in memory is written to, after noting its
     /// declaration.
+    #[allow(clippy::too_many_arguments)] // each is part of the one call
     fn write_call(
         &mut self,
         out: &mut String,
         name: &str,
         callee: Callee,
         signature: &Signature,
+        result_at: Option<&str>,
         arguments: &[Operand],
         location: &DebugLocation,
     ) {
@@ -921,12 +931,20 @@ impl Writer<'_, '_, '_> {
             Callee::Pointer(address) => self.operand(address).to_string(),
         };
         let (result, _) = peeper_types(signature);
+        let separator = if arguments.is_empty() { "" } else { ", " };
+        let result_at = fmt::from_fn(|out| match result_at {
+            Some(address) => write!(out, "ptr {address}{separator}"),
+            None => Ok(()),
+        });
         let arguments = comma_separated(arguments.iter().map(|&argument| self.typed(argument)));
         out.push_str("  ");
         if let Some(Passing::Register { .. }) = signature.result {
             _ = write!(out, "{name} = ");
         }
-        _ = writeln!(out, "call {result} {callee}({arguments}){location}");
+        _ = writeln!(
+            out,
+            "call {result} {callee}({result_at}{arguments}){location}"
+        );
     }
 
     /// Writes the call, as `name`, of the C function `symbol` with

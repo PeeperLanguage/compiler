@@ -33,6 +33,7 @@ use model::mir::Instruction;
 use model::mir::InstructionKind;
 use model::mir::Operand;
 use model::mir::Passing;
+use model::mir::Place;
 use model::mir::Signature;
 use model::mir::Slot;
 use model::mir::Terminator;
@@ -434,10 +435,12 @@ impl<'b, 'f> Interpreter<'b, 'f> {
                     callee,
                     signature,
                     arguments,
+                    result,
                 } = &body.instructions[id].kind
                 {
                     self.frame_mut().next = index + 1;
-                    self.call(id, *callee, *signature, arguments)?;
+                    let result = result.as_ref().map(|(place, _)| place);
+                    self.call(id, *callee, *signature, result, arguments)?;
                     continue 'frames;
                 }
                 if let Some(value) = self.run_instruction(id)? {
@@ -490,12 +493,14 @@ impl<'b, 'f> Interpreter<'b, 'f> {
     }
 
     /// Calls `callee`, of the signature `signature` of the running body,
-    /// for its instruction `id`.
+    /// for its instruction `id`, writing a result kept in memory to
+    /// `result`.
     fn call(
         &mut self,
         id: Id<Instruction>,
         callee: Callee,
         signature: u32,
+        result: Option<&Place>,
         arguments: &[Operand],
     ) -> Result<(), Failure> {
         let copy = match callee {
@@ -515,7 +520,13 @@ impl<'b, 'f> Interpreter<'b, 'f> {
         };
         let frame = self.frame();
         let end = frame.start + frame.layout.size;
+        // Its address is the hidden first argument (`Root::Result`).
+        let result_at = match result {
+            Some(place) => Some(self.address(place, id)?),
+            None => None,
+        };
         let first_register = self.registers.len();
+        self.registers.extend(result_at.map(u128::from));
         for &argument in arguments {
             let register = self.operand(argument);
             self.registers.push(register);

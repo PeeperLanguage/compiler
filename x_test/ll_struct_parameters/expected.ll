@@ -21,10 +21,10 @@ entry:
   %s1 = alloca [8 x i8], align 4
   br label %bb0
 bb0:
-  store i32 1, ptr %s1, !dbg !22
-  %i2 = getelementptr inbounds i8, ptr %s1, i64 4, !dbg !23
-  store i32 2, ptr %i2, !dbg !23
-  call void @"ll_struct_parameters:main.swap"(ptr %s0, ptr %s1), !dbg !21
+  store i32 1, ptr %s1, !dbg !21
+  %i1 = getelementptr inbounds i8, ptr %s1, i64 4, !dbg !22
+  store i32 2, ptr %i1, !dbg !22
+  call void @"ll_struct_parameters:main.swap"(ptr %s0, ptr %s1), !dbg !23
   ret void, !dbg !24
 }
 
@@ -53,9 +53,9 @@ declare void @llvm.dbg.declare(metadata, metadata, metadata)
 !18 = !DILexicalBlock(scope: !17, file: !0, line: 11, column: 11)
 !19 = !DILocalVariable(name: "p", scope: !18, file: !0, line: 12, type: !2)
 !20 = !DILocation(line: 12, column: 9, scope: !18)
-!21 = !DILocation(line: 12, column: 13, scope: !18)
-!22 = !DILocation(line: 12, column: 30, scope: !18)
-!23 = !DILocation(line: 12, column: 37, scope: !18)
+!21 = !DILocation(line: 12, column: 30, scope: !18)
+!22 = !DILocation(line: 12, column: 37, scope: !18)
+!23 = !DILocation(line: 12, column: 13, scope: !18)
 !24 = !DILocation(line: 13, column: 1, scope: !18)
 !25 = !{i32 7, !"Dwarf Version", i32 4}
 !26 = !{i32 2, !"Debug Info Version", i32 3}

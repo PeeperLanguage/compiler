@@ -67,38 +67,38 @@ entry:
   br label %bb0
 bb0:
   call void @"ll_array_ranges:main.known"(ptr %s0), !dbg !19
-  %i2 = load i32, ptr %s0, !dbg !20
-  %i3.a = getelementptr inbounds i8, ptr %s0, i64 4, !dbg !21
-  %i3 = load i32, ptr %i3.a, !dbg !21
-  %i4.a = getelementptr inbounds i8, ptr %s0, i64 8, !dbg !22
-  %i4 = load i32, ptr %i4.a, !dbg !22
-  %i5.a = getelementptr inbounds i8, ptr %s0, i64 12, !dbg !23
-  %i5 = load i32, ptr %i5.a, !dbg !23
-  %i6.a = getelementptr inbounds i8, ptr %s0, i64 16, !dbg !24
-  %i6 = load i32, ptr %i6.a, !dbg !24
-  %i7.a = getelementptr inbounds i8, ptr %s0, i64 20, !dbg !25
-  %i7 = load i32, ptr %i7.a, !dbg !25
-  %i8 = sext i32 %i2 to i64, !dbg !26
-  store i64 %i8, ptr %s1, !dbg !26
+  %i1 = load i32, ptr %s0, !dbg !20
+  %i2.a = getelementptr inbounds i8, ptr %s0, i64 4, !dbg !21
+  %i2 = load i32, ptr %i2.a, !dbg !21
+  %i3.a = getelementptr inbounds i8, ptr %s0, i64 8, !dbg !22
+  %i3 = load i32, ptr %i3.a, !dbg !22
+  %i4.a = getelementptr inbounds i8, ptr %s0, i64 12, !dbg !23
+  %i4 = load i32, ptr %i4.a, !dbg !23
+  %i5.a = getelementptr inbounds i8, ptr %s0, i64 16, !dbg !24
+  %i5 = load i32, ptr %i5.a, !dbg !24
+  %i6.a = getelementptr inbounds i8, ptr %s0, i64 20, !dbg !25
+  %i6 = load i32, ptr %i6.a, !dbg !25
+  %i7 = sext i32 %i1 to i64, !dbg !26
+  store i64 %i7, ptr %s1, !dbg !26
   call void @"peeper_rt_v2_print_int"(i32 1, i32 1, ptr %s1), !dbg !26
-  %i12 = sext i32 %i3 to i64, !dbg !26
-  store i64 %i12, ptr %s2, !dbg !26
+  %i11 = sext i32 %i2 to i64, !dbg !26
+  store i64 %i11, ptr %s2, !dbg !26
   call void @"peeper_rt_v1_print_bytes"(ptr @.str.0, i64 1), !dbg !26
   call void @"peeper_rt_v2_print_int"(i32 1, i32 1, ptr %s2), !dbg !26
-  %i17 = sext i32 %i4 to i64, !dbg !26
-  store i64 %i17, ptr %s3, !dbg !26
+  %i16 = sext i32 %i3 to i64, !dbg !26
+  store i64 %i16, ptr %s3, !dbg !26
   call void @"peeper_rt_v1_print_bytes"(ptr @.str.0, i64 1), !dbg !26
   call void @"peeper_rt_v2_print_int"(i32 1, i32 1, ptr %s3), !dbg !26
-  %i22 = sext i32 %i5 to i64, !dbg !26
-  store i64 %i22, ptr %s4, !dbg !26
+  %i21 = sext i32 %i4 to i64, !dbg !26
+  store i64 %i21, ptr %s4, !dbg !26
   call void @"peeper_rt_v1_print_bytes"(ptr @.str.0, i64 1), !dbg !26
   call void @"peeper_rt_v2_print_int"(i32 1, i32 1, ptr %s4), !dbg !26
-  %i27 = sext i32 %i6 to i64, !dbg !26
-  store i64 %i27, ptr %s5, !dbg !26
+  %i26 = sext i32 %i5 to i64, !dbg !26
+  store i64 %i26, ptr %s5, !dbg !26
   call void @"peeper_rt_v1_print_bytes"(ptr @.str.0, i64 1), !dbg !26
   call void @"peeper_rt_v2_print_int"(i32 1, i32 1, ptr %s5), !dbg !26
-  %i32 = sext i32 %i7 to i64, !dbg !26
-  store i64 %i32, ptr %s6, !dbg !26
+  %i31 = sext i32 %i6 to i64, !dbg !26
+  store i64 %i31, ptr %s6, !dbg !26
   call void @"peeper_rt_v1_print_bytes"(ptr @.str.0, i64 1), !dbg !26
   call void @"peeper_rt_v2_print_int"(i32 1, i32 1, ptr %s6), !dbg !26
   call void @"peeper_rt_v1_print_bytes"(ptr @.str.1, i64 1), !dbg !26

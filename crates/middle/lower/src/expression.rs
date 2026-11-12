@@ -949,7 +949,7 @@ impl Lowering<'_> {
         let Type::Function { origins, .. } = &self.types[self.types.real(signature)] else {
             unreachable!("a call's signature is a function type")
         };
-        let mut passed = Vec::with_capacity(arguments.len() + 1);
+        let mut passed = Vec::with_capacity(arguments.len());
         let mut parameters = Vec::with_capacity(arguments.len());
         let c_function = match callee {
             Callee::Function(function) => {
@@ -962,13 +962,7 @@ impl Lowering<'_> {
         let result_place = match result {
             Some(Passing::Memory { size, .. }) => {
                 let place = destination.unwrap_or_else(|| Place::whole(self.temporary(ty, span)));
-                let kind = InstructionKind::Address {
-                    place: place.clone(),
-                    size,
-                };
-                let address = self.emit(kind, span);
-                passed.push(address);
-                Some(place)
+                Some((place, size))
             }
             _ => None,
         };
@@ -1045,6 +1039,7 @@ impl Lowering<'_> {
             callee,
             signature: (self.mir.signatures.len() - 1) as u32,
             arguments: passed.into(),
+            result: result_place.clone(),
         };
         let mut called = self.emit(kind, span);
         // C leaves the bits of a register above a narrow integer unset.
@@ -1053,7 +1048,7 @@ impl Lowering<'_> {
         }
         Some(match (result, result_place) {
             (Some(Passing::Register { .. }), _) => Value::Register(called),
-            (Some(Passing::Memory { .. }), Some(place)) => Value::Memory(place),
+            (Some(Passing::Memory { .. }), Some((place, _))) => Value::Memory(place),
             _ => Value::Nothing,
         })
     }

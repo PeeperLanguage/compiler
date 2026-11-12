@@ -217,14 +217,14 @@ fn a_constant_range_spread_needs_no_check() {
 }
 
 #[test]
-fn a_struct_result_is_written_where_a_hidden_argument_points() {
+fn a_call_writes_a_struct_result_into_its_place() {
     let text = lowered(
         "struct Point { x: i32, y: i64 }
 fn main() -> i32 { let p = make(); return p.x; }
 fn make() -> Point { return Point.{ x = 1, y = 2 }; }",
     );
     assert!(
-        text.contains("    %0 = address 16 p.0\n    call make(%0)\n    %2 = load i32 p.0[+0]\n"),
+        text.contains("    call make() into 16 p.0\n    %1 = load i32 p.0[+0]\n"),
         "{text}"
     );
 }

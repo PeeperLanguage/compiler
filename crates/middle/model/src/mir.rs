@@ -647,11 +647,14 @@ pub enum InstructionKind {
         place: Place,
         size: u64,
     },
-    /// A call, with the callee's signature (`Body::signatures`).
+    /// A call, with the callee's signature (`Body::signatures`). A result
+    /// kept in memory is written to `result`'s place, of its size in bytes:
+    /// the call passes its address as a hidden first argument.
     Call {
         callee: Callee,
         signature: u32,
         arguments: Box<[Operand]>,
+        result: Option<(Place, u64)>,
     },
     /// Stops the program with "panic: `message`" when `failed`, an `I8`, is
     /// not 0. Gives no value.
@@ -768,6 +771,10 @@ impl InstructionKind {
                 on(place, AccessWidth::Bytes(*size), kind);
             }
             InstructionKind::Address { place, size } => on(place, bytes(size), AccessKind::Address),
+            InstructionKind::Call {
+                result: Some((place, size)),
+                ..
+            } => on(place, bytes(size), AccessKind::Write),
             InstructionKind::Moved { place, size, .. } => on(place, bytes(size), AccessKind::Move),
             InstructionKind::Integer { .. }
             | InstructionKind::Float { .. }
@@ -1108,6 +1115,7 @@ impl Printer<'_> {
                 callee,
                 signature,
                 arguments,
+                result,
             } => {
                 match callee {
                     Callee::Function(function) => {
@@ -1122,6 +1130,10 @@ impl Printer<'_> {
                 }
                 self.write_operands(arguments);
                 self.out.push(')');
+                if let Some((place, size)) = result {
+                    _ = write!(self.out, " into {size} ");
+                    self.write_place(place);
+                }
                 if let Some(c) = &self.body.signatures[*signature as usize].c {
                     self.out.push_str(" in C (");
                     for (index, passing) in c.parameters.iter().enumerate() {
