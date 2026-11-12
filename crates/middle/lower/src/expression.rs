@@ -975,7 +975,7 @@ impl Lowering<'_> {
                     value => (value.memory(), None),
                 };
                 let address = self.load(Class::Pointer, view.clone(), span);
-                let table_place = view.clone().then(Step::Offset(self.pointer_bytes));
+                let table_place = self.second_word(view.clone());
                 let table = self.load(Class::Pointer, table_place, span);
                 if let Some(read) = moved_at {
                     self.mark_moved(view, argument_type, read);
@@ -1087,9 +1087,7 @@ impl Lowering<'_> {
             })
             .collect();
         let table = self.global(Global::Functions(table));
-        self.store(Class::Pointer, place.clone(), reference, span);
-        let table_place = place.then(Step::Offset(self.pointer_bytes));
-        self.store(Class::Pointer, table_place, table, span);
+        self.interface_words(reference, table, place, span);
     }
 
     /// `&borrowed` or `&mut borrowed` as the slice or interface reference
@@ -1141,11 +1139,9 @@ impl Lowering<'_> {
                 };
                 // Only the program knows which struct it views.
                 let address = self.borrow(struct_place, None, mutable, &REFERENCE_WORDS, span);
-                let table_place = words.then(Step::Offset(self.pointer_bytes));
+                let table_place = self.second_word(words);
                 let table = self.load(Class::Pointer, table_place, span);
-                self.store(Class::Pointer, to.clone(), address, span);
-                let table_at = to.then(Step::Offset(self.pointer_bytes));
-                self.store(Class::Pointer, table_at, table, span);
+                self.interface_words(address, table, to, span);
             }
             _ => unreachable!("a reference is one register"),
         }
@@ -1169,6 +1165,14 @@ impl Lowering<'_> {
             words,
         };
         self.emit(kind, span)
+    }
+
+    /// An interface reference or owned interface at `place`: `address` and
+    /// its methods' `table` as its two words.
+    fn interface_words(&mut self, address: Operand, table: Operand, place: Place, span: Span) {
+        self.store(Class::Pointer, place.clone(), address, span);
+        let table_place = self.second_word(place);
+        self.store(Class::Pointer, table_place, table, span);
     }
 
     /// A slice value at `place`: `address` and `length` as its two words.
