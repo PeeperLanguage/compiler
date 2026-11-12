@@ -1,0 +1,15 @@
+name = "negative_loan_and_return_errors"
+build = "lib"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = [
+    "src/main.peep:5:5\n",
+    "src/main.peep:6:5\n",
+    "src/main.peep:12:5\n",
+    "src/main.peep:14:9\n",
+    "src/main.peep:23:5\n",
+    "src/main.peep:34:9\n",
+    "Compilation failed with 6 error(s)",
+]

@@ -778,6 +778,18 @@
   lowering computes. Fixtures run_panic_index_length_variable and
   run_panic_length_of_literal_divide (native, -interpret, i686); both exit
   0 without the fix. Every other fixture's output unchanged.
+- Loan errors (Fuad: "yes report both"): one set of reported loans was
+  shared by return errors and conflicts, so a loan both changed and
+  returned showed one of the two, picked by block order (`x = 2; return r;`
+  the return, `x = 2; if c { return r; }` the change). `Loans::report` now
+  checks every `return` first into its own set, then walks the conflicts
+  with theirs; a place ending under a loan a `return` reported is skipped
+  (`broken_loan`'s `skip` takes the loan too; `Access::ends`), so
+  `return &x;` stays one error. Fixture negative_loan_and_return_errors
+  (6 errors; 4 without the fix). `check` output of every other fixture
+  byte-identical. A local ending in an inner block before the `return` of
+  its reference is now reported as the return ("gone once the function
+  returns"), not as "gone" at the `}`. check.sh ok.
 - Review of the two fixes (pony + untangle lens; Fuad: "fix all"): the
   constant-index fold had no test; run_array_length has
   `const ROW = grid[0].len;` (with the fold's index branch off it fails,

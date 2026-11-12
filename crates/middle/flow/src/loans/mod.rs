@@ -188,8 +188,27 @@ impl<'b> Loans<'b> {
         let body = self.holders.body;
         let ends = self.live_at_ends();
         let starts = self.held_at_starts(&ends);
-        // The borrows, then one parameter loan per parameter.
+        // The borrows, then one parameter loan per parameter: those a
+        // conflict was reported for, and those a `return` was.
         let mut reported = Bits::new(self.holders.loan_count());
+        let mut reported_returns = Bits::new(self.holders.loan_count());
+        let mut errors = Vec::new();
+        // Every `return` first, so a local whose reference is returned is
+        // reported as that, not also as gone at its end, whatever the order
+        // of the blocks (`broken_loan`).
+        for (block, start) in body.blocks.ids().zip(&starts) {
+            let (Some(held), Some((returned, span))) =
+                (start, self.holders.returned_holders(block))
+            else {
+                continue;
+            };
+            let mut at_return = held.clone();
+            for &id in &self.lines[block.index()] {
+                self.holders.step_held(&mut at_return, id);
+            }
+            let loans = at_return.loans_of(returned);
+            self.return_errors(span, &loans, &mut reported_returns, file, &mut errors);
+        }
         // The reserved loans by the call they wait for, so each call finds
         // its own without a walk over every borrow.
         let mut reservations: Vec<(Id<mir::Instruction>, Id<Loan>)> = (self.reserved.iter())
@@ -199,22 +218,11 @@ impl<'b> Loans<'b> {
             })
             .collect();
         reservations.sort_unstable();
-        let mut errors = Vec::new();
         for ((block, start), end) in body.blocks.ids().zip(starts).zip(ends) {
             let Some(mut held) = start else {
                 continue; // not reached
             };
             let ids = &self.lines[block.index()];
-            // First, so a local whose reference is returned is reported as
-            // that, not as gone while its reference is in use.
-            if let Some((returned, span)) = self.holders.returned_holders(block) {
-                let mut at_return = held.clone();
-                for &id in ids {
-                    self.holders.step_held(&mut at_return, id);
-                }
-                let loans = at_return.loans_of(returned);
-                self.return_errors(span, &loans, &mut reported, file, &mut errors);
-            }
             // The holders used later: walked back to the block's start once,
             // keeping only the holders each instruction flips, so the walk
             // forward toggles them back in order. A set kept per instruction
@@ -243,12 +251,17 @@ impl<'b> Loans<'b> {
                 }
                 let error = error.or_else(|| {
                     let defined = self.holders.defines(id);
-                    let skip = |holder: Id<Holder>| defined.contains(&holder.index());
                     let mut accesses = self.accesses(id);
                     if let Some(moved) = self.move_of_read(id, &ids[position + 1..]) {
                         accesses[0] = Some(moved);
                     }
                     (accesses.into_iter().flatten()).find_map(|access| {
+                        // A place ending under a returned reference is the
+                        // `return`'s one mistake, already reported.
+                        let skip = |holder: Id<Holder>, loan| {
+                            defined.contains(&holder.index())
+                                || (access.ends && reported_returns.has(loan))
+                        };
                         self.broken_loan(&access, &held, &live, &skip, &mut reported, file)
                     })
                 });

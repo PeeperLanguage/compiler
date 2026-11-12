@@ -34,6 +34,7 @@ pub(super) struct Access<'p> {
     label: &'static str,   // where it is done: "read", "address taken", ...
     reads: bool,           // only reads it, which a shared loan allows
     own_storage: bool,     // only its own storage: replaced or ended
+    pub(super) ends: bool, // the place's storage ends
     span: Span,
 }
 
@@ -198,13 +199,17 @@ impl<'b> Loans<'b> {
                 label: event,
                 reads,
                 own_storage,
+                ends: false,
                 span,
             };
             let found = match access.kind {
                 AccessKind::Read => on("read", true, false),
                 AccessKind::Write => on("changed", false, true),
                 AccessKind::Move => on("moved", false, false),
-                AccessKind::End => on("gone", false, true),
+                AccessKind::End => Access {
+                    ends: true,
+                    ..on("gone", false, true)
+                },
                 AccessKind::Borrow { mutable: false } => on("borrowed", true, false),
                 AccessKind::Borrow { mutable: true } => {
                     let loan = self.holders.loan(id);
@@ -271,15 +276,16 @@ impl<'b> Loans<'b> {
         access: &Access,
         held: &Held,
         live: &Bits<Holder>,
-        skip: &dyn Fn(Id<Holder>) -> bool,
+        skip: &dyn Fn(Id<Holder>, Id<Loan>) -> bool,
         reported: &mut Bits<Loan>,
         file: &Arc<SourceFile>,
     ) -> Option<(Id<Holder>, Diagnostic)> {
         let Root::Slot(slot) = access.place.root else {
             return None; // memory no loan names
         };
-        let pairs = (held.pairs.iter())
-            .filter(|&&(holder, loan)| live.has(holder) && !skip(holder) && !reported.has(loan));
+        let pairs = (held.pairs.iter()).filter(|&&(holder, loan)| {
+            live.has(holder) && !skip(holder, loan) && !reported.has(loan)
+        });
         for &(holder, loan) in pairs {
             let Lent::Borrow(borrow) = self.holders.lent(loan) else {
                 continue; // a parameter's: what the caller lent conflicts with nothing here
@@ -357,7 +363,7 @@ impl<'b> Loans<'b> {
             };
             access.reads = false; // it takes hold now
             let own = self.holders.value_holder(borrowed.instruction);
-            let skip = |holder| holder == own || Some(holder) == reservation.carrier;
+            let skip = |holder, _| holder == own || Some(holder) == reservation.carrier;
             if let Some((holder, error)) =
                 self.broken_loan(&access, held, live, &skip, reported, file)
             {
