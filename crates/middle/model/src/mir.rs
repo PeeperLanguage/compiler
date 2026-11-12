@@ -735,6 +735,28 @@ pub enum Conversion {
     PointerCast,
 }
 
+/// The conversion `value as to` makes of a value of the type `from`, as
+/// check allows it: between numbers, from a `bool` to an integer, and
+/// between raw pointers; integers at their own widths. Check drops an `as`
+/// to the same type.
+pub fn cast_conversion(from: &Type, to: &Type) -> Conversion {
+    match (from, to) {
+        (Type::Integer(from), Type::Integer(to)) if to.bits < from.bits => Conversion::Truncate,
+        (Type::Integer(from), Type::Integer(_)) if from.signed => Conversion::SignExtend,
+        (Type::Integer(_) | Type::Bool, Type::Integer(_)) => Conversion::ZeroExtend,
+        (Type::Integer(from), Type::Float(_)) if from.signed => Conversion::SignedToFloat,
+        (Type::Integer(_), Type::Float(_)) => Conversion::UnsignedToFloat,
+        (Type::Float(_), Type::Integer(to)) if to.signed => {
+            Conversion::FloatToSigned { bits: to.bits }
+        }
+        (Type::Float(_), Type::Integer(to)) => Conversion::FloatToUnsigned { bits: to.bits },
+        (Type::Float(Float::F32), Type::Float(Float::F64)) => Conversion::FloatWiden,
+        (Type::Float(Float::F64), Type::Float(Float::F32)) => Conversion::FloatNarrow,
+        (Type::RawPointer { .. }, Type::RawPointer { .. }) => Conversion::PointerCast,
+        _ => unreachable!("check converts no {from:?} to {to:?}"),
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum InstructionKind {
     /// Wraps at the class's width.

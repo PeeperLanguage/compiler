@@ -445,68 +445,6 @@ fn a_loading_error_leaves_no_entry_point() {
     assert!(found.entry_point().is_none());
 }
 
-/// In a function's MIR, each way out of a block ends the
-/// variables it leaves, newest first.
-#[test]
-fn each_way_out_of_a_block_ends_its_variables_newest_first() {
-    let program = load(&[(
-        "app:main",
-        "fn walk(limit: i32) -> i32 {
-            let first: i32 = limit;
-            for first > 0 {
-                let second: i32 = first;
-                let third: i32 = second;
-                if third == 1 {
-                    break;
-                }
-                if third == 2 {
-                    continue;
-                }
-                if third == 3 {
-                    return third;
-                }
-            }
-            return first;
-        }
-        fn main() {}",
-    )]);
-    let mut text = String::new();
-    let results = run(
-        &program,
-        x86_64(),
-        Results::default(),
-        Options::default(),
-        |output| {
-            if let Output::Function(checked) = output {
-                let file = &program.modules[checked.function.definition.module.index()]
-                    .ast
-                    .file;
-                let mir = checked.mir.expect("it lowers");
-                text.push_str(&mir.text(file, |_| String::new()));
-            }
-        },
-    );
-    assert_eq!(messages(&results), Vec::<String>::new());
-    let ends: Vec<&str> = (text.lines())
-        .map(str::trim)
-        .filter(|line| line.starts_with("dead "))
-        .collect();
-    let (outer, inner) = (
-        ["dead first.1", "dead limit.0"],
-        ["dead third.3", "dead second.2"],
-    );
-    let expected = [
-        &outer[..], // after the loop, which `break` jumps to
-        &inner,     // at the `break`
-        &inner,     // at the `continue`
-        &inner,     // at the `return`, with the rest
-        &outer,
-        &inner, // at the loop's `}`
-        &outer, // at the function's `}`
-    ];
-    assert_eq!(ends, expected.concat());
-}
-
 #[test]
 fn a_function_whose_path_checks_fail_gives_no_mir() {
     let program = load(&[(
@@ -764,6 +702,20 @@ fn recompile(modules: &[(&str, &str)], previous: Results) -> (Results, Vec<Strin
 fn messages(results: &Results) -> Vec<String> {
     let message = |diagnostic: &diagnostics::Diagnostic| diagnostic.message.clone();
     results.diagnostics().map(message).collect()
+}
+
+/// The messages of a first compile of `program` for the machine named
+/// `target`.
+fn messages_on(program: &model::program::Program, target: &str) -> Vec<String> {
+    let target = Machine::named(target).unwrap();
+    let found = run(
+        program,
+        target,
+        Results::default(),
+        Options::default(),
+        |_| {},
+    );
+    messages(&found)
 }
 
 const UTILS: (&str, &str) = (
@@ -1067,16 +1019,7 @@ fn array_lengths_fit_the_target_usize() {
         "struct Empty {}
             fn main() { let a: [4294967296]Empty; let b: [4294967295]Empty; }",
     )]);
-    let at = |name| {
-        let target = Machine::named(name).unwrap();
-        messages(&run(
-            &program,
-            target,
-            Results::default(),
-            Options::default(),
-            |_| {},
-        ))
-    };
+    let at = |target| messages_on(&program, target);
     assert_eq!(
         at("i686-linux"),
         ["an array length must fit `usize`, of 32 bits"]
@@ -1093,16 +1036,7 @@ fn values_fit_the_target() {
         "struct Halves { a: [1073741824]u8, b: [1073741824]u8 }
             fn main() { let fits: [2147483647]u8; let over: [2147483648]u8; }",
     )]);
-    let at = |name| {
-        let target = Machine::named(name).unwrap();
-        messages(&run(
-            &program,
-            target,
-            Results::default(),
-            Options::default(),
-            |_| {},
-        ))
-    };
+    let at = |target| messages_on(&program, target);
     let too_big = |text| {
         format!("`{text}` is too big for i686-linux, where a value takes at most 2147483647 bytes")
     };
@@ -1121,16 +1055,7 @@ fn extern_integers_are_ones_c_has() {
         "app:main",
         "#[extern(\"c_wide\")]\nfn wide(a: i128, b: i129) -> i200;",
     )]);
-    let at = |name| {
-        let target = Machine::named(name).unwrap();
-        messages(&run(
-            &program,
-            target,
-            Results::default(),
-            Options::default(),
-            |_| {},
-        ))
-    };
+    let at = |target| messages_on(&program, target);
     let none =
         |text| format!("C has no `{text}` on aarch64-linux, whose integers have at most 128 bits");
     assert_eq!(at("aarch64-linux"), [none("i129"), none("i200")]);

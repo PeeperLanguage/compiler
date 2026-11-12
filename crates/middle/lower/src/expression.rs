@@ -25,6 +25,7 @@ use model::mir::SLICE_WORDS;
 use model::mir::Signature;
 use model::mir::Step;
 use model::mir::binary_operation;
+use model::mir::cast_conversion;
 use model::operators::BinaryOp;
 use model::operators::UnaryOp;
 use model::semantic_types::ConstArguments;
@@ -473,13 +474,7 @@ impl Lowering<'_> {
         let converted = if from_class == to_class {
             value
         } else {
-            let conversion = if to.bits < from.bits {
-                Conversion::Truncate
-            } else if from.signed {
-                Conversion::SignExtend
-            } else {
-                Conversion::ZeroExtend
-            };
+            let conversion = cast_conversion(&Type::Integer(from), &Type::Integer(to));
             self.convert(conversion, from_class, to_class, value, span)
         };
         // To a type narrower than its class, or one read with the other sign.
@@ -721,7 +716,7 @@ impl Lowering<'_> {
         Some(Value::Register(result))
     }
 
-    /// The number or `bool` `value` converted to the type `to`.
+    /// The number, `bool` or raw pointer `value` converted to the type `to`.
     fn lower_convert(&mut self, value: Id<thir::Expr>, to: TypeId, span: Span) -> Option<Value> {
         let from = self.types.real(self.thir.exprs[value].ty);
         let operand = self.lower_expr(value)?.register();
@@ -736,51 +731,11 @@ impl Lowering<'_> {
                 };
                 self.convert_integer(operand, bit, to, span)
             }
-            (&Type::Integer(from), &Type::Float(to)) => {
-                let conversion = if from.signed {
-                    Conversion::SignedToFloat
-                } else {
-                    Conversion::UnsignedToFloat
-                };
-                self.convert(
-                    conversion,
-                    Class::integer(from.bits),
-                    Class::float(to),
-                    operand,
-                    span,
-                )
+            (from_type, to_type) => {
+                let conversion = cast_conversion(from_type, to_type);
+                let class = |ty| self.class(ty).expect("a converted value is a register");
+                self.convert(conversion, class(from), class(to), operand, span)
             }
-            (&Type::Float(from), &Type::Integer(to)) => {
-                let conversion = if to.signed {
-                    Conversion::FloatToSigned { bits: to.bits }
-                } else {
-                    Conversion::FloatToUnsigned { bits: to.bits }
-                };
-                let class = Class::integer(to.bits);
-                self.convert(conversion, Class::float(from), class, operand, span)
-            }
-            (Type::Float(Float::F32), Type::Float(Float::F64)) => self.convert(
-                Conversion::FloatWiden,
-                Class::F32,
-                Class::F64,
-                operand,
-                span,
-            ),
-            (Type::Float(Float::F64), Type::Float(Float::F32)) => self.convert(
-                Conversion::FloatNarrow,
-                Class::F64,
-                Class::F32,
-                operand,
-                span,
-            ),
-            (Type::RawPointer { .. }, Type::RawPointer { .. }) => self.convert(
-                Conversion::PointerCast,
-                Class::Pointer,
-                Class::Pointer,
-                operand,
-                span,
-            ),
-            _ => unreachable!("the checker converts numbers, `bool`s and raw pointers only"),
         };
         Some(Value::Register(converted))
     }

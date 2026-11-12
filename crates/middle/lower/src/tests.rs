@@ -9,19 +9,23 @@ use model::FunctionCopy;
 use model::ModuleId;
 use model::ast;
 use model::machine::Machine;
+use model::mir;
+use model::mir::DebugType;
 use model::mir::DebugTypes;
 use model::semantic_types::ConstArguments;
 use model::thir;
+use runtime_abi::symbols::Runtime;
 use source::SourceFile;
 
 /// The MIR text of the function `main` of the one-module program `text`,
 /// which must check without errors, for a 64-bit target.
 fn lowered(text: &str) -> String {
-    lowered_for(text, "x86_64-linux")
+    lower_main(text, "x86_64-linux").0
 }
 
-/// The dump of `text`'s `main` lowered for the machine named `target`.
-fn lowered_for(text: &str, target: &str) -> String {
+/// `text`'s `main` lowered for the machine named `target`: its dump, its
+/// MIR and the debug types lowering made.
+fn lower_main(text: &str, target: &str) -> (String, mir::Body, DebugTypes) {
     let file = Arc::new(SourceFile::new("main.peep", text));
     let (ast, parse) = parser::parse(&file);
     assert!(parse.is_empty(), "{parse:?}");
@@ -70,7 +74,7 @@ fn lowered_for(text: &str, target: &str) -> String {
     .expect("the body lowers");
     let name_of =
         |function: FunctionCopy| model::program::declared_path(&modules, function.definition);
-    mir.text(&file, name_of)
+    (mir.text(&file, name_of), mir, debug_types)
 }
 
 #[test]
@@ -131,7 +135,7 @@ fn main() { let x = mix(1, 2, 3, true); }";
     let call = "in C (signext, 2 x i64, memory 32 align 8 byval, zeroext) -> 2 x i64\n";
     assert!(text.contains(call), "{text}");
     // i386 passes a wide integer as a copy's address, in 4-byte words.
-    let i386 = lowered_for(program, "i686-linux");
+    let i386 = lower_main(program, "i686-linux").0;
     let call =
         "in C (signext, memory 16 align 4, memory 28 align 4, zeroext) -> memory 16 align 4\n";
     assert!(i386.contains(call), "{i386}");
@@ -315,28 +319,18 @@ fn print_writes_text_once_and_each_value_by_its_kind() {
         text.contains("    store ptr .1, global 0\n    store i64 .1[+8], 4\n"),
         "{text}"
     );
-    assert!(
-        text.contains("call peeper_rt_v1_print_bytes(%5, %6)\n"),
-        "{text}"
-    );
-    assert!(
-        text.contains("call peeper_rt_v2_print_int(1, 1, %10)\n"),
-        "{text}"
-    );
-    assert!(
-        text.contains("  bb1:\n    call peeper_rt_v1_print_bytes(global 3, 4)\n"),
-        "{text}"
-    );
-    assert!(
-        text.contains("  bb2:\n    call peeper_rt_v1_print_bytes(global 4, 5)\n"),
-        "{text}"
-    );
-    assert!(
-        text.contains(
-            "call peeper_rt_v1_print_bytes(global 5, 1)\n    call peeper_rt_v1_flush()\n"
-        ),
-        "{text}"
-    );
+    let bytes = Runtime::PrintBytes.signature().symbol;
+    let int = Runtime::PrintInt.signature().symbol;
+    let flush = Runtime::Flush.signature().symbol;
+    for line in [
+        format!("call {bytes}(%5, %6)\n"),
+        format!("call {int}(1, 1, %10)\n"),
+        format!("  bb1:\n    call {bytes}(global 3, 4)\n"),
+        format!("  bb2:\n    call {bytes}(global 4, 5)\n"),
+        format!("call {bytes}(global 5, 1)\n    call {flush}()\n"),
+    ] {
+        assert!(text.contains(&line), "{line}not in\n{text}");
+    }
 }
 
 #[test]
@@ -366,95 +360,6 @@ fn main() -> i32 { let s = Square.{ side = 3 }; let shape: &Shape = &s; return s
         ),
         "{text}"
     );
-}
-
-/// Every fixture program lowers, on its own target: no THIR shape makes
-/// the lowering give up. Errors a negative fixture expects leave its
-/// bodies unlowered.
-#[test]
-fn every_fixture_lowers() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
-    let libraries = root.join("build/libs");
-    let mut lowered = 0;
-    for entry in std::fs::read_dir(root.join("x_test")).unwrap() {
-        let folder = entry.unwrap().path();
-        let Ok(manifest) = std::fs::read_to_string(folder.join("peeper.toml")) else {
-            continue;
-        };
-        let target = manifest
-            .lines()
-            .find_map(|line| line.strip_prefix("target = \"")?.strip_suffix('"'))
-            .unwrap_or("x86_64-linux");
-        let target = Machine::named(target).unwrap();
-        let project = project::find(&folder, &libraries).unwrap();
-        let program = project::load(&project, &std::collections::HashMap::<_, String>::new());
-        if !program.checkable {
-            continue;
-        }
-        let mut checker = Checker::new(&program.modules, target, false);
-        let mut debug_types = DebugTypes::default();
-        let mut body = thir::Body::default();
-        let mut lower_function = |checker: &mut Checker, function: FunctionCopy, span| {
-            let ty = checker.copy_type(function, span);
-            if !checker.check_body(function, span, &mut body, true) {
-                return;
-            }
-            let lowered_body = super::lower(
-                &body,
-                ty,
-                &checker.types,
-                target,
-                &program.modules,
-                &mut debug_types,
-            );
-            if let Some(mir) = lowered_body {
-                let name_of = |function: FunctionCopy| {
-                    model::program::declared_path(&program.modules, function.definition)
-                };
-                let file = &program.modules[function.definition.module.index()].ast.file;
-                assert!(!mir.text(file, name_of).is_empty());
-                lowered += 1;
-            }
-        };
-        for (index, module) in program.modules.iter().enumerate() {
-            let id = ModuleId::from_index(index);
-            let tree = &module.ast;
-            for (position, declaration) in tree.declarations().enumerate() {
-                let definition = DefId {
-                    module: id,
-                    index: position as u32,
-                };
-                match tree.decls[declaration] {
-                    ast::Decl::Function(function)
-                        if check::declaration::const_parameter(tree, function.signature)
-                            .is_some() =>
-                    {
-                        checker.function_type(definition, function.name.span);
-                    }
-                    ast::Decl::Function(function) => {
-                        let copy = FunctionCopy {
-                            definition,
-                            arguments: ConstArguments::NONE,
-                        };
-                        lower_function(&mut checker, copy, function.name.span);
-                    }
-                    ast::Decl::Const { name, .. } => {
-                        checker.constant(definition, name.span);
-                    }
-                    ast::Decl::Type(written) | ast::Decl::Alias(written) => {
-                        checker.declared_type(definition, written.name.span);
-                    }
-                }
-            }
-            while let Some(copy) = checker.next_copy() {
-                let span = model::program::declared_name(&program.modules, copy.definition)
-                    .0
-                    .span;
-                lower_function(&mut checker, copy, span);
-            }
-        }
-    }
-    assert!(lowered > 500, "{lowered} bodies lowered");
 }
 
 #[test]
@@ -549,4 +454,80 @@ fn main() {
         "{text}"
     );
     assert_eq!(text.matches("moved").count(), 2, "{text}");
+}
+
+/// Debug types follow pointers and structs `DEEPEST_DEBUG_TYPE` deep, then
+/// stop: clang runs out of stack on deeper ones.
+#[test]
+fn debug_types_stop_at_the_deepest_depth() {
+    let deepest = super::DEEPEST_DEBUG_TYPE as usize;
+    let source = format!("fn main(a: {}i32) {{ }}", "*".repeat(deepest + 10));
+    let (_, mir, debug_types) = lower_main(&source, "x86_64-linux");
+    let mut next = (mir.slots.ids()).find_map(|slot| mir.slots[slot].debug_type);
+    let mut pointers = 0;
+    while let Some(id) = next {
+        let DebugType::Pointer { to, .. } = debug_types.get(id) else {
+            break;
+        };
+        (pointers, next) = (pointers + 1, *to);
+    }
+    assert_eq!(pointers, deepest + 1);
+
+    let chain: String = (1..deepest + 10)
+        .map(|i| format!("struct S{i} {{ s: S{} }}\n", i - 1))
+        .collect();
+    let last = deepest + 9;
+    let source = format!("struct S0 {{ n: i32 }}\n{chain}fn main(a: S{last}) {{ }}");
+    let (_, mir, debug_types) = lower_main(&source, "x86_64-linux");
+    let mut next = (mir.slots.ids()).find_map(|slot| mir.slots[slot].debug_type);
+    let mut structs = 0;
+    while let Some(id) = next {
+        let DebugType::Composite { members, .. } = debug_types.get(id) else {
+            break;
+        };
+        (structs, next) = (structs + 1, members.first().map(|member| member.ty));
+    }
+    assert_eq!(structs, deepest + 1);
+}
+
+/// Each way out of a block ends the variables it leaves, newest first.
+#[test]
+fn each_way_out_of_a_block_ends_its_variables_newest_first() {
+    let text = lowered(
+        "fn main(limit: i32) -> i32 {
+            let first: i32 = limit;
+            for first > 0 {
+                let second: i32 = first;
+                let third: i32 = second;
+                if third == 1 {
+                    break;
+                }
+                if third == 2 {
+                    continue;
+                }
+                if third == 3 {
+                    return third;
+                }
+            }
+            return first;
+        }",
+    );
+    let ends: Vec<&str> = (text.lines())
+        .map(str::trim)
+        .filter(|line| line.starts_with("dead "))
+        .collect();
+    let (outer, inner) = (
+        ["dead first.1", "dead limit.0"],
+        ["dead third.3", "dead second.2"],
+    );
+    let expected = [
+        &outer[..], // after the loop, which `break` jumps to
+        &inner,     // at the `break`
+        &inner,     // at the `continue`
+        &inner,     // at the `return`, with the rest
+        &outer,
+        &inner, // at the loop's `}`
+        &outer, // at the function's `}`
+    ];
+    assert_eq!(ends, expected.concat());
 }

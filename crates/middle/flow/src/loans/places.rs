@@ -187,5 +187,27 @@ mod tests {
             second_words.meets(runs(0, 16, 16, 4)),
             "every element whole"
         );
+        // Inside the span, between the runs.
+        assert!(
+            !second_words.meets(runs(32, 8, 0, 1)),
+            "element 2's first word"
+        );
+        assert!(
+            second_words.meets(runs(0, 4, 32, 2)),
+            "runs of another stride are taken to meet"
+        );
+    }
+
+    /// An index into a slice, whose length only the program knows, may pick
+    /// any element: the runs go on without end and their span saturates.
+    #[test]
+    fn runs_of_unknown_count_reach_every_element() {
+        let second_words = runs(8, 8, 16, u64::MAX);
+        assert_eq!(second_words.span(), 8..u64::MAX);
+        assert!(!second_words.meets(runs(1 << 40, 8, 0, 1)), "a first word");
+        assert!(
+            second_words.meets(runs((1 << 40) + 8, 8, 0, 1)),
+            "a second word"
+        );
     }
 }

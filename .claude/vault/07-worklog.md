@@ -601,3 +601,35 @@
   the compile's "gives its MIR" comments, the `return`/`panic`/jump
   "unreachable block" comments, the events comment in mir.rs, the
   second "names are for editors". Comments only; check.sh ok.
+- Untangle tests pass (patch tests under target/step12-probes/untangle):
+  - lowering: `every_fixture_lowers` is gone. It copied the compile's
+    walk, and its one assert (a body's text is not empty) could not
+    fail; the fixture test lowers every fixture through the real walk
+    (a panic put in lowering fails it). The print test reads runtime
+    names from `Runtime::*.signature().symbol`, not `peeper_rt_v1_*`.
+  - debug depth: lowering's tests check that pointer and struct debug
+    types stop exactly at `DEEPEST_DEBUG_TYPE` (`lower_main` now gives
+    the MIR and debug types beside the dump); the LLVM tests no longer
+    copy 5_000 and only check the writer writes deep chains, ending in
+    `baseType: null`.
+  - `as`: `model::mir::cast_conversion` picks the `Conversion` of a
+    cast; lowering's `lower_convert` (its float and pointer arms become
+    one) and `convert_integer`, eval's `convert` and llvm_parity use it,
+    where each chose on its own. The `.ll` of every x_test project,
+    host and i686, is unchanged.
+  - loans: `Bytes::meets` had no case where the spans overlap but no
+    run is met, so an always-true `run_meets` passed; added that case,
+    runs of two strides, and runs of unknown count (saturating span).
+  - compile: the newest-first scope-end test moves to lowering's tests
+    (it tests lowering, and needs no compile run); the three copies of
+    the `at` closure are one `messages_on`.
+  Mutations (debug depth off by one, both ways; scope ends oldest first;
+  `run_meets` always true; strides taken apart; span not saturating;
+  signed integers zero-extended) each fail a test. check.sh ok.
+  Not done: tests pinning `%N`/`!dbg` numbers stay (full texts are the
+  spec; numbers move only when lowering changes); the unary choice
+  (`0 - x`, `-0.0 - x`, `x ^ ones`) is still made in lowering, eval and
+  llvm_parity; llvm_parity's `binary_lines` writes with the writer's
+  `pub` mappings, waiting on the `pub` question. The interpreter's
+  arithmetic is the folder's since fix 7 (`operations`), so the folder's
+  parity covers it.

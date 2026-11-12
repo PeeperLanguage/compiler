@@ -388,21 +388,17 @@ fn comparisons_widen_only_when_kept() {
     assert_eq!(text.matches("zext i1").count(), 3, "{text}");
 }
 
-/// A pointer breaks a flat array, so its debug type recurses through each one,
-/// and stops where clang would run out of stack on it.
+/// The debug types of pointers through arrays, and of a chain of structs,
+/// are written however deep lowering made them, from a list rather than by
+/// recursion; lowering's tests check where it stops them.
 #[test]
-fn debug_types_stop_at_deep_pointers() {
+fn deep_debug_types_are_written() {
     let source = format!("fn f(a: {}i32) {{ }}", "[1]*".repeat(50_000));
     let text = ll(&source, "x86_64-linux");
     let pointers = text.matches("DW_TAG_pointer_type").count();
-    assert!((5_000..5_100).contains(&pointers), "{pointers}");
+    assert!(pointers > 1_000, "{pointers}");
     assert!(text.contains("DW_TAG_pointer_type, baseType: null"));
-}
 
-/// Debug info goes through every struct in a chain, and the debug types stop
-/// where clang would run out of stack on them.
-#[test]
-fn deep_structs_have_debug_types() {
     const DEPTH: usize = 20_000;
     let chain: String = (1..DEPTH)
         .map(|i| format!("struct S{i} {{ s: S{} }}\n", i - 1))
@@ -411,7 +407,7 @@ fn deep_structs_have_debug_types() {
     let source = format!("struct S0 {{ n: i32 }}\n{chain}fn f(a: &S{last}) {{}}");
     let text = ll(&source, "x86_64-linux");
     let members = text.matches("DW_TAG_member").count();
-    assert!((4_900..5_100).contains(&members), "{members}");
+    assert!(members > 1_000, "{members}");
 }
 
 /// LLVM refuses a column past 16 bits, so a location or a block further along

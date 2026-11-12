@@ -4,7 +4,7 @@ use std::borrow::Cow;
 
 use model::constant::Value;
 use model::mir::Class;
-use model::mir::Conversion;
+use model::mir::cast_conversion;
 use model::semantic_types::Type;
 
 use crate::operations;
@@ -39,22 +39,13 @@ pub fn convert(from: &Type, to: &Type, value: &Value) -> Value {
         Value::Bytes(_) => unreachable!("check converts no string"),
     };
     let ((from_class, from_bits), (to_class, to_bits)) = (number(from), number(to));
-    let conversion = match (from, to) {
-        (Type::Integer(_), Type::Integer(to)) if to.bits < from_bits => Conversion::Truncate,
-        (Type::Integer(from), Type::Integer(_)) if from.signed => Conversion::SignExtend,
-        (Type::Integer(_) | Type::Bool, Type::Integer(_)) => Conversion::ZeroExtend,
-        (Type::Integer(from), Type::Float(_)) if from.signed => Conversion::SignedToFloat,
-        (Type::Integer(_), Type::Float(_)) => Conversion::UnsignedToFloat,
-        (Type::Float(_), Type::Integer(to)) if to.signed => {
-            Conversion::FloatToSigned { bits: to.bits }
-        }
-        (Type::Float(_), Type::Integer(to)) => Conversion::FloatToUnsigned { bits: to.bits },
-        (Type::Float(_), Type::Float(_)) if to_bits > from_bits => Conversion::FloatWiden,
-        (Type::Float(_), Type::Float(_)) => Conversion::FloatNarrow,
-        _ => unreachable!("check converts no {from:?} value to {to:?}"),
-    };
     let converted = operations::convert(
-        conversion, from_class, from_bits, to_class, to_bits, &register,
+        cast_conversion(from, to),
+        from_class,
+        from_bits,
+        to_class,
+        to_bits,
+        &register,
     );
     match to {
         Type::Float(_) => {

@@ -35,9 +35,9 @@ use llvm::link::TOOLCHAIN_FOLDER;
 use model::constant::Value;
 use model::mir::BinaryOperation;
 use model::mir::Class;
-use model::mir::Conversion;
 use model::mir::IntegerOp;
 use model::mir::binary_operation;
+use model::mir::cast_conversion;
 use model::operators::BinaryOp;
 use model::operators::UnaryOp;
 use model::semantic_types::Float;
@@ -529,48 +529,30 @@ fn write_conversions(
         writeln!(calls, "  call void @{function}()").unwrap();
         let from_llvm = llvm_type(from);
         for to in &types {
-            // The conversion lowering makes (`lower`'s `lower_convert`).
-            let cast = |conversion| conversion_instruction(conversion).to_string();
             let instruction = match (from, to) {
                 _ if from == to => continue,
                 (_, Type::Bool) | (Type::Bool, Type::Float(_)) => continue,
-                (&Type::Float(float), Type::Integer(to)) => {
-                    let conversion = if to.signed {
-                        Conversion::FloatToSigned { bits: to.bits }
-                    } else {
-                        Conversion::FloatToUnsigned { bits: to.bits }
-                    };
-                    let class = Class::float(float);
-                    let (intrinsic, _) = saturating_conversion(conversion, class);
+                (&Type::Float(float), &Type::Integer(integer)) => {
+                    let conversion = cast_conversion(from, to);
+                    let (intrinsic, _) = saturating_conversion(conversion, Class::float(float));
                     if declared.insert(intrinsic.clone()) {
                         writeln!(
                             declarations,
                             "declare i{} @{intrinsic}({from_llvm})",
-                            to.bits
+                            integer.bits
                         )
                         .unwrap();
                     }
                     format!("saturate {intrinsic}")
                 }
-                (Type::Float(Float::F32), Type::Float(_)) => cast(Conversion::FloatWiden),
-                (Type::Float(_), Type::Float(_)) => cast(Conversion::FloatNarrow),
-                (Type::Integer(from), Type::Float(_)) if from.signed => {
-                    cast(Conversion::SignedToFloat)
-                }
-                (Type::Integer(_), Type::Float(_)) => cast(Conversion::UnsignedToFloat),
-                (Type::Integer(from), Type::Integer(to)) if from.bits > to.bits => {
-                    cast(Conversion::Truncate)
-                }
-                // Of one width (a `bool` is 1 bit): the same bits, no instruction.
-                (Type::Integer(from), Type::Integer(to)) if from.bits == to.bits => {
-                    "same".to_string()
-                }
+                // Of one width (a `bool` is 1 bit): LLVM needs no instruction.
+                (
+                    Type::Integer(Integer { bits: from, .. }),
+                    Type::Integer(Integer { bits: to, .. }),
+                ) if from == to => "same".to_string(),
                 (Type::Bool, Type::Integer(Integer { bits: 1, .. })) => "same".to_string(),
-                (Type::Integer(from), Type::Integer(_)) if from.signed => {
-                    cast(Conversion::SignExtend)
-                }
-                (Type::Integer(_) | Type::Bool, Type::Integer(_)) => cast(Conversion::ZeroExtend),
-                _ => unreachable!("check converts numbers and `bool`s only"),
+                // The conversion lowering makes.
+                _ => conversion_instruction(cast_conversion(from, to)).to_string(),
             };
             for _ in 0..3 {
                 let value = match from {
