@@ -13,7 +13,6 @@ use model::mir::IntegerOp;
 use model::mir::Operand;
 use model::mir::Place;
 use model::mir::SLICE_WORDS;
-use model::mir::Slot;
 use model::mir::Step;
 use model::mir::Terminator;
 use model::operators::BinaryOp;
@@ -308,40 +307,22 @@ impl Lowering<'_> {
         size: u64,
         span: Span,
     ) {
-        let index = self.counter_slot(span);
-        let (test, body, done) = (
-            self.new_block(span),
-            self.new_block(span),
-            self.new_block(span),
-        );
-        self.finish(Terminator::Jump(test));
-        self.block = test;
-        let at = self.load(self.usize, Place::whole(index), span);
-        let more = self.compare(Comparison::UnsignedLess, self.usize, at, count, span);
-        self.finish(Terminator::Branch {
-            condition: more,
-            span,
-            then: body,
-            otherwise: done,
+        self.for_each_index(count, span, |lowering, at| {
+            let kind = InstructionKind::Copy {
+                to: to.clone().then(Step::Index {
+                    index: at,
+                    size,
+                    count: Some(room),
+                }),
+                from: from.clone().then(Step::Index {
+                    index: at,
+                    size,
+                    count: None,
+                }),
+                size,
+            };
+            lowering.emit(kind, span);
         });
-        self.block = body;
-        let kind = InstructionKind::Copy {
-            to: to.then(Step::Index {
-                index: at,
-                size,
-                count: Some(room),
-            }),
-            from: from.then(Step::Index {
-                index: at,
-                size,
-                count: None,
-            }),
-            size,
-        };
-        self.emit(kind, span);
-        self.step_counter(index, at, span);
-        self.finish(Terminator::Jump(test));
-        self.block = done;
     }
 
     /// Writes `count` values of the range whose walk is `walk`, of the type
@@ -367,12 +348,31 @@ impl Lowering<'_> {
         let RangeWalk { start, delta, .. } = walk;
         let value = self.register_slot(class, span);
         self.store(class, Place::whole(value), start, span);
-        let index = self.counter_slot(span);
-        let (test, body, done) = (
-            self.new_block(span),
-            self.new_block(span),
-            self.new_block(span),
-        );
+        self.for_each_index(count, span, |lowering, at| {
+            let current = lowering.load(class, Place::whole(value), span);
+            let element = to.clone().then(Step::Index {
+                index: at,
+                size,
+                count: Some(room),
+            });
+            lowering.store(class, element, current, span);
+            let next = lowering.arithmetic(IntegerOp::Add, integer, current, delta, span);
+            lowering.store(class, Place::whole(value), next, span);
+        });
+    }
+
+    /// A loop running `body` with each `usize` index from 0 up to `count`,
+    /// kept in a hidden slot in scope until the statement ends.
+    fn for_each_index(
+        &mut self,
+        count: Operand,
+        span: Span,
+        body: impl FnOnce(&mut Self, Operand),
+    ) {
+        let index = self.register_slot(self.usize, span);
+        let zero = Operand::integer(self.usize, 0);
+        self.store(self.usize, Place::whole(index), zero, span);
+        let [test, body_block, done] = [(); 3].map(|()| self.new_block(span));
         self.finish(Terminator::Jump(test));
         self.block = test;
         let at = self.load(self.usize, Place::whole(index), span);
@@ -380,42 +380,16 @@ impl Lowering<'_> {
         self.finish(Terminator::Branch {
             condition: more,
             span,
-            then: body,
+            then: body_block,
             otherwise: done,
         });
-        self.block = body;
-        let current = self.load(class, Place::whole(value), span);
-        self.store(
-            class,
-            to.then(Step::Index {
-                index: at,
-                size,
-                count: Some(room),
-            }),
-            current,
-            span,
-        );
-        let next = self.arithmetic(IntegerOp::Add, integer, current, delta, span);
-        self.store(class, Place::whole(value), next, span);
-        self.step_counter(index, at, span);
-        self.finish(Terminator::Jump(test));
-        self.block = done;
-    }
-
-    /// A hidden `usize` slot counting from 0, in scope until the statement
-    /// ends.
-    fn counter_slot(&mut self, span: Span) -> Id<Slot> {
-        let slot = self.register_slot(self.usize, span);
-        let zero = Operand::integer(self.usize, 0);
-        self.store(self.usize, Place::whole(slot), zero, span);
-        slot
-    }
-
-    /// Stores `at` plus one into the counter `slot`.
-    fn step_counter(&mut self, slot: Id<Slot>, at: Operand, span: Span) {
+        self.block = body_block;
+        body(self, at);
         let one = Operand::integer(self.usize, 1);
         let next = self.integer(IntegerOp::Add, self.usize, at, one, span);
-        self.store(self.usize, Place::whole(slot), next, span);
+        self.store(self.usize, Place::whole(index), next, span);
+        self.finish(Terminator::Jump(test));
+        self.block = done;
     }
 
     /// A range value written as `start..end:step`, at `place`: its walk's
