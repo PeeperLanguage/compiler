@@ -854,3 +854,26 @@
   `run_function` took `arguments` and `parameters` as two lists in step;
   now one list of `(&Value, ConstantShape)` (Fuad: "do A"; RULES.md 5.1,
   one record per thing).
+- Numbers decided (2026-11-13, Fuad: "add number view and floats to the
+  design page"): docs/feature-front.md 5.1 makes integers and floats one
+  core concept behind one `number()` view; open question 4 now asks only
+  about views and elements. A `number` bound programs can write waits for
+  `<T>` generics. Page only, no code.
+- Operations decided (2026-11-13, Fuad: "features implement the operation
+  logic and add to that list; core ... shows unsupported error"; folding
+  "b"): docs/feature-front.md 5.3. The core keeps each type's list of
+  operations and implements none; a feature registers operations on its
+  own types; a missing one is the shared "operator `+` cannot be applied"
+  error. `rawptr + n` is the raw pointer feature's (question 3 closed).
+  No separate folder: constant operations fold by running their MIR in
+  `eval`; measured before `check::fold` goes (gate 4). Page only.
+- Questions 1 and 2 decided (2026-11-13, Fuad: "go with B and crates"):
+  docs/feature-front.md sections 7, 9 and 12. The core is generic over one
+  `Language`, the features listed by `features!` in a top crate; one crate
+  per feature. Page only.
+- Questions 4 and 5 decided (2026-11-13, Fuad: "yes to views and
+  elements, 1% is fine"): docs/feature-front.md 5.1, 10 and 12. Only
+  question 6 (the feature list) is open. Page only.
+- Question 6 decided (2026-11-13, Fuad: "keep the 22 features"):
+  docs/feature-front.md 6 and 12. Every open question of the page is
+  answered; step 18b can start. Page only.
