@@ -344,3 +344,16 @@
   without the write the next pass keeps the last pass's slice live and
   `values[0] = ..` is refused); the loan check skipping the place fails
   the fixtures. `check mixed` 1,174-1,180 M (was 1,178). check.sh ok.
+- Untangle fix 4, fourth part: one rule and one reader for constants.
+  Every producer already kept the bits above a constant's class zero
+  (`bigint`'s results clear them; each `Operand::integer` caller passes a
+  value that fits), but the readers each guessed: the interpreter masked
+  to the class, LLVM's division check masked, the dump and LLVM joined
+  the two words by hand. The rule is now written on `Operand::Constant`
+  and asserted in `Operand::integer`; `mir::constant_value` joins the
+  words for the dump, `constant_text`, `divides_by_other_than_minus_one`
+  and the interpreter (no mask). Low-word reads (`bits[0]`) of classes up
+  to 64 bits stay: the rule makes them exact. Mutation: `constant_value`
+  dropping the high word fails the browser run fixtures. check.sh ok.
+  Uncommitted together with the third part; that part is saved as
+  `target/step12-probes/untangle/call-result*.patch` to commit alone.

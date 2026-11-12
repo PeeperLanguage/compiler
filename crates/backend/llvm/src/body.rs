@@ -35,6 +35,7 @@ use model::mir::Signature;
 use model::mir::Slot;
 use model::mir::Step;
 use model::mir::Terminator;
+use model::mir::constant_value;
 use runtime_abi::abi::PANIC_EXIT_CODE;
 use runtime_abi::abi::STDERR;
 use runtime_abi::messages::panic_text;
@@ -308,11 +309,7 @@ pub fn signed_division(
 /// too, and the pointer 0 as `null`.
 pub fn constant_text(class: Class, bits: [u64; 2]) -> impl Display {
     fmt::from_fn(move |out| match class {
-        Class::I128 => write!(
-            out,
-            "{}",
-            (u128::from(bits[1]) << 64 | u128::from(bits[0])) as i128
-        ),
+        Class::I128 => write!(out, "{}", constant_value(bits) as i128),
         Class::I8 | Class::I16 | Class::I32 | Class::I64 => {
             let unused = 64 - class.bits();
             write!(out, "{}", ((bits[0] << unused) as i64) >> unused)
@@ -898,7 +895,7 @@ impl Writer<'_, '_, '_> {
             return false;
         };
         let all = u128::MAX >> (128 - class.bits());
-        (u128::from(bits[1]) << 64 | u128::from(bits[0])) & all != all
+        constant_value(bits) != all
     }
 
     /// Writes the call, as `name`, of `callee` in Peeper's convention, or

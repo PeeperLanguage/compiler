@@ -407,8 +407,9 @@ pub struct Instruction {
 pub enum Operand {
     /// What an instruction gives.
     Value(Id<Instruction>),
-    /// `bits` read as the class: an integer's low bits, a float's bits. A
-    /// wide integer's constant is read-only data, loaded (`Global`).
+    /// `bits` read as the class: an integer's low bits, a float's bits,
+    /// the low word first (`constant_value`); every bit above the class is
+    /// zero. A wide integer's constant is read-only data, loaded (`Global`).
     Constant { class: Class, bits: [u64; 2] },
     /// The function's written parameter at this index, as passed in.
     Parameter(u32),
@@ -420,15 +421,22 @@ impl Operand {
     /// The integer `value` as a constant of `class`, which is not `Wide`:
     /// lowering keeps a wide constant as read-only data.
     pub fn integer(class: Class, value: u64) -> Operand {
-        assert!(
-            !matches!(class, Class::Wide(_)),
-            "a wide constant is read-only data"
-        );
+        let fits = match class {
+            Class::Wide(_) => unreachable!("a wide constant is read-only data"),
+            Class::Pointer => value == 0, // only `null` is known while compiling
+            class => class.bits() >= 64 || value >> class.bits() == 0,
+        };
+        assert!(fits, "a constant of {class} has no bit above it set");
         Operand::Constant {
             class,
             bits: [value, 0],
         }
     }
+}
+
+/// The value of a constant's `bits` (`Operand::Constant`).
+pub fn constant_value(bits: [u64; 2]) -> u128 {
+    u128::from(bits[1]) << 64 | u128::from(bits[0])
 }
 
 /// Memory: where it starts, then the steps from there.
@@ -1232,13 +1240,7 @@ impl Printer<'_> {
             Operand::Constant { class, bits } => match class {
                 Class::F32 => _ = write!(self.out, "{}", f32::from_bits(bits[0] as u32)),
                 Class::F64 => _ = write!(self.out, "{}", f64::from_bits(bits[0])),
-                Class::I128 if bits[1] != 0 => {
-                    _ = write!(
-                        self.out,
-                        "{:#x}",
-                        u128::from(bits[1]) << 64 | u128::from(bits[0])
-                    );
-                }
+                Class::I128 if bits[1] != 0 => _ = write!(self.out, "{:#x}", constant_value(bits)),
                 _ => _ = write!(self.out, "{}", bits[0]),
             },
             Operand::Parameter(index) => _ = write!(self.out, "arg{index}"),

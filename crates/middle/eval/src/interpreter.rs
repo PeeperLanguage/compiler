@@ -37,6 +37,7 @@ use model::mir::Place;
 use model::mir::Signature;
 use model::mir::Slot;
 use model::mir::Terminator;
+use model::mir::constant_value;
 use model::semantic_types::Float;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
@@ -607,11 +608,7 @@ impl<'b, 'f> Interpreter<'b, 'f> {
     fn operand(&self, operand: Operand) -> u128 {
         match operand {
             Operand::Value(id) => self.registers[self.first_value + id.index()],
-            // Cut to the class, as a constant's bits above it may be set.
-            Operand::Constant { class, bits } => {
-                let bits = u128::from(bits[0]) | u128::from(bits[1]) << 64;
-                bits & instructions::mask(self.class_bits(class))
-            }
+            Operand::Constant { bits, .. } => constant_value(bits),
             Operand::Parameter(index) => {
                 // After the address of a result kept in memory (`Root::Result`).
                 let hidden = self.frame().body.signature.hidden_parameters() as usize;
