@@ -543,3 +543,31 @@
   basic type per slice type, as the language `usize` is named `u64` in
   debug info (asked). No MIR or LLVM dump changed. `check mixed`
   1,172-1,175 M (was 1,176-1,179 M). 247 lines in, 345 out.
+- Untangle fix 10, the LLVM writer's own copies (patch fix10 under
+  target/step12-probes/untangle):
+  - a `FallOff` reached in a function with a result wrote `unreachable`;
+    it cannot happen (the missing-return check gives the function an
+    error, and `build_function` gives a function with an error no MIR),
+    so it is `unreachable!`.
+  - `Module::declare_function` notes a Peeper-convention `declare` and
+    gives the global name; it replaces `declaration` and the four
+    `declare(..declaration..)` + `global` copies (`add_table`,
+    `write_call`'s identical function and runtime arms,
+    `write_runtime_call`).
+  - `folded` gives `None` for a step that moves nowhere, so
+    `write_operand` and `write_place` no longer each test `Offset(0)`;
+    `Writer::root` names a place's root for both.
+  - `global` and `comma_separated` move from body.rs to text.rs (used
+    by lib.rs and debug_info.rs too); `slot_name`'s doc, which sat on
+    `jump_targets`, is back on `slot_name`.
+  The `.ll` of every x_test project, host and i686, is byte-identical
+  to the last commit's (260 non-empty dumps). Mutations (an offset of 0
+  kept, `%result` renamed, the declare under the wrong symbol, the
+  comma written without its space) each fail tests. check.sh ok. No
+  hot path changed, so no measurement.
+  Not done, asked: two `#[extern("abs")]` functions with different C
+  types (`i32`, `i64`) both compile, and the second call is written
+  against the first `declare i32 @"abs"(i32)`, unreported
+  (probe untangle/declare-clash); and the seven `pub` items in
+  `llvm::body` (and `pub mod body`) exist only for eval's
+  llvm_parity test.

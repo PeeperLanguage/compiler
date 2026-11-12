@@ -17,7 +17,7 @@ use rustc_hash::FxHashMap;
 use source::SourceFile;
 
 use crate::Module;
-use crate::body::comma_separated;
+use crate::text::comma_separated;
 use crate::text::quoted;
 
 /// The module's debug info: numbered metadata nodes.

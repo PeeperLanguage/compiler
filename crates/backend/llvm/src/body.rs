@@ -47,6 +47,8 @@ use source::Span;
 use crate::Module;
 use crate::debug_info::DebugLocation;
 use crate::debug_info::debug_position;
+use crate::text::comma_separated;
+use crate::text::global;
 use crate::text::quoted;
 
 /// The intrinsic that copies bytes from one place to another.
@@ -152,6 +154,18 @@ impl Module<'_> {
         self.written.functions.insert(symbol.clone());
     }
 
+    /// Notes the `declare` of `symbol`, a function taking and giving values
+    /// as `signature` says, in Peeper's convention, and gives its LLVM name.
+    fn declare_function(&mut self, symbol: &str, signature: &Signature) -> String {
+        let callee = global(symbol);
+        self.declare(symbol, || {
+            let (result, parameters) = peeper_types(signature);
+            let parameters = comma_separated(parameters.iter());
+            format!("declare {result} {callee}({parameters})\n\n")
+        });
+        callee
+    }
+
     /// The global holding the table of functions `entries`, written once
     /// per module, with a `declare` of each.
     fn add_table(
@@ -161,10 +175,9 @@ impl Module<'_> {
     ) -> String {
         let mut constant = format!("[{} x ptr] [", entries.len());
         for (index, (copy, signature)) in entries.iter().enumerate() {
-            let symbol = &symbols[copy];
-            self.declare(symbol, || declaration(symbol, signature));
+            let callee = self.declare_function(&symbols[copy], signature);
             let separator = if index > 0 { ", " } else { "" };
-            _ = write!(constant, "{separator}ptr {}", global(symbol));
+            _ = write!(constant, "{separator}ptr {callee}");
         }
         constant.push(']');
         let count = self.written.tables.len();
@@ -335,32 +348,6 @@ fn widened(bits: u32) -> u64 {
     sign | 0x7FF << 52 | u64::from(bits & 0x7F_FFFF) << 29
 }
 
-/// `symbol` as an LLVM global name.
-pub(crate) fn global(symbol: &str) -> String {
-    format!("@{}", quoted(symbol.as_bytes()))
-}
-
-/// `items` with a comma between each two, written where it is printed.
-pub(crate) fn comma_separated<T: Display>(items: impl Iterator<Item = T> + Clone) -> impl Display {
-    fmt::from_fn(move |out| {
-        for (index, item) in items.clone().enumerate() {
-            if index > 0 {
-                out.write_str(", ")?;
-            }
-            item.fmt(out)?;
-        }
-        Ok(())
-    })
-}
-
-/// The `declare` of `symbol`, a function taking and giving values as
-/// `signature` says, in Peeper's convention.
-fn declaration(symbol: &str, signature: &Signature) -> String {
-    let (result, parameters) = peeper_types(signature);
-    let parameters = comma_separated(parameters.iter());
-    format!("declare {result} {}({parameters})\n\n", global(symbol))
-}
-
 /// The LLVM types a function of `signature` gives and takes, in Peeper's
 /// convention: a value in memory by its address, a result in memory where
 /// a hidden first parameter points.
@@ -495,16 +482,9 @@ impl Writer<'_, '_, '_> {
         match operand {
             Operand::Value(id) => match &self.body.instructions[id].kind {
                 InstructionKind::Address { place, .. } | InstructionKind::Borrow { place, .. }
-                    if place
-                        .steps
-                        .iter()
-                        .all(|&step| folded(step) == Step::Offset(0)) =>
+                    if place.steps.iter().all(|&step| folded(step).is_none()) =>
                 {
-                    match place.root {
-                        Root::Slot(slot) => out.write_str(&slot_name(self.body, slot)),
-                        Root::At(at) => self.write_operand(out, at),
-                        Root::Result => out.write_str("%result"),
-                    }
+                    self.root(place.root).fmt(out)
                 }
                 _ => write!(out, "%i{}", id.index()),
             },
@@ -512,6 +492,15 @@ impl Writer<'_, '_, '_> {
             Operand::Parameter(index) => write!(out, "%a{index}"),
             Operand::Global(index) => out.write_str(&self.globals[index as usize]),
         }
+    }
+
+    /// The address `root` names.
+    fn root(&self, root: Root) -> impl Display {
+        fmt::from_fn(move |out| match root {
+            Root::Slot(slot) => out.write_str(&slot_name(self.body, slot)),
+            Root::At(at) => self.write_operand(out, at),
+            Root::Result => out.write_str("%result"),
+        })
     }
 
     /// The LLVM type of `operand`'s register.
@@ -561,17 +550,11 @@ impl Writer<'_, '_, '_> {
         name: &str,
         location: &DebugLocation,
     ) -> String {
-        let mut at = match place.root {
-            Root::Slot(slot) => slot_name(self.body, slot),
-            Root::At(operand) => self.operand(operand).to_string(),
-            Root::Result => "%result".to_string(),
-        };
+        let mut at = self.root(place.root).to_string();
         // Offsets in a row, with constant indexes, add up to one.
         let mut steps: Vec<Step> = Vec::with_capacity(place.steps.len());
-        for &step in &place.steps {
-            let step = folded(step);
+        for step in place.steps.iter().filter_map(|&step| folded(step)) {
             match (step, steps.last_mut()) {
-                (Step::Offset(0), _) => {}
                 (Step::Offset(bytes), Some(Step::Offset(sum))) => *sum += bytes,
                 _ => steps.push(step),
             }
@@ -648,11 +631,10 @@ impl Writer<'_, '_, '_> {
                 self.write_panic(out, message, *span, data.debug_scope);
                 None
             }
-            // Reachable with a result only in a function with an error,
-            // which is not lowered.
+            // The missing-return check gives such a function an error, and
+            // a function with an error is not written.
             &Terminator::FallOff(_) if body.signature.result.is_some() => {
-                out.push_str("  unreachable");
-                None
+                unreachable!("a function with a result falls off its end")
             }
             &Terminator::Return { value: None, span } | &Terminator::FallOff(span) => {
                 out.push_str("  ret void");
@@ -909,18 +891,12 @@ impl Writer<'_, '_, '_> {
         location: &DebugLocation,
     ) {
         let callee = match callee {
-            Callee::Function(function) => {
-                let symbol = &self.symbols[&function];
-                self.module
-                    .declare(symbol, || declaration(symbol, signature));
-                global(symbol)
-            }
-            Callee::Runtime(runtime) => {
-                let symbol = runtime.signature().symbol;
-                self.module
-                    .declare(symbol, || declaration(symbol, signature));
-                global(symbol)
-            }
+            Callee::Function(function) => self
+                .module
+                .declare_function(&self.symbols[&function], signature),
+            Callee::Runtime(runtime) => self
+                .module
+                .declare_function(runtime.signature().symbol, signature),
             Callee::Pointer(address) => self.operand(address).to_string(),
         };
         let (result, _) = peeper_types(signature);
@@ -1130,10 +1106,9 @@ impl Writer<'_, '_, '_> {
         let usize = Class::integer(self.module.target.pointer_bits);
         let signature = Signature::of_runtime(runtime, usize);
         assert_eq!(arguments.len(), signature.parameters.len(), "{runtime:?}");
-        let symbol = runtime.signature().symbol;
-        let callee = global(symbol);
-        self.module
-            .declare(symbol, || declaration(symbol, &signature));
+        let callee = self
+            .module
+            .declare_function(runtime.signature().symbol, &signature);
         let (result, parameters) = peeper_types(&signature);
         let arguments = (parameters.iter().zip(arguments))
             .map(|(ty, value)| fmt::from_fn(move |out| write!(out, "{ty} {value}")));
@@ -1145,8 +1120,6 @@ impl Writer<'_, '_, '_> {
     }
 }
 
-/// The LLVM name of the address of `slot` of `body`: its `alloca`, or the
-/// parameter it is when passed in memory (`Body::parameter_in_memory`).
 /// Where a jump to each block goes: past each block that writes nothing
 /// and only jumps on, such as an `if`'s join that ends a loop pass, or a
 /// branch holding only `break`. The path checks keep these blocks in the
@@ -1221,6 +1194,8 @@ fn values_read(body: &Body) -> Vec<bool> {
     read
 }
 
+/// The LLVM name of the address of `slot` of `body`: its `alloca`, or the
+/// parameter it is when passed in memory (`Body::parameter_in_memory`).
 fn slot_name(body: &Body, slot: Id<Slot>) -> String {
     match body.parameter_in_memory(slot) {
         Some(parameter) => format!("%a{parameter}"),
@@ -1229,16 +1204,17 @@ fn slot_name(body: &Body, slot: Id<Slot>) -> String {
 }
 
 /// `step` with a constant index as the offset it is, as `write_place`
-/// writes it.
-fn folded(step: Step) -> Step {
-    match step {
+/// writes it; `None` when it moves nowhere.
+fn folded(step: Step) -> Option<Step> {
+    let step = match step {
         Step::Index {
             index: Operand::Constant { bits, .. },
             size,
             ..
         } => Step::Offset(bits[0] * size),
         step => step,
-    }
+    };
+    (step != Step::Offset(0)).then_some(step)
 }
 
 /// Writes `value`, an integer of `from` bits, as one of `to` bits named

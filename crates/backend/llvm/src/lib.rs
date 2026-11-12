@@ -20,8 +20,8 @@ use model::machine::Machine;
 use rustc_hash::FxHashMap;
 use source::SourceFile;
 
-use crate::body::global;
 use crate::debug_info::Metadata;
+use crate::text::global;
 use crate::text::quoted;
 use crate::text::symbol;
 
