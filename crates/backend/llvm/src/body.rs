@@ -103,7 +103,6 @@ impl Module<'_> {
             memory: String::new(),
             block: 0,
             checked: 0,
-            reached: reached_blocks(body, &targets),
             targets,
             read: values_read(body),
         };
@@ -133,8 +132,11 @@ impl Module<'_> {
         writer.write_slots(&mut out, debug_types);
         let entry_end = out.len();
         _ = writeln!(out, "  br label %bb{}", writer.targets[0].index());
+        // Not written: code after a `return` or a `break`, kept in the MIR for
+        // the unreachable code warning, and blocks jumped past (`jump_targets`).
+        let reached = body.reachable();
         for block in body.blocks.ids() {
-            if writer.reached[block.index()] {
+            if reached[block.index()] && writer.targets[block.index()] == block {
                 writer.write_block(&mut out, block);
             }
         }
@@ -412,7 +414,6 @@ struct Writer<'m, 'p, 'b> {
     block: usize,            // the MIR block being written
     checked: usize,          // its checks so far, each of which starts a block
     targets: Vec<Id<Block>>, // where a jump to each block goes (`jump_targets`)
-    reached: Vec<bool>,      // by block, whether a written jump reaches it
     /// By instruction, whether its value is read as a byte, not only as a
     /// truth; a comparison is widened to a byte only then.
     read: Vec<bool>,
@@ -1189,27 +1190,6 @@ fn jump_targets(body: &Body) -> Vec<Id<Block>> {
     (targets.into_iter())
         .map(|target| target.expect("each block was followed"))
         .collect()
-}
-
-/// By block, whether the entry reaches it through the jumps as written
-/// (`targets`). Code after a `return` or a `break` has a block in the MIR,
-/// for the unreachable code warning, and none in LLVM.
-fn reached_blocks(body: &Body, targets: &[Id<Block>]) -> Vec<bool> {
-    let mut reached = vec![false; body.blocks.len()];
-    let mut pending = vec![targets[0]];
-    while let Some(block) = pending.pop() {
-        if std::mem::replace(&mut reached[block.index()], true) {
-            continue;
-        }
-        match body.blocks[block].terminator {
-            Terminator::Jump(next) => pending.push(targets[next.index()]),
-            Terminator::Branch {
-                then, otherwise, ..
-            } => pending.extend([targets[then.index()], targets[otherwise.index()]]),
-            Terminator::Return { .. } | Terminator::Panic { .. } | Terminator::FallOff(_) => {}
-        }
-    }
-    reached
 }
 
 /// By instruction, whether its value is read as a byte: by anything but a

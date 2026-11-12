@@ -421,3 +421,13 @@
   `type Nothing = void;` is refused, T0002), so no alias of it exists.
   No message changes. Mutation: a fixed label fails
   `negative_missing_return_causes`. check.sh ok.
+- Untangle, reachability on `mir::Body`: `Body::reachable` and
+  `Body::mark_reachable` (moved from `flow`, unchanged) are the one walk
+  of which blocks the entry reaches. LLVM's `reached_blocks` (deleted, a
+  second walk over jumps already sent past empty blocks) is now
+  `reachable[b] && targets[b] == b`: the same set, since `jump_targets`
+  is stable (a target targets itself, and an endless chain of empty
+  blocks stops on one that does). A probe of two endless `for {}` loops
+  writes the same `.ll` before and after. Mutation: dropping either half
+  of the filter fails `jumps_skip_empty_blocks_and_unreached_ones_are_left_out`.
+  check.sh ok.

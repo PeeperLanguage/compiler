@@ -960,6 +960,24 @@ impl Terminator {
 }
 
 impl Body {
+    /// Which blocks control can reach from the entry, by index.
+    pub fn reachable(&self) -> Vec<bool> {
+        let mut reachable = vec![false; self.blocks.len()];
+        self.mark_reachable(Id::from_index(0), &mut reachable);
+        reachable
+    }
+
+    /// Marks in `marked` `from` and every block control can reach from it,
+    /// stopping at blocks already marked.
+    pub fn mark_reachable(&self, from: Id<Block>, marked: &mut [bool]) {
+        let mut pending = vec![from];
+        while let Some(block) = pending.pop() {
+            if !std::mem::replace(&mut marked[block.index()], true) {
+                pending.extend(self.blocks[block].terminator.targets());
+            }
+        }
+    }
+
     /// Each function the body may run: those it calls, and those in its
     /// tables, which a method call reaches through an interface value.
     pub fn named_functions(&self) -> impl Iterator<Item = FunctionCopy> {

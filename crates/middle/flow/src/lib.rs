@@ -88,7 +88,7 @@ pub fn report_missing_return(
     let Some((end, end_span)) = end else {
         return;
     };
-    let reachable = reachable(body);
+    let reachable = body.reachable();
     if !reachable[end.index()] {
         return;
     }
@@ -320,7 +320,7 @@ pub fn warn_unreachable_code(
     file: &Arc<SourceFile>,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
-    let mut seen = reachable(body);
+    let mut seen = body.reachable();
     // (the first code written, its block) of each block not reached.
     let mut starts: Vec<(Span, Id<mir::Block>)> = body
         .blocks
@@ -361,24 +361,6 @@ pub fn warn_unreachable_code(
                 "this never runs",
             ),
         );
-        mark_reachable(body, block, &mut seen);
-    }
-}
-
-/// Which blocks control can reach from the entry, by index.
-fn reachable(body: &mir::Body) -> Vec<bool> {
-    let mut reachable = vec![false; body.blocks.len()];
-    mark_reachable(body, Id::from_index(0), &mut reachable);
-    reachable
-}
-
-/// Marks in `marked` `from` and every block control can reach from it,
-/// stopping at blocks already marked.
-fn mark_reachable(body: &mir::Body, from: Id<mir::Block>, marked: &mut [bool]) {
-    let mut pending = vec![from];
-    while let Some(block) = pending.pop() {
-        if !std::mem::replace(&mut marked[block.index()], true) {
-            pending.extend(body.blocks[block].terminator.targets());
-        }
+        body.mark_reachable(block, &mut seen);
     }
 }
