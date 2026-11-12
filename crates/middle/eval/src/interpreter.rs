@@ -502,7 +502,7 @@ impl<'b, 'f> Interpreter<'b, 'f> {
     ) -> Result<(), Failure> {
         let copy = match callee {
             Callee::Function(copy) => copy,
-            Callee::Runtime(symbol) => return self.call_runtime(symbol, arguments, id),
+            Callee::Runtime(runtime) => return self.call_runtime(runtime, arguments, id),
             Callee::Pointer(pointer) => self.function_at(pointer, signature, id)?,
         };
         let Some((body, layout)) = self.called(copy) else {

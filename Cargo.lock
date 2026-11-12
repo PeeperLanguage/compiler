@@ -510,6 +510,7 @@ dependencies = [
  "bigint",
  "diagnostics",
  "literal",
+ "runtime_abi",
  "rustc-hash",
  "source",
 ]

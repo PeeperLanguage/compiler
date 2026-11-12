@@ -9,7 +9,6 @@ use model::mir::Conversion;
 use model::mir::Global;
 use model::mir::InstructionKind;
 use model::mir::Operand;
-use model::mir::Passing;
 use model::mir::Place;
 use model::mir::Root;
 use model::mir::Signature;
@@ -18,13 +17,7 @@ use model::semantic_types::Float;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
 use model::thir;
-use runtime_abi::symbols::Carrier;
-use runtime_abi::symbols::FLUSH;
-use runtime_abi::symbols::PRINT_BYTES;
-use runtime_abi::symbols::PRINT_FLOAT;
-use runtime_abi::symbols::PRINT_INT;
-use runtime_abi::symbols::PRINT_POINTER;
-use runtime_abi::symbols::PRINT_TEXT;
+use runtime_abi::symbols::Runtime;
 use source::Span;
 
 use crate::Lowering;
@@ -67,7 +60,7 @@ impl Lowering<'_> {
             text.push(b'\n');
         }
         self.print_text(&mut text, span);
-        self.runtime_call(&FLUSH, &[], span);
+        self.runtime_call(Runtime::Flush, &[], span);
         Some(())
     }
 
@@ -107,7 +100,7 @@ impl Lowering<'_> {
                 self.print_text(text, span);
                 let signed = Operand::integer(Class::I32, u64::from(integer.signed));
                 let count = Operand::integer(Class::I32, u64::from(count));
-                self.runtime_call(&PRINT_INT, &[signed, count, address], span);
+                self.runtime_call(Runtime::PrintInt, &[signed, count, address], span);
             }
             Type::Float(float) => {
                 let value = value.register();
@@ -125,7 +118,7 @@ impl Lowering<'_> {
                 };
                 self.print_text(text, span);
                 let bits = Operand::integer(Class::I32, bits);
-                self.runtime_call(&PRINT_FLOAT, &[value, bits], span);
+                self.runtime_call(Runtime::PrintFloat, &[value, bits], span);
             }
             Type::Bool => {
                 self.print_text(text, span);
@@ -151,7 +144,7 @@ impl Lowering<'_> {
             }
             Type::CString => {
                 self.print_text(text, span);
-                self.runtime_call(&PRINT_TEXT, &[value.register()], span);
+                self.runtime_call(Runtime::PrintText, &[value.register()], span);
             }
             Type::Str => {
                 let place = value.memory();
@@ -159,11 +152,11 @@ impl Lowering<'_> {
                 let length = self.second_word(place);
                 let length = self.load(self.usize, length, span);
                 self.print_text(text, span);
-                self.runtime_call(&PRINT_BYTES, &[address, length], span);
+                self.runtime_call(Runtime::PrintBytes, &[address, length], span);
             }
             Type::RawPointer { .. } => {
                 self.print_text(text, span);
-                self.runtime_call(&PRINT_POINTER, &[value.register()], span);
+                self.runtime_call(Runtime::PrintPointer, &[value.register()], span);
             }
             // What a reference points at: its address is a value kept in
             // memory, or holds a register.
@@ -196,43 +189,16 @@ impl Lowering<'_> {
         }
         let length = Operand::integer(self.usize, text.len() as u64);
         let bytes = self.global(Global::Bytes(std::mem::take(text).into()));
-        self.runtime_call(&PRINT_BYTES, &[bytes, length], span);
+        self.runtime_call(Runtime::PrintBytes, &[bytes, length], span);
     }
 
-    /// A call of the runtime function `signature` with `arguments`, one
-    /// per parameter.
-    fn runtime_call(
-        &mut self,
-        signature: &runtime_abi::symbols::Signature,
-        arguments: &[Operand],
-        span: Span,
-    ) -> Operand {
-        let passing = |carrier: &Carrier| match carrier {
-            Carrier::I32 => Passing::Register {
-                class: Class::I32,
-                signed: true,
-            },
-            Carrier::Usize => Passing::Register {
-                class: self.usize,
-                signed: false,
-            },
-            Carrier::F64 => Passing::Register {
-                class: Class::F64,
-                signed: false,
-            },
-            Carrier::Pointer => Passing::Register {
-                class: Class::Pointer,
-                signed: false,
-            },
-        };
-        self.mir.signatures.push(Signature {
-            parameters: signature.parameters.iter().map(passing).collect(),
-            result: signature.result.as_ref().map(passing),
-            c: None,
-            origins: Box::default(), // the runtime returns no pointer
-        });
+    /// A call of the runtime function `runtime` with `arguments`, one per
+    /// parameter.
+    fn runtime_call(&mut self, runtime: Runtime, arguments: &[Operand], span: Span) -> Operand {
+        let signature = Signature::of_runtime(runtime, self.usize);
+        self.mir.signatures.push(signature);
         let kind = InstructionKind::Call {
-            callee: Callee::Runtime(signature.symbol),
+            callee: Callee::Runtime(runtime),
             signature: (self.mir.signatures.len() - 1) as u32,
             arguments: arguments.into(),
             result: None, // the runtime gives no result in memory

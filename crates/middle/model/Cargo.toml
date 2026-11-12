@@ -11,6 +11,7 @@ arena.workspace = true
 bigint.workspace = true
 diagnostics.workspace = true
 literal.workspace = true
+runtime_abi.workspace = true
 rustc-hash.workspace = true
 source.workspace = true
 

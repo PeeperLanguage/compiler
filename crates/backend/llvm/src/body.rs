@@ -39,9 +39,7 @@ use model::mir::constant_value;
 use runtime_abi::abi::PANIC_EXIT_CODE;
 use runtime_abi::abi::STDERR;
 use runtime_abi::messages::panic_text;
-use runtime_abi::symbols::Carrier;
-use runtime_abi::symbols::PANIC_EXIT;
-use runtime_abi::symbols::PANIC_WRITE;
+use runtime_abi::symbols::Runtime;
 use rustc_hash::FxHashMap;
 use source::SourceFile;
 use source::Span;
@@ -917,7 +915,8 @@ impl Writer<'_, '_, '_> {
                     .declare(symbol, || declaration(symbol, signature));
                 global(symbol)
             }
-            Callee::Runtime(symbol) => {
+            Callee::Runtime(runtime) => {
+                let symbol = runtime.signature().symbol;
                 self.module
                     .declare(symbol, || declaration(symbol, signature));
                 global(symbol)
@@ -1113,39 +1112,30 @@ impl Writer<'_, '_, '_> {
             text.len().to_string(),
             PANIC_EXIT_CODE.to_string(),
         );
-        self.write_runtime_call(out, &PANIC_WRITE, &[&stderr, &string, &length], &location);
-        self.write_runtime_call(out, &PANIC_EXIT, &[&code], &location);
+        let written: [&str; 3] = [&stderr, &string, &length];
+        self.write_runtime_call(out, Runtime::PanicWrite, &written, &location);
+        self.write_runtime_call(out, Runtime::PanicExit, &[&code], &location);
         out.push_str("  unreachable");
     }
 
-    /// Writes the call of the runtime function `signature` with
-    /// `arguments`, each already LLVM text, one per parameter, after noting
-    /// its declaration.
+    /// Writes the call of the runtime function `runtime` with `arguments`,
+    /// each already LLVM text, one per parameter, after noting its
+    /// declaration.
     fn write_runtime_call(
         &mut self,
         out: &mut String,
-        signature: &runtime_abi::symbols::Signature,
+        runtime: Runtime,
         arguments: &[&str],
         location: &DebugLocation,
     ) {
-        assert_eq!(arguments.len(), signature.parameters.len(), "{signature:?}");
-        let pointer_bits = self.module.target.pointer_bits;
-        let carrier_type = |carrier| match carrier {
-            Carrier::I32 => "i32".to_string(),
-            Carrier::Usize => format!("i{pointer_bits}"),
-            Carrier::F64 => "double".to_string(),
-            Carrier::Pointer => "ptr".to_string(),
-        };
-        let callee = global(signature.symbol);
-        let result = signature.result.map_or("void".to_string(), carrier_type);
-        let parameters: Vec<String> = signature
-            .parameters
-            .iter()
-            .map(|&carrier| carrier_type(carrier))
-            .collect();
-        self.module.declare(signature.symbol, || {
-            format!("declare {result} {callee}({})\n\n", parameters.join(", "))
-        });
+        let usize = Class::integer(self.module.target.pointer_bits);
+        let signature = Signature::of_runtime(runtime, usize);
+        assert_eq!(arguments.len(), signature.parameters.len(), "{runtime:?}");
+        let symbol = runtime.signature().symbol;
+        let callee = global(symbol);
+        self.module
+            .declare(symbol, || declaration(symbol, &signature));
+        let (result, parameters) = peeper_types(&signature);
         let arguments = (parameters.iter().zip(arguments))
             .map(|(ty, value)| fmt::from_fn(move |out| write!(out, "{ty} {value}")));
         _ = writeln!(

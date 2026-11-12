@@ -13,6 +13,8 @@ use arena::Arena;
 use arena::Id;
 use arena::List;
 use arena::Lists;
+use runtime_abi::symbols::Carrier;
+use runtime_abi::symbols::Runtime;
 use rustc_hash::FxHashMap;
 use source::SourceFile;
 use source::Span;
@@ -371,6 +373,36 @@ impl std::fmt::Display for CPassing {
 }
 
 impl Signature {
+    /// How the runtime function `runtime` takes and gives its values, on a
+    /// target whose `usize` is of the class `usize`.
+    pub fn of_runtime(runtime: Runtime, usize: Class) -> Signature {
+        let passing = |carrier: &Carrier| match carrier {
+            Carrier::I32 => Passing::Register {
+                class: Class::I32,
+                signed: true,
+            },
+            Carrier::Usize => Passing::Register {
+                class: usize,
+                signed: false,
+            },
+            Carrier::F64 => Passing::Register {
+                class: Class::F64,
+                signed: false,
+            },
+            Carrier::Pointer => Passing::Register {
+                class: Class::Pointer,
+                signed: false,
+            },
+        };
+        let signature = runtime.signature();
+        Signature {
+            parameters: signature.parameters.iter().map(passing).collect(),
+            result: signature.result.as_ref().map(passing),
+            c: None,
+            origins: Box::default(), // the runtime returns no pointer
+        }
+    }
+
     /// How many hidden arguments a call passes before the written ones:
     /// one, the address of a result kept in memory, which the called body
     /// names `Root::Result`.
@@ -698,9 +730,8 @@ pub enum Callee {
     /// A function of the program, or a copy of one; an `extern` function
     /// has no body.
     Function(FunctionCopy),
-    /// A function of the runtime library, by its symbol
-    /// (`runtime_abi::symbols`).
-    Runtime(&'static str),
+    /// A function of the runtime library.
+    Runtime(Runtime),
     /// The function whose address the operand gives.
     Pointer(Operand),
 }
@@ -1129,7 +1160,9 @@ impl Printer<'_> {
                     Callee::Function(function) => {
                         _ = write!(self.out, "call {}(", (self.name_of)(*function));
                     }
-                    Callee::Runtime(symbol) => _ = write!(self.out, "call {symbol}("),
+                    Callee::Runtime(runtime) => {
+                        _ = write!(self.out, "call {}(", runtime.signature().symbol);
+                    }
                     Callee::Pointer(pointer) => {
                         self.out.push_str("call through ");
                         self.write_operand(pointer);

@@ -8,7 +8,7 @@ use std::path::Path;
 
 use runtime_abi::symbols;
 use runtime_abi::symbols::Carrier;
-use runtime_abi::symbols::Signature;
+use runtime_abi::symbols::Runtime;
 
 /// A function's parameters and result, as C passes them.
 type Carriers = (Vec<Carrier>, Option<Carrier>);
@@ -107,17 +107,18 @@ fn the_runtime_core_and_the_backend_agree() {
             "`core` declares `{symbol}` as the runtime does not define it"
         );
     }
-    let called_by_backend: [&Signature; 8] = [
-        &symbols::PANIC_WRITE,
-        &symbols::PANIC_EXIT,
-        &symbols::PRINT_TEXT,
-        &symbols::PRINT_BYTES,
-        &symbols::PRINT_INT,
-        &symbols::PRINT_FLOAT,
-        &symbols::PRINT_POINTER,
-        &symbols::FLUSH,
+    let called_by_backend = [
+        Runtime::PanicWrite,
+        Runtime::PanicExit,
+        Runtime::PrintText,
+        Runtime::PrintBytes,
+        Runtime::PrintInt,
+        Runtime::PrintFloat,
+        Runtime::PrintPointer,
+        Runtime::Flush,
     ];
-    for signature in called_by_backend {
+    for function in called_by_backend {
+        let signature = function.signature();
         let carriers = (signature.parameters.to_vec(), signature.result);
         assert_eq!(
             runtime.get(signature.symbol),
@@ -143,7 +144,7 @@ fn the_runtime_core_and_the_backend_agree() {
     for symbol in runtime.keys() {
         let called = called_by_backend
             .iter()
-            .any(|signature| signature.symbol == symbol);
+            .any(|function| function.signature().symbol == symbol);
         assert!(
             called || core.contains_key(symbol),
             "nothing calls the runtime's `{symbol}`"

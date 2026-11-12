@@ -19,15 +19,10 @@ use runtime_abi::abi::STDOUT;
 use runtime_abi::number_text;
 use runtime_abi::symbols::ALLOC;
 use runtime_abi::symbols::EXIT;
-use runtime_abi::symbols::FLUSH;
 use runtime_abi::symbols::FREE;
-use runtime_abi::symbols::PRINT_BYTES;
-use runtime_abi::symbols::PRINT_FLOAT;
-use runtime_abi::symbols::PRINT_INT;
-use runtime_abi::symbols::PRINT_POINTER;
-use runtime_abi::symbols::PRINT_TEXT;
 use runtime_abi::symbols::READ;
 use runtime_abi::symbols::REALLOC;
+use runtime_abi::symbols::Runtime;
 use runtime_abi::symbols::WRITE;
 
 use super::Failure;
@@ -171,11 +166,11 @@ impl<'f> Interpreter<'_, 'f> {
         Ok(())
     }
 
-    /// Runs the runtime function `symbol`, which only `print` calls, with
+    /// Runs the runtime function `runtime`, which only `print` calls, with
     /// `arguments`, for the call `id`.
     pub(super) fn call_runtime(
         &mut self,
-        symbol: &str,
+        runtime: Runtime,
         arguments: &[Operand],
         id: Id<Instruction>,
     ) -> Result<(), Failure> {
@@ -188,37 +183,41 @@ impl<'f> Interpreter<'_, 'f> {
         let argument = |run: &Self, index: usize| run.operand(arguments[index]) as u64;
         let mut text = Vec::new();
         let mut push = |piece: &[u8]| text.extend_from_slice(piece);
-        if symbol == PRINT_BYTES.symbol {
-            let (address, length) = (argument(self, 0), argument(self, 1));
-            self.check_output(length, id)?;
-            push(self.read_bytes(address, length, id)?);
-        } else if symbol == PRINT_TEXT.symbol {
-            match argument(self, 0) {
+        match runtime {
+            Runtime::PrintBytes => {
+                let (address, length) = (argument(self, 0), argument(self, 1));
+                self.check_output(length, id)?;
+                push(self.read_bytes(address, length, id)?);
+            }
+            Runtime::PrintText => match argument(self, 0) {
                 0 => push(b"null"),
                 address => match self.memory.c_text(address) {
                     Some(bytes) => push(bytes),
                     None => return Err(self.fail(INVALID_ACCESS, self.span_of(id))),
                 },
+            },
+            Runtime::PrintInt => {
+                let (signed, count) = (argument(self, 0) != 0, argument(self, 1) as usize);
+                let bytes = self.read_bytes(argument(self, 2), count as u64 * 8, id)?;
+                let mut limbs: Vec<u64> = (bytes.chunks(8))
+                    .map(|limb| u64::from_le_bytes(limb.try_into().expect("eight bytes a limb")))
+                    .collect();
+                let mut chunks = vec![0; number_text::max_chunks(count)];
+                number_text::write_integer(signed, &mut limbs, &mut chunks, &mut push);
             }
-        } else if symbol == PRINT_INT.symbol {
-            let (signed, count) = (argument(self, 0) != 0, argument(self, 1) as usize);
-            let bytes = self.read_bytes(argument(self, 2), count as u64 * 8, id)?;
-            let mut limbs: Vec<u64> = (bytes.chunks(8))
-                .map(|limb| u64::from_le_bytes(limb.try_into().expect("eight bytes a limb")))
-                .collect();
-            let mut chunks = vec![0; number_text::max_chunks(count)];
-            number_text::write_integer(signed, &mut limbs, &mut chunks, &mut push);
-        } else if symbol == PRINT_FLOAT.symbol {
-            let (value, bits) = (argument(self, 0), argument(self, 1));
-            number_text::write_float(f64::from_bits(value), bits as i32, &mut push);
-        } else if symbol == PRINT_POINTER.symbol {
-            number_text::write_pointer(argument(self, 0), &mut push);
-        } else if symbol == FLUSH.symbol {
-            let kept = std::mem::take(&mut self.host().kept);
-            self.write_output(STDOUT, &kept, id)?;
-            return Ok(());
-        } else {
-            unreachable!("lowering calls only `print`'s runtime functions")
+            Runtime::PrintFloat => {
+                let (value, bits) = (argument(self, 0), argument(self, 1));
+                number_text::write_float(f64::from_bits(value), bits as i32, &mut push);
+            }
+            Runtime::PrintPointer => number_text::write_pointer(argument(self, 0), &mut push),
+            Runtime::Flush => {
+                let kept = std::mem::take(&mut self.host().kept);
+                self.write_output(STDOUT, &kept, id)?;
+                return Ok(());
+            }
+            Runtime::PanicWrite | Runtime::PanicExit => {
+                unreachable!("the LLVM writer writes a panic's calls; lowering makes none")
+            }
         }
         self.keep_output(&text, id)
     }

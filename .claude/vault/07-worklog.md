@@ -366,3 +366,17 @@
   two terminator matches now match on a reference. `mir_panic` dump:
   `panic "too big"`, no `global 0`. Mutation: the interpreter writing
   the message short fails the browser run tests. check.sh ok.
+- Untangle fix 4, sixth part (Fuad: "go with the enum"): a runtime call
+  names its function by `runtime_abi::symbols::Runtime` (PanicWrite,
+  PanicExit, PrintText, PrintBytes, PrintInt, PrintFloat, PrintPointer,
+  Flush; `Runtime::signature` holds the old eight constants' table), not
+  by its symbol string: `Callee::Runtime(Runtime)`. The interpreter
+  `match`es it (was six string compares and an `unreachable!` for any
+  other name; the two panic arms now say lowering makes none). How a
+  carrier is passed is decided once, `mir::Signature::of_runtime`, for
+  lowering and for LLVM's panic calls, which now declare through the same
+  `declaration`/`peeper_types` as every other call (was a second
+  `Carrier` map in `write_runtime_call`). `model` depends on
+  `runtime_abi`. No dump changes. Mutation: the interpreter printing a
+  pointer off by one fails the browser run tests; `of_runtime` giving
+  `usize` as `i32` fails the 64-bit LLVM dumps. check.sh ok.
