@@ -34,12 +34,31 @@ use crate::Value;
 use crate::expression::Length;
 use crate::slot_of;
 
-/// A range's walk: its five fields in the order of `range_fields`, each by
-/// its `range_field` index. Its values are `start`, then each `delta` more
-/// than the one before, wrapping, while `left`, how far its end is, lasts
-/// by `step`, the end counted when `inclusive`, an `I8`. Each is a
-/// constant when known while lowering, else a register.
-type RangeWalk = [Operand; 5];
+/// A range's walk: the five fields of a range value (`range_fields`). Its
+/// values are `start`, then each `delta` more than the one before,
+/// wrapping, while `left`, how far its end is, lasts by `step`, the end
+/// counted when `inclusive`, an `I8`. Each is a constant when known while
+/// lowering, else a register.
+struct RangeWalk {
+    start: Operand,
+    left: Operand,
+    step: Operand,
+    delta: Operand,
+    inclusive: Operand,
+}
+
+impl RangeWalk {
+    /// Each field with where it is in a range value (`range_field`).
+    fn fields(self) -> [(usize, Operand); 5] {
+        [
+            (range_field::START, self.start),
+            (range_field::LEFT, self.left),
+            (range_field::STEP, self.step),
+            (range_field::DELTA, self.delta),
+            (range_field::INCLUSIVE, self.inclusive),
+        ]
+    }
+}
 
 /// A part of an array literal, lowered: its value, or the walk of a range
 /// it spreads, whose count is then a constant when its ends are.
@@ -160,7 +179,7 @@ impl Lowering<'_> {
                         Ok(count) => Operand::integer(self.usize, count),
                         Err(count) => self.as_usize(count, wide, span),
                     };
-                    self.fill_range(to, room, &walk, part_type, count, span);
+                    self.fill_range(to, room, walk, part_type, count, span);
                 }
                 Part::Value(value)
                     if spread && matches!(self.types[part_type], Type::Slice { .. }) =>
@@ -223,13 +242,9 @@ impl Lowering<'_> {
                 let length = self.load(self.usize, length, span);
                 self.widen_unsigned(length, self.usize, wide, span)
             }
-            (Part::Range(walk), &Type::Range { step, .. }) => {
-                let Type::Integer(size) = self.types[self.types.real(step)] else {
-                    unreachable!("a range's step is an integer")
-                };
-                let (left, step) = (walk[range_field::LEFT], walk[range_field::STEP]);
-                let inclusive = walk[range_field::INCLUSIVE];
-                self.range_count(left, step, inclusive, size, wide, span)
+            (Part::Range(walk), Type::Range { .. }) => {
+                let (_, size) = self.range_integers(part_type);
+                self.range_count(walk.left, walk.step, walk.inclusive, size, wide, span)
             }
             _ => unreachable!("only a slice and a range are counted when the program runs"),
         }
@@ -336,7 +351,7 @@ impl Lowering<'_> {
         &mut self,
         to: Place,
         room: u64,
-        walk: &RangeWalk,
+        walk: RangeWalk,
         range_type: TypeId,
         count: Operand,
         span: Span,
@@ -344,12 +359,12 @@ impl Lowering<'_> {
         let Type::Range { element, .. } = self.types[range_type] else {
             unreachable!("only a range fills elements")
         };
-        let Type::Integer(integer) = self.types[self.types.real(element)] else {
+        let Type::Integer(integer) = self.types[element] else {
             unreachable!("a range is of integers")
         };
         let class = Class::integer(integer.bits);
-        let (size, _) = layout(self.types, self.types.real(element), self.target);
-        let (start, delta) = (walk[range_field::START], walk[range_field::DELTA]);
+        let (size, _) = layout(self.types, element, self.target);
+        let RangeWalk { start, delta, .. } = walk;
         let value = self.register_slot(class, span);
         self.store(class, Place::whole(value), start, span);
         let index = self.counter_slot(span);
@@ -409,7 +424,7 @@ impl Lowering<'_> {
         let span = self.thir.exprs.span(range);
         let ty = self.types.real(self.thir.exprs[range].ty);
         let walk = self.walk_range(range)?;
-        for (index, value) in walk.into_iter().enumerate() {
+        for (index, value) in walk.fields() {
             let (at, field_type) = self.field(place.clone(), ty, index);
             let class = self
                 .class(field_type)
@@ -462,16 +477,8 @@ impl Lowering<'_> {
     /// each a constant when what it is computed from is.
     fn walk_range(&mut self, range: Id<thir::Expr>) -> Option<RangeWalk> {
         let span = self.thir.exprs.span(range);
-        let range_type = self.types.real(self.thir.exprs[range].ty);
-        let Type::Range { element, step } = self.types[range_type] else {
-            unreachable!("only a range is walked")
-        };
-        let (ty, size) = (self.types.real(element), self.types.real(step));
-        let (&Type::Integer(integer), &Type::Integer(step_integer)) =
-            (&self.types[ty], &self.types[size])
-        else {
-            unreachable!("a range is of integers")
-        };
+        let range_type = self.thir.exprs[range].ty;
+        let (integer, step_integer) = self.range_integers(range_type);
         let (class, size_class) = (
             Class::integer(integer.bits),
             Class::integer(step_integer.bits),
@@ -485,7 +492,13 @@ impl Lowering<'_> {
                     .expect("a range's fields are registers");
                 lowering.load(class, at, span)
             };
-            return Some([0, 1, 2, 3, 4].map(|index| field(self, index)));
+            return Some(RangeWalk {
+                start: field(self, range_field::START),
+                left: field(self, range_field::LEFT),
+                step: field(self, range_field::STEP),
+                delta: field(self, range_field::DELTA),
+                inclusive: field(self, range_field::INCLUSIVE),
+            });
         }
         let [start, end, step, inclusive] = self.lower_range_parts(range)?;
         let known = |operand: Operand, bits: u32| match operand {
@@ -515,7 +528,13 @@ impl Lowering<'_> {
             let distance = Limbs::new(step_integer.bits, distance.as_slice());
             let left = self.integer_operand(step_integer, &distance, span);
             let delta = delta(self, up);
-            return Some([start, left, step, delta, inclusive]);
+            return Some(RangeWalk {
+                start,
+                left,
+                step,
+                delta,
+                inclusive,
+            });
         }
         // Which way it counts is known only when it runs: each way's
         // `left` and `delta` go into a hidden slot where the ways meet.
@@ -546,7 +565,27 @@ impl Lowering<'_> {
         self.block = counted;
         let left = self.load(size_class, Place::whole(left_slot), span);
         let delta = self.load(class, Place::whole(delta_slot), span);
-        Some([start, left, step, delta, inclusive])
+        Some(RangeWalk {
+            start,
+            left,
+            step,
+            delta,
+            inclusive,
+        })
+    }
+
+    /// The integer types of the values and of the step of the range type
+    /// `range_type`.
+    fn range_integers(&self, range_type: TypeId) -> (Integer, Integer) {
+        let Type::Range { element, step } = self.types[range_type] else {
+            unreachable!("only a range has a walk")
+        };
+        let (&Type::Integer(integer), &Type::Integer(step_integer)) =
+            (&self.types[element], &self.types[step])
+        else {
+            unreachable!("a range is of integers")
+        };
+        (integer, step_integer)
     }
 
     /// `start <= end` for two registers of the type `integer`.
@@ -585,28 +624,18 @@ impl Lowering<'_> {
         };
         let span = self.thir.stmts.span(statement);
         let range_span = self.thir.exprs.span(range);
-        let range_type = self.types.real(self.thir.exprs[range].ty);
-        let Type::Range { element, step } = self.types[range_type] else {
-            unreachable!("a range loop walks a range")
-        };
-        let (ty, size) = (self.types.real(element), self.types.real(step));
-        let (&Type::Integer(integer), &Type::Integer(step_integer)) =
-            (&self.types[ty], &self.types[size])
-        else {
-            unreachable!("a range is of integers")
-        };
+        let (integer, step_integer) = self.range_integers(self.thir.exprs[range].ty);
         let (class, size_class) = (
             Class::integer(integer.bits),
             Class::integer(step_integer.bits),
         );
-        let walk = self.walk_range(range)?;
-        let (start, left_first, step, delta, inclusive) = (
-            walk[range_field::START],
-            walk[range_field::LEFT],
-            walk[range_field::STEP],
-            walk[range_field::DELTA],
-            walk[range_field::INCLUSIVE],
-        );
+        let RangeWalk {
+            start,
+            left: left_first,
+            step,
+            delta,
+            inclusive,
+        } = self.walk_range(range)?;
         // Whether the range includes its end, when that is known now: a
         // range written here; `None` for a range value.
         let included = match inclusive {
