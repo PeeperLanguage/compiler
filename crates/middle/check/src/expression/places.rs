@@ -45,9 +45,28 @@ impl ThirBuilder<'_, '_> {
                 return Expr::INVALID;
             }
             let usize = self.checker.types.usize;
+            // An array's length is folded only where computing the array runs
+            // nothing: a variable or constant, its fields and dereferences,
+            // and elements at constant indexes, which are checked here. A
+            // call, a run-time index or a literal's parts still run, and may
+            // fail.
+            let mut part = value;
+            let runs_nothing = loop {
+                match self.body.exprs[part].kind {
+                    ExprKind::Variable(_) | ExprKind::Constant(_) => break true,
+                    ExprKind::Field { value, .. } | ExprKind::Dereference(value) => part = value,
+                    ExprKind::Index { array, index }
+                        if matches!(self.body.exprs[index].kind, ExprKind::Constant(_))
+                            && !self.checker.types[self.body.exprs[array].ty].is_slice_shaped() =>
+                    {
+                        part = array;
+                    }
+                    _ => break false,
+                }
+            };
             // Read from the value, so through the reference to it: a slice's
-            // or a `&str`'s, or an array's whose call must still run.
-            let Some(length) = length.filter(|_| !self.body.has_call(value)) else {
+            // or a `&str`'s, or an array's that must still be computed.
+            let Some(length) = length.filter(|_| runs_nothing) else {
                 let value = self.through_pointer(value, self.body.exprs.span(value));
                 return Expr {
                     ty: usize,

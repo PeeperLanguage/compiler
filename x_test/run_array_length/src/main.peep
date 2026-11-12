@@ -35,7 +35,9 @@ fn main() {
     let p = @values;
     println("through:", r.len, p.len);
     let grid = [2][3]i32{[3]i32{1, 2, 3}, [3]i32{4, 5, 6}};
-    println("nested:", grid.len, grid[0].len);
+    // An element at a constant index runs nothing: its length is constant.
+    const ROW = grid[0].len;
+    println("nested:", grid.len, grid[0].len, ROW);
     println("index call:", grid[pick()].len);
     println("call:", make().len);
     println("reference call:", passed_on(&values).len);

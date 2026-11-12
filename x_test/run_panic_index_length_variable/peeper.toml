@@ -1,0 +1,12 @@
+name = "run_panic_index_length_variable"
+build = "program"
+
+[test]
+mode = "run"
+outcome = "exit_code"
+exit_code = 101
+stdout_contains = ["before\n"]
+stderr_contains = [
+    "panic: index out of bounds: the length is 2\n",
+    "src/main.peep:7:13\n",
+]

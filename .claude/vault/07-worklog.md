@@ -769,3 +769,18 @@
   target). `mir.rs`: `AccessWidth::Class(Class)` is `Register(Class)` and
   `PlaceAccess`'s field `width` is `touched`, so neither shares a name with
   what it holds or with the `width()` method. check.sh ok.
+- `.len` of an array is folded only where computing the array runs
+  nothing (Fuad: "len issue have to be fixed"): `grid[row].len` with
+  `row` 7 printed 3, and `[2]i32{1, 7 / zero}.len` printed 2; both skipped
+  what Rust runs (an index check, a division). `check_field` folds only a
+  variable or constant, its fields and dereferences, and array elements at constant
+  indexes (checked by the checker); anything else is `Length`, which
+  lowering computes. Fixtures run_panic_index_length_variable and
+  run_panic_length_of_literal_divide (native, -interpret, i686); both exit
+  0 without the fix. Every other fixture's output unchanged.
+- Review of the two fixes (pony + untangle lens; Fuad: "fix all"): the
+  constant-index fold had no test; run_array_length has
+  `const ROW = grid[0].len;` (with the fold's index branch off it fails,
+  T0004). No other finding; the "gone"-after-return skip is the one special
+  case, and its reason is in its comment. Note: `unset.len` of an unset
+  array compiles on purpose (run_array_length "unset: 7").

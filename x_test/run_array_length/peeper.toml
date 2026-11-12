@@ -8,7 +8,7 @@ exit_code = 0
 stdout_contains = [
     "length: 5 5\n",
     "through: 5 5\n",
-    "nested: 2 3\n",
+    "nested: 2 3 3\n",
     "pick runs\nindex call: 3\n",
     "make runs\ncall: 3\n",
     "passed_on runs\nreference call: 5\n",

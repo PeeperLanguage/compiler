@@ -186,10 +186,9 @@ pub enum ExprKind {
     },
     /// `array.len`, a `usize`. For a slice, its length, read when the
     /// program runs. For an array, or a reference or raw pointer to one, only
-    /// where computing `array` calls a function: the array is computed, never
-    /// read, and the value is its type's length. Without a call an array's
-    /// `.len` is a `Constant` and the array is not computed, as Go's `len`
-    /// (`Body::has_call`).
+    /// where computing `array` runs something (a call, a run-time index, a
+    /// literal's parts): the array is computed, never read, and the value is
+    /// its type's length. Otherwise an array's `.len` is a `Constant`.
     Length(Id<Expr>),
     /// The element of the array, a place, or of the slice at the index, an
     /// integer; outside the array or slice, the program fails. A slice's
@@ -353,8 +352,8 @@ impl Body {
         T::arena(self).push(node, span)
     }
 
-    /// Whether computing `expression` calls a function, `print` too: then
-    /// it runs even where only its type is needed (`ExprKind::Length`).
+    /// Whether computing `expression` calls a function, `print` too, which
+    /// could change a value read before it.
     pub fn has_call(&self, expression: Id<Expr>) -> bool {
         // A list, not recursion: `a[0][0]...` nests as deep as it is written.
         // `pending` stays empty, so unallocated, for one with no parts.
