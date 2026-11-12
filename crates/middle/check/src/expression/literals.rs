@@ -7,9 +7,7 @@ use arena::Id;
 use arena::List;
 use diagnostics::Diagnostic;
 use diagnostics::fix::Fix;
-use model::ast;
 use model::constant::Value;
-use model::operators::Precedence;
 use model::semantic_types::Conversion;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
@@ -18,6 +16,8 @@ use model::thir::ExprKind;
 use model::thir::FactKind;
 use model::thir::FieldValue;
 use source::Span;
+use syntax::ast;
+use syntax::operators::Precedence;
 
 use crate::builder::ThirBuilder;
 use crate::expression::unsuffixed_literal;

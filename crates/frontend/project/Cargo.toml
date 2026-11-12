@@ -11,6 +11,7 @@ source.workspace = true
 diagnostics.workspace = true
 literal.workspace = true
 model.workspace = true
+syntax.workspace = true
 parser.workspace = true
 toml_edit.workspace = true
 

@@ -877,3 +877,16 @@
 - Question 6 decided (2026-11-13, Fuad: "keep the 22 features"):
   docs/feature-front.md 6 and 12. Every open question of the page is
   answered; step 18b can start. Page only.
+- Step 18b, the syntax tree out of `model` (2026-11-13, Fuad: "o" to the
+  reordered plan, then "go with a"). `ast.rs` and `operators.rs` moved
+  unchanged to the new crate `syntax` at `crates/core/syntax` (section 9's
+  home); `model` depends on it (`thir` uses `BinaryOp`), the parser no
+  longer depends on `model`. 49 files changed, imports only. `check.sh`'s
+  middle boundary also forbids `syntax::` in `model`'s core files, `eval`,
+  `flow` and `llvm` (proved to fail on a planted import). Not done: `llvm`
+  still reaches the tree through `Program`, which holds it next to the
+  checker's `Types`; `project` still needs `model` for `Program`. The 5.2
+  views and the `TypeShape` trait moved to step 19 (docs/feature-front.md
+  section 11): with every type in one enum they would only rename matches,
+  and have no caller (RULES.md 1.1). Gates: 2,501 dump files identical to
+  745b61ce on the host and i686; `check.sh` all ok.

@@ -3,7 +3,6 @@
 
 use arena::Id;
 use diagnostics::Diagnostic;
-use model::ast;
 use model::semantic_types::TypeId;
 use model::thir::Expr;
 use model::thir::ExprKind;
@@ -12,6 +11,7 @@ use model::thir::Stmt;
 use model::thir::Symbol;
 use model::thir::Variable;
 use source::Span;
+use syntax::ast;
 
 use crate::builder::ThirBuilder;
 

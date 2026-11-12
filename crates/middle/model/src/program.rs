@@ -13,14 +13,14 @@ use source::Span;
 use crate::DefId;
 use crate::FunctionCopy;
 use crate::ModuleId;
-use crate::ast;
-use crate::ast::Ident;
-use crate::ast::Tree;
 use crate::constant::Value;
 use crate::semantic_types::ConstArgument;
 use crate::semantic_types::Constant;
 use crate::semantic_types::TypeId;
 use crate::semantic_types::Types;
+use syntax::ast;
+use syntax::ast::Ident;
+use syntax::ast::Tree;
 
 /// One source file, read and parsed. Its source file is `ast.file`. What
 /// `load` read never changes; what a compile finds, its scope included, is

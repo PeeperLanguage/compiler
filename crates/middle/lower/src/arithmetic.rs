@@ -6,10 +6,10 @@ use model::mir::Comparison;
 use model::mir::Conversion;
 use model::mir::FloatOp;
 use model::mir::IntegerOp;
-use model::operators::BinaryOp;
 use model::semantic_types::Float;
 use model::semantic_types::Integer;
 use model::semantic_types::Type;
+use syntax::operators::BinaryOp;
 
 /// The MIR operation of a binary operator on two numbers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

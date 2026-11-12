@@ -11,13 +11,13 @@ use diagnostics::Diagnostic;
 use diagnostics::fix::Fix;
 use diagnostics::suggest::nearest_name;
 use model::ModuleId;
-use model::ast::Tree;
 use model::program::Import;
 use model::program::ImportKind;
 use model::program::Module;
 use model::program::default_alias;
 use source::SourceFile;
 use source::Span;
+use syntax::ast::Tree;
 
 use crate::PRELUDE_PATH;
 use crate::packages::SOURCE_EXTENSION;

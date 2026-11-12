@@ -4,8 +4,6 @@ use arena::Id;
 use bigint::Limbs;
 use diagnostics::Diagnostic;
 use diagnostics::suggest::nearest_name;
-use model::ast;
-use model::ast::Ident;
 use model::constant::Value;
 use model::semantic_types::Integer;
 use model::semantic_types::Type;
@@ -13,6 +11,8 @@ use model::semantic_types::TypeId;
 use model::thir::Expr;
 use model::thir::ExprKind;
 use source::Span;
+use syntax::ast;
+use syntax::ast::Ident;
 
 use crate::builder::ThirBuilder;
 

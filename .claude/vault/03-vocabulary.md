@@ -12,9 +12,10 @@ The codebase's fixed terms: use these words, with these meanings.
 | base | `diagnostics` | `Diagnostic`, `Code`s, the printer, `nearest_name` |
 | base | `literal` | literal text rules (`literal::numeric`) |
 | base | `runtime_abi` | what a running program does as seen from outside: messages, and the runtime functions the backend calls (`Runtime`), which the MIR names; shared by `model`, `lower`, `llvm` and `eval` |
-| frontend | `token`, `lexer`, `parser` | tokens, lexing, parsing (tree in `model::ast`) |
+| core | `syntax` | the syntax tree (`ast`) and operator kinds (`operators`) |
+| frontend | `token`, `lexer`, `parser` | tokens, lexing, parsing (tree in `syntax::ast`) |
 | frontend | `project` | loading, import resolution, module graph, `peeper.toml` (`name`, `build = "program"` or `"lib"`) |
-| middle | `model` | data only: `ast`, `thir`, `mir`, `semantic_types`, `constant`, `machine`, ids, operators |
+| middle | `model` | data only: `thir`, `mir`, `semantic_types`, `constant`, `machine`, `program`, `layout`, ids |
 | middle | `check` | `Checker`: scopes, names, types, THIR, signatures, folding (`fold`); builds bodies |
 | middle | `lower` | THIR to MIR |
 | middle | `flow` | path checks over MIR |

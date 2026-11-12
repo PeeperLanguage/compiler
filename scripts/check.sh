@@ -34,12 +34,14 @@ check "runtime clippy" clippy-driver --edition=2024 -Cpanic=abort --crate-type=s
 # shortcut: llvm still reads the syntax tree through `model::program`, and
 # this is a grep; replace both with the crate split of section 9, which Cargo
 # checks.
-front='semantic_types|thir|ast|program|layout|operators'
+front='semantic_types|thir|program|layout'
 check "middle boundary" bash -c "
     ! grep -rnE 'crate::($front)' crates/middle/model/src/{mir,machine,constant}.rs &&
     ! grep -nE '^use crate::' crates/middle/model/src/lib.rs &&
     ! grep -rnE 'model::($front)' crates/middle/eval crates/middle/flow &&
-    ! grep -rnE 'model::(semantic_types|thir|ast|layout|operators)' crates/backend/llvm"
+    ! grep -rnE 'model::(semantic_types|thir|layout)' crates/backend/llvm &&
+    ! grep -rnE '\bsyntax::' crates/middle/model/src/{mir,machine,constant,lib}.rs \
+        crates/middle/{eval,flow} crates/backend/llvm"
 check "tests" cargo test --workspace --no-fail-fast
 check "bundle" bash scripts/build.sh
 check "fixtures on the bundle" env PEEPER="$PWD/build/bin/peeper" \

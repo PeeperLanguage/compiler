@@ -18,11 +18,11 @@ use lsp_types::NumberOrString;
 use lsp_types::Position;
 use lsp_types::PublishDiagnosticsParams;
 use lsp_types::Url;
-use model::operators::BinaryOp;
-use model::operators::UnaryOp;
 use serde_json::json;
 use source::SourceFile;
 use source::Span;
+use syntax::operators::BinaryOp;
+use syntax::operators::UnaryOp;
 
 use crate::DEBOUNCE;
 use crate::OpenFile;

@@ -11,7 +11,6 @@ use model::ConstArguments;
 use model::DefId;
 use model::FunctionCopy;
 use model::ModuleId;
-use model::ast;
 use model::constant::Value;
 use model::mir;
 use model::semantic_types::Type;
@@ -19,6 +18,7 @@ use model::semantic_types::TypeId;
 use model::thir;
 use rustc_hash::FxHashSet;
 use source::Span;
+use syntax::ast;
 
 use crate::COPY_DEPTH_LIMIT;
 use crate::Checker;

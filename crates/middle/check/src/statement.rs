@@ -11,8 +11,6 @@ use arena::Id;
 use arena::List;
 use diagnostics::Diagnostic;
 use model::FunctionCopy;
-use model::ast;
-use model::ast::Ident;
 use model::constant::Value;
 use model::semantic_types::ConstArgument;
 use model::semantic_types::Type;
@@ -26,6 +24,8 @@ use model::thir::Stmt;
 use model::thir::Symbol;
 use model::thir::Variable;
 use source::Span;
+use syntax::ast;
+use syntax::ast::Ident;
 
 use crate::Checker;
 use crate::Checking;

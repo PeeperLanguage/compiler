@@ -1,9 +1,9 @@
 use model::ConstArguments;
 use model::DefId;
 use model::FunctionCopy;
-use model::ast;
 use model::thir::Body;
 use source::SourceFile;
+use syntax::ast;
 
 use crate::testing::Reported;
 use crate::testing::reported;

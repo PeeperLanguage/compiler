@@ -18,10 +18,10 @@ use bigint::Limbs;
 use model::constant::Value;
 use model::mir::Class;
 use model::mir::IntegerOp;
-use model::operators::BinaryOp;
-use model::operators::UnaryOp;
 use model::semantic_types::Integer;
 use model::semantic_types::Type;
+use syntax::operators::BinaryOp;
+use syntax::operators::UnaryOp;
 
 use eval::operations;
 use eval::operations::RegisterValue;

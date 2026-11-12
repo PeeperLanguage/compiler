@@ -33,10 +33,10 @@ use arena::List;
 use arena::Node;
 use diagnostics::Diagnostic;
 use diagnostics::fix::Fix;
-use model::ast::Ident;
-use model::ast::Tree;
 use source::SourceFile;
 use source::Span;
+use syntax::ast::Ident;
+use syntax::ast::Tree;
 use token::Token;
 use token::TokenKind;
 

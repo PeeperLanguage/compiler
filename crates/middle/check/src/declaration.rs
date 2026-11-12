@@ -6,7 +6,6 @@ use arena::Id;
 use diagnostics::Diagnostic;
 use model::ConstArguments;
 use model::DefId;
-use model::ast;
 use model::layout::layout;
 use model::layout::struct_layout;
 use model::program::EXTERN_ATTRIBUTE;
@@ -22,6 +21,7 @@ use model::thir::Body;
 use model::thir::FactKind;
 use model::thir::Symbol;
 use source::Span;
+use syntax::ast;
 
 use crate::Checker;
 use crate::Checking;
@@ -1181,9 +1181,9 @@ pub(crate) fn is_self(tree: &ast::Tree, parameter: ast::Param) -> bool {
 #[cfg(test)]
 mod tests {
     use model::DefId;
-    use model::ast;
     use model::semantic_types::Type;
     use model::semantic_types::TypeId;
+    use syntax::ast;
 
     use crate::testing::Reported;
     use crate::testing::reported;

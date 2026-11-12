@@ -24,8 +24,6 @@ use model::mir::Root;
 use model::mir::SLICE_WORDS;
 use model::mir::Signature;
 use model::mir::Step;
-use model::operators::BinaryOp;
-use model::operators::UnaryOp;
 use model::semantic_types::Float;
 use model::semantic_types::ImplementationId;
 use model::semantic_types::Integer;
@@ -37,6 +35,8 @@ use runtime_abi::messages::SLICE_INDEX_MESSAGE;
 use runtime_abi::messages::array_index_message;
 use runtime_abi::messages::shift_count_message;
 use source::Span;
+use syntax::operators::BinaryOp;
+use syntax::operators::UnaryOp;
 
 use crate::Lowering;
 use crate::Value;

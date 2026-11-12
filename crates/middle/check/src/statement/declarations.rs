@@ -3,8 +3,6 @@
 
 use arena::Id;
 use diagnostics::Diagnostic;
-use model::ast;
-use model::ast::Ident;
 use model::layout::in_memory;
 use model::semantic_types::Constant;
 use model::semantic_types::Type;
@@ -13,6 +11,8 @@ use model::thir::ExprKind;
 use model::thir::Local;
 use model::thir::Stmt;
 use model::thir::Variable;
+use syntax::ast;
+use syntax::ast::Ident;
 
 use crate::builder::ThirBuilder;
 use crate::function::constant_refusal;

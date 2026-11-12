@@ -10,8 +10,6 @@ use model::Callee;
 use model::ConstArguments;
 use model::DefId;
 use model::FunctionCopy;
-use model::ast;
-use model::ast::Ident;
 use model::constant::Value;
 use model::layout::layout;
 use model::semantic_types::ConstArgument;
@@ -24,6 +22,8 @@ use model::thir::ExprKind;
 use model::thir::Local;
 use model::thir::Symbol;
 use source::Span;
+use syntax::ast;
+use syntax::ast::Ident;
 
 use crate::builder::ThirBuilder;
 use crate::builtin::LayoutFact;

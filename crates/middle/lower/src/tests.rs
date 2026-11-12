@@ -8,7 +8,6 @@ use model::ConstArguments;
 use model::DefId;
 use model::FunctionCopy;
 use model::ModuleId;
-use model::ast;
 use model::machine::Machine;
 use model::mir;
 use model::mir::DebugType;
@@ -16,6 +15,7 @@ use model::mir::DebugTypes;
 use model::thir;
 use runtime_abi::symbols::Runtime;
 use source::SourceFile;
+use syntax::ast;
 
 /// The MIR text of the function `main` of the one-module program `text`,
 /// which must check without errors, for a 64-bit target.

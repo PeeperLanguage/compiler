@@ -1,6 +1,6 @@
-use model::ast::Decl;
-use model::ast::Stmt;
-use model::ast::Tree;
+use syntax::ast::Decl;
+use syntax::ast::Stmt;
+use syntax::ast::Tree;
 
 use super::*;
 use crate::tests::dump_of;

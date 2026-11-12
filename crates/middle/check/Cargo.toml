@@ -11,6 +11,7 @@ source.workspace = true
 diagnostics.workspace = true
 arena.workspace = true
 model.workspace = true
+syntax.workspace = true
 eval.workspace = true
 lower.workspace = true
 flow.workspace = true

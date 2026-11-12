@@ -7,8 +7,6 @@ use arena::Id;
 use arena::List;
 use bigint::Limbs;
 use diagnostics::Diagnostic;
-use model::ast;
-use model::ast::Ident;
 use model::constant::Value;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
@@ -19,6 +17,8 @@ use model::thir::Local;
 use model::thir::Stmt;
 use model::thir::Variable;
 use source::Span;
+use syntax::ast;
+use syntax::ast::Ident;
 
 use crate::builder::ThirBuilder;
 

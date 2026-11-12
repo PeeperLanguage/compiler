@@ -16,10 +16,10 @@ use lsp_types::CodeActionParams;
 use lsp_types::Location;
 use lsp_types::TextDocumentPositionParams;
 use lsp_types::Url;
-use model::ast;
 use model::semantic_types::builtin_doc;
 use source::SourceFile;
 use source::Span;
+use syntax::ast;
 
 use crate::checked::CachedFact;
 use crate::checked::CachedKind;

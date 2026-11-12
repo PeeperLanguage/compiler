@@ -11,15 +11,15 @@ use arena::Id;
 use diagnostics::Code;
 use diagnostics::Diagnostic;
 use diagnostics::fix::Fix;
-use model::ast;
 use model::constant::Value;
-use model::operators::Precedence;
 use model::semantic_types::Conversion;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
 use model::thir::Expr;
 use model::thir::ExprKind;
 use source::Span;
+use syntax::ast;
+use syntax::operators::Precedence;
 
 use crate::builder::ThirBuilder;
 

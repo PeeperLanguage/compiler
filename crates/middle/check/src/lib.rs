@@ -27,7 +27,6 @@ use model::ConstArguments;
 use model::DefId;
 use model::FunctionCopy;
 use model::ModuleId;
-use model::ast;
 use model::machine::Machine;
 use model::semantic_types::ConstArgument;
 use model::semantic_types::Constant;
@@ -41,6 +40,7 @@ use model::thir::Symbol;
 use rustc_hash::FxHashMap;
 use scope::Scope;
 use source::Span;
+use syntax::ast;
 
 /// Checks a program's declarations. Each module-scope declaration (`DefId`)
 /// is checked once, the first time anything asks for it, and its result is

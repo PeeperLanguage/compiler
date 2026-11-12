@@ -39,11 +39,11 @@ use lower::arithmetic::cast_conversion;
 use model::constant::Value;
 use model::mir::Class;
 use model::mir::IntegerOp;
-use model::operators::BinaryOp;
-use model::operators::UnaryOp;
 use model::semantic_types::Float;
 use model::semantic_types::Integer;
 use model::semantic_types::Type;
+use syntax::operators::BinaryOp;
+use syntax::operators::UnaryOp;
 
 const WIDTHS: &[u32] = &[
     1, 2, 3, 5, 7, 8, 9, 15, 16, 17, 24, 31, 32, 33, 63, 64, 65, 100, 127, 128, 129, 192, 200, 255,

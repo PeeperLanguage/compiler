@@ -25,7 +25,6 @@ use model::ConstArguments;
 use model::DefId;
 use model::FunctionCopy;
 use model::ModuleId;
-use model::ast;
 use model::machine::Machine;
 use model::mir;
 use model::mir::DebugTypes;
@@ -38,6 +37,7 @@ use runtime_abi::abi::PANIC_EXIT_CODE;
 use runtime_abi::messages::panic_text;
 use source::SourceFile;
 use source::Span;
+use syntax::ast;
 
 /// What a compile found, kept for the next compile of the same program.
 #[derive(Default)]

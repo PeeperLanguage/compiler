@@ -7,9 +7,9 @@ use lsp_types::Hover;
 use lsp_types::HoverContents;
 use lsp_types::MarkupContent;
 use lsp_types::MarkupKind;
-use model::ast;
 use source::SourceFile;
 use source::Span;
+use syntax::ast;
 
 use crate::checked::ConstantText;
 

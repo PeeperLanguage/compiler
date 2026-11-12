@@ -3,10 +3,7 @@
 
 use arena::Id;
 use bigint::Limbs;
-use model::ast;
 use model::constant::Value;
-use model::operators::BinaryOp;
-use model::operators::UnaryOp;
 use model::semantic_types::Conversion;
 use model::semantic_types::Float;
 use model::semantic_types::Type;
@@ -15,6 +12,9 @@ use model::thir::Expr;
 use model::thir::ExprKind;
 use model::thir::FactKind;
 use source::Span;
+use syntax::ast;
+use syntax::operators::BinaryOp;
+use syntax::operators::UnaryOp;
 
 use crate::builder::ThirBuilder;
 use crate::expression::unsuffixed_literal;

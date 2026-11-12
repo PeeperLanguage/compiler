@@ -165,7 +165,7 @@ this rule (#165 came from breaking it).
 | `source` | source files and byte spans; line and column on demand | rewritten (old one tracked line and column per character and allocated every location) |
 | `token`, `lexer` | tokens, lexing | old frontend, reviewed |
 | `literal` | rules of literal text shared by the phases: values of string, character and byte literals, and number literals (base, digits, suffix) in `literal::numeric` | string rules split out of the lexer; number rules rewritten, old ones were regex based |
-| `parser` (tree in `model::ast`) | syntax tree, parsing | old frontend, reviewed (parser only parses) |
+| `parser` (tree in `syntax::ast`) | syntax tree, parsing | old frontend, reviewed (parser only parses) |
 | `diagnostics` | one diagnostic value and how it is printed | rewritten small; the old Go emitter and `suggest.go` reviewed |
 | `project` | import resolution from a package map, workers, graph, cycles; `project::manifest` reads `peeper.toml` in one folder (the project name), and `project_in` makes the project from it for the command line and the browser alike | new; ideas from old loader/resolver |
 | `peeper` | the command line: `check`, `fix`, `build`, `run`, `init`, `lsp` | new |

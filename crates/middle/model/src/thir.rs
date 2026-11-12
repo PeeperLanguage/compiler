@@ -10,8 +10,6 @@ use crate::Callee;
 use crate::DefId;
 use crate::ModuleId;
 use crate::constant::Value;
-use crate::operators::BinaryOp;
-use crate::operators::UnaryOp;
 use crate::semantic_types::Constant;
 use crate::semantic_types::ImplementationId;
 use crate::semantic_types::Type;
@@ -26,6 +24,8 @@ use arena::Node;
 use arena::nodes;
 use source::SourceFile;
 use source::Span;
+use syntax::operators::BinaryOp;
+use syntax::operators::UnaryOp;
 
 nodes! {
     Body;

@@ -46,6 +46,9 @@ scheduled per declaration, on demand (Zig, Rust), not module by module.
   nothing after lowering reads the checker's types. The crates that build them
   (`parser`, `check`, `lower` and later `llvm`) hold only logic. THIR and
   MIR keep their own node types: a tree and a graph have different shapes.
+  Changed 2026-11-13: the syntax tree and the operator kinds left `model`
+  for the `syntax` crate (`crates/core/syntax`), so the parser does not
+  depend on `model` (`docs/feature-front.md`, section 9).
   (Until 2026-10-17 this was an `ir` crate, with the tree in `ast` and THIR in
   `thir`.)
 - **decided** Order: this design first, then a thin program end to end, then one
@@ -76,21 +79,23 @@ that is built once and kept.
 ## Crates
 
 ```
-peeper ─► build ─► project ─► parser ─► model ─► arena
-            │
-            ├─► check ─► model, project, eval, lower, flow   AST -> THIR, signatures, folding; builds bodies
+peeper ─► build ─► project ─► parser ─► syntax ─► arena
+            │                  └─► model ─► syntax
+            ├─► check ─► syntax, model, project, eval, lower, flow   AST -> THIR, signatures, folding; builds bodies
             ├─► eval ──► model, runtime_abi   what each MIR operation gives; the MIR interpreter
-            ├─► lower ─► model            THIR -> MIR; path checks
+            ├─► lower ─► syntax, model    THIR -> MIR; path checks
             └─► llvm ──► model, runtime_abi   MIR -> LLVM text; clang
 ```
 
-Every phase reads and writes its data in `model`; only `lower` reads THIR, and
+The parser writes the tree in `syntax`; every later phase reads and writes
+its data in `model`; only `lower` reads THIR, and
 `llvm` and the interpreter read MIR and signatures. Signatures (struct fields,
 enum variants, function types) are `model` data, written by check.
 
 | crate | owns |
 |---|---|
-| `model` | data only: `ast` (the syntax tree), `thir` (THIR nodes), `mir` (MIR graphs); `semantic_types` (`TypeId`, the type interner, the built-in types table); `constant` (constant values); `ModuleId`, `DefId`; `operators` (`BinaryOp`, `UnaryOp`); signatures |
+| `syntax` | the syntax tree (`ast`) and operator kinds (`operators`: `BinaryOp`, `UnaryOp`, `Precedence`) |
+| `model` | data only: `thir` (THIR nodes), `mir` (MIR graphs); `semantic_types` (`TypeId`, the type interner, the built-in types table); `constant` (constant values); `ModuleId`, `DefId`; signatures |
 | `check` | the checker: scopes, name lookup, building THIR, writing signatures; the declaration tables (`Checker`); folding operators and `as` on constants (`fold`: `binary`, `unary`, `convert`, `known_trap`) |
 | `eval` | what each MIR operation gives on register values (`operations`), which folding computes with; the MIR interpreter (`interpreter::run_function` for a constant's call, `interpreter::program::run` for a whole program) |
 | `runtime_abi` | what a running program does as seen from outside, shared by `llvm` and `eval`: streams and the exit code, runtime function names, panic messages, number text. The two `runtime/` files the runtime library needs too are read from there by `#[path]`, as that library is built with no crates |

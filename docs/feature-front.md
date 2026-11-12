@@ -63,7 +63,7 @@ with a node of that kind edits them:
 | Function | Enum | Kinds |
 | --- | --- | --- |
 | `check::expression::check_expr` | `ast::Expr` | 30 |
-| `model::ast::precedence` | `ast::Expr` | 29 |
+| `syntax::ast::precedence` | `ast::Expr` | 29 |
 | `parser::dump::expr` | `ast::Expr` | 29 |
 | `model::thir::write_expr`, `any_part` | `thir::ExprKind` | 20 each |
 | `lower::expression::lower_expr` | `thir::ExprKind` | 20 |
@@ -132,7 +132,7 @@ by its grammar position, its first token and, when needed, the token after
 it. Two features claiming one key is a build error, never a rule silently
 replaced. v4 did exactly this (`rules.rs`, `RuleTable::build`) and it held.
 
-Precedence levels stay one core enum (`model::operators::Precedence`:
+Precedence levels stay one core enum (`syntax::operators::Precedence`:
 `LogicalOr`, `Equality`, `Shift`, ...); a feature picks one. Only a new level touches the core.
 
 ### 4.2 One piece of syntax, a meaning per type
@@ -399,8 +399,10 @@ which read a `Type`, to `semantic_types`.
 `check.sh` checks it (done, step 18a): the core files name no front module,
 `flow` and `eval` name only the core, and `llvm` the core and `program`. One
 link is left: `llvm` reads the syntax tree through `Program` (each module's
-file, a function's declared name for its debug line, the entry symbol); it
-goes with the syntax tree's move out of `model`. The check is a grep until
+file, a function's declared name for its debug line, the entry symbol).
+The tree left `model` for `syntax` (step 18b), but `Program` holds it next
+to the checker's `Types`, so the link stays until `Program` is split; the
+check forbids `llvm` to name `syntax` itself. The check is a grep until
 `model`'s core is a crate of its own, which Cargo checks (section 9). The second check, that no
 feature crate's `Cargo.toml` names another, waits for the first feature
 crate (step 19): with none, it cannot fail.
@@ -451,12 +453,19 @@ For every step from 18 on:
 ## 11. Order
 
 - **18a.** The leaks of section 8 and the boundary check.
-- **18b.** The core concepts into `core/`, the traits of section 5.2
-  implemented for today's closed enums (no behavior change; every
-  `semantic_types::Type` arm answers through `TypeShape`).
-- **19.** Structs as the pilot: its syntax rows, nodes, checking and
-  lowering into `features/structs`, then the speed gate. Then one feature
-  per step.
+- **18b.** The syntax tree (`ast`, `operators`) out of `model` into its
+  own crate (section 9); a pure move, byte-identical.
+- **19.** Structs as the pilot: the `Language` generic (section 7), the
+  `TypeShape` trait with only what the core must ask of a struct type, its
+  syntax rows, nodes, checking and lowering into `features/structs`, then
+  the speed gate. Then one feature per step; each adds the views of 5.2 it
+  needs (`number` and `operation` with numbers, `view` with references,
+  `elements` with arrays).
+
+The traits of 5.2 are not added ahead of the pilot: while every type is a
+variant of one enum, a view only renames a match, and a method with no
+caller breaks `RULES.md` 1.1. A view arrives with the first feature whose
+type the core can no longer name.
 - **20.** Removal: the closed enums and every per-phase match of section
   3.1 are gone; no half-moved state outlives this step.
 

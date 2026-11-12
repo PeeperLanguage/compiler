@@ -7,12 +7,12 @@
 
 use arena::Id;
 use diagnostics::Diagnostic;
-use model::ast::Expr;
-use model::ast::Type;
-use model::operators::BinaryOp;
-use model::operators::Precedence;
-use model::operators::UnaryOp;
 use source::Span;
+use syntax::ast::Expr;
+use syntax::ast::Type;
+use syntax::operators::BinaryOp;
+use syntax::operators::Precedence;
+use syntax::operators::UnaryOp;
 use token::TokenKind;
 
 use crate::Parser;

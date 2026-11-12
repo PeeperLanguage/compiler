@@ -11,12 +11,12 @@ use diagnostics::Diagnostic;
 use diagnostics::suggest::nearest_name;
 use model::DefId;
 use model::ModuleId;
-use model::ast;
 use model::program::ImportKind;
 use model::thir::Symbol;
 use rustc_hash::FxHashMap;
 use source::SourceFile;
 use source::Span;
+use syntax::ast;
 
 use crate::builtin::layout_function;
 

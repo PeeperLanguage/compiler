@@ -2,7 +2,7 @@
 
 use arena::Id;
 use diagnostics::Diagnostic;
-use model::ast::Pattern;
+use syntax::ast::Pattern;
 
 use token::TokenKind;
 

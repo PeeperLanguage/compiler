@@ -162,14 +162,14 @@ fn assignment_in_condition_is_read_as_equal_to() {
         .stmts
         .ids()
         .find_map(|statement| match tree.stmts[statement] {
-            model::ast::Stmt::If { condition, .. } => Some(condition),
+            syntax::ast::Stmt::If { condition, .. } => Some(condition),
             _ => None,
         })
         .expect("an if statement");
     assert!(matches!(
         tree.exprs[condition],
-        model::ast::Expr::Binary {
-            op: model::operators::BinaryOp::EqualTo,
+        syntax::ast::Expr::Binary {
+            op: syntax::operators::BinaryOp::EqualTo,
             ..
         }
     ));

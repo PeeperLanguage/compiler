@@ -1,15 +1,13 @@
-//! The program's data, in one place: the syntax tree, THIR, MIR, the type
-//! model, constant values with their arithmetic, operator kinds, and the ids
-//! every phase shares (`ModuleId`, `DefId`). Each phase keeps its own node
-//! types (`ast`, `thir`, `mir`); the crates that build them hold only logic.
-//! See docs/ir-design.md.
+//! The program's data after parsing: THIR, MIR, the type model, constant
+//! values, and the ids every phase shares (`ModuleId`, `DefId`). The syntax
+//! tree is the `syntax` crate's. Each phase keeps its own node types
+//! (`thir`, `mir`); the crates that build them hold only logic. See
+//! docs/ir-design.md.
 
-pub mod ast;
 pub mod constant;
 pub mod layout;
 pub mod machine;
 pub mod mir;
-pub mod operators;
 pub mod program;
 pub mod semantic_types;
 pub mod thir;

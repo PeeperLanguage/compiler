@@ -1,0 +1,15 @@
+[package]
+name = "syntax"
+description = "The syntax tree the parser builds, and the operator kinds it names"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+publish.workspace = true
+
+[dependencies]
+arena.workspace = true
+literal.workspace = true
+source.workspace = true
+
+[lints]
+workspace = true

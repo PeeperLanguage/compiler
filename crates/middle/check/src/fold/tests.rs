@@ -1,13 +1,13 @@
 use bigint::Limbs;
 
 use model::constant::Value;
-use model::operators::BinaryOp;
-use model::operators::UnaryOp;
 use model::semantic_types::Float;
 use model::semantic_types::Integer;
 use model::semantic_types::Type;
 use runtime_abi::messages::DIVISION_BY_ZERO;
 use runtime_abi::messages::shift_count_message;
+use syntax::operators::BinaryOp;
+use syntax::operators::UnaryOp;
 
 use super::conversions::convert;
 use super::operators::binary;

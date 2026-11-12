@@ -9,6 +9,7 @@ publish.workspace = true
 [dependencies]
 diagnostics.workspace = true
 model.workspace = true
+syntax.workspace = true
 check.workspace = true
 eval.workspace = true
 lower.workspace = true

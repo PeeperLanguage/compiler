@@ -4,15 +4,15 @@
 use arena::Id;
 use arena::List;
 use diagnostics::Diagnostic;
-use model::ast::Decl;
-use model::ast::Field;
-use model::ast::Function;
-use model::ast::Length;
-use model::ast::Metadata;
-use model::ast::Param;
-use model::ast::Type;
-use model::ast::Variant;
 use source::Span;
+use syntax::ast::Decl;
+use syntax::ast::Field;
+use syntax::ast::Function;
+use syntax::ast::Length;
+use syntax::ast::Metadata;
+use syntax::ast::Param;
+use syntax::ast::Type;
+use syntax::ast::Variant;
 use token::Token;
 use token::TokenKind;
 

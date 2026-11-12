@@ -3,11 +3,11 @@
 
 use arena::Id;
 use diagnostics::Diagnostic;
-use model::ast::Expr;
-use model::ast::FieldValue;
-use model::ast::Length;
-use model::ast::Type;
-use model::operators::Precedence;
+use syntax::ast::Expr;
+use syntax::ast::FieldValue;
+use syntax::ast::Length;
+use syntax::ast::Type;
+use syntax::operators::Precedence;
 use token::Token;
 use token::TokenKind;
 
