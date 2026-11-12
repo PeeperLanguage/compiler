@@ -294,7 +294,7 @@ impl Module<'_> {
                 declares[slot.debug_scope.index()] = true;
             }
         }
-        if body.parameters > 0 {
+        if !body.signature.parameters.is_empty() {
             declares[0] = false;
         }
         // A block comes after its parent, so the parent's metadata is known.

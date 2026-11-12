@@ -946,10 +946,7 @@ impl Lowering<'_> {
         destination: Option<Place>,
         span: Span,
     ) -> Option<Value> {
-        let Type::Function {
-            variadic, origins, ..
-        } = &self.types[self.types.real(signature)]
-        else {
+        let Type::Function { origins, .. } = &self.types[self.types.real(signature)] else {
             unreachable!("a call's signature is a function type")
         };
         let mut passed = Vec::with_capacity(arguments.len() + 1);
@@ -1041,7 +1038,6 @@ impl Lowering<'_> {
         self.mir.signatures.push(Signature {
             parameters: parameters.into(),
             result,
-            variadic: *variadic,
             c,
             origins: origins.clone(),
         });
@@ -1110,7 +1106,6 @@ impl Lowering<'_> {
                 let signature = Signature {
                     parameters: parameters.collect(),
                     result: self.result_passing(*result),
-                    variadic: false,
                     c: None,
                     origins: origins.clone(),
                 };

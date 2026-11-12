@@ -300,3 +300,13 @@
   fixtures; `holder_words`' `Borrow` branch cannot be seen (a slice
   borrow is stored to a slot before use; a reference's words are the
   fallback's). `check mixed` 1,207 -> 1,178 M. check.sh ok.
+- Untangle fix 4, first part: three MIR facts stored twice removed.
+  `Signature::variadic` was written by lowering and never read (the C
+  signature carries a variadic call's extra arguments); `Body.parameters`
+  was always `signature.parameters.len()`; `Slot.hidden` was always
+  `debug_type.is_none()` (lowering gives a debug type to each written
+  variable and none to a slot made for a value). Readers: loans
+  (`loan_count`, `held_at_starts`, `slot_name`, `broken_loan`), llvm
+  debug info, the MIR dump. check.sh ok. Left for fix 4: the result kept
+  in memory and a call's hidden first argument, constants' decode, panic
+  messages, runtime callees' signatures, extern-ness.

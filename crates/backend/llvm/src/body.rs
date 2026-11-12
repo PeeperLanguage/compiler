@@ -440,7 +440,7 @@ impl Writer<'_, '_, '_> {
             let file_metadata = metadata.file_node(&self.file.path);
             let span = body.slots.span(slot);
             let (line, _) = self.file.position(span.start as usize);
-            let argument = if index < body.parameters {
+            let argument = if index < body.signature.parameters.len() {
                 format!("arg: {}, ", index + 1)
             } else {
                 String::new()

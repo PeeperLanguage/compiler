@@ -411,11 +411,11 @@ impl<'b> Holders<'b> {
         (self.levels(steps, width).next()).expect("a place has a level")
     }
 
-    /// How a message names `slot`: by its name, or, for a hidden one, which
-    /// a message names only as a temporary, "a temporary value": its code
+    /// How a message names `slot`: by its name, or, for one made for a value
+    /// (no debug type), only as a temporary, "a temporary value": its code
     /// may be long or take several lines, and the labels show it.
     fn slot_name(&self, slot: Id<Slot>, file: &SourceFile) -> String {
-        if self.body.slots[slot].hidden {
+        if self.body.slots[slot].debug_type.is_none() {
             return "a temporary value".to_string();
         }
         format!("`{}`", file.slice(self.body.slots.span(slot)))
@@ -647,7 +647,7 @@ impl<'b> Holders<'b> {
 
     /// How many loans there are: the borrows, then the parameter loans.
     fn loan_count(&self) -> usize {
-        self.borrows.len() + self.body.parameters
+        self.borrows.len() + self.body.signature.parameters.len()
     }
 
     fn lent(&self, loan: Id<Loan>) -> Lent<'b> {
@@ -1010,7 +1010,7 @@ impl<'b> Loans<'b> {
     fn held_at_starts(&self, ends: &[Option<Vec<Id<Holder>>>]) -> Vec<Option<Held>> {
         let body = self.holders.body;
         let mut entry = Held::default();
-        for position in 0..body.parameters {
+        for position in 0..body.signature.parameters.len() {
             let slot = Id::from_index(position);
             if body.parameter_in_memory(slot).is_some() {
                 let all = 0..u64::MAX;
@@ -1347,7 +1347,7 @@ impl<'b> Loans<'b> {
                     format!("{noun} made here"),
                 );
             // How long a temporary lasts is not written in the code.
-            if self.holders.body.slots[slot].hidden {
+            if self.holders.body.slots[slot].debug_type.is_none() {
                 let help = "a temporary lasts until its statement ends, \
                             or as long as the variable a `let` or `=` gives it to";
                 error = error.help(help, Vec::new());

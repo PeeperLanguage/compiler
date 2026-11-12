@@ -228,7 +228,6 @@ impl Lowering<'_> {
         self.mir.signatures.push(Signature {
             parameters: signature.parameters.iter().map(passing).collect(),
             result: signature.result.as_ref().map(passing),
-            variadic: false,
             c: None,
             origins: Box::default(), // the runtime returns no pointer
         });

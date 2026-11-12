@@ -90,11 +90,9 @@ pub fn lower(
             blocks: Arena::default(),
             instructions: Arena::default(),
             slots: Arena::default(),
-            parameters: parameters.len(),
             signature: Signature {
                 parameters: Box::default(), // below, once passing can be asked
                 result: None,
-                variadic: false,
                 c: None,
                 origins: Box::default(),
             },
@@ -122,7 +120,6 @@ pub fn lower(
     lowering.mir.signature = Signature {
         parameters: parameters.iter().map(|&ty| lowering.passing(ty)).collect(),
         result: lowering.result_passing(*result),
-        variadic: false,
         c: None,
         origins: origins.clone(),
     };
@@ -154,7 +151,6 @@ pub fn lower(
                 debug_scope: Id::from_index(variable.scope.index()),
                 mutable: variable.mutable,
                 initialized: variable.initialized,
-                hidden: variable.hidden,
             },
             body.variables.span(id),
         );
@@ -493,7 +489,6 @@ impl Lowering<'_> {
                 debug_scope: self.debug_scope,
                 mutable: true,
                 initialized: true,
-                hidden: true,
             },
             span,
         )

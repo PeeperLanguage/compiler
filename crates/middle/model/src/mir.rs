@@ -103,7 +103,7 @@ impl std::fmt::Display for Class {
 }
 
 /// One function's MIR. Its parameters are its first slots, in order
-/// (`parameters` of them): one passed in a register is stored from
+/// (one per `signature.parameters`): one passed in a register is stored from
 /// `Operand::Parameter` as the body starts; one passed in memory is the
 /// caller's copy, at the address it passed (`parameter_in_memory`). The
 /// first block is the entry.
@@ -111,7 +111,6 @@ pub struct Body {
     pub blocks: Arena<Block>,             // with where each starts
     pub instructions: Arena<Instruction>, // with the code each comes from
     pub slots: Arena<Slot>,               // with each name, or the code a temporary holds
-    pub parameters: usize,
     /// How the function takes its parameters and gives its result. A result
     /// kept in memory is written where `Operand::Parameter(0)` points, a
     /// hidden first parameter; the written ones follow it.
@@ -139,15 +138,14 @@ pub struct Slot {
     pub align: u64,
     /// The pointers in it that may hold a loan.
     pub holders: Box<[Holder]>,
-    /// What a debugger shows it as; `None` for a temporary.
+    /// What a debugger shows it as; `None` for a slot made for a value, not
+    /// written, whose span is not a name.
     pub debug_type: Option<DebugTypeId>,
     pub debug_scope: Id<DebugScope>, // the block it is declared in
     pub mutable: bool,
     /// Set where declared; false for a `let` without a value, whose first
     /// store sets it.
     pub initialized: bool,
-    /// Made for a value, not written; its span is not a name.
-    pub hidden: bool,
 }
 
 /// A pointer in a slot that may hold a loan: a reference's, a slice's, an
@@ -299,9 +297,6 @@ pub enum Global {
 pub struct Signature {
     pub parameters: Box<[Passing]>,
     pub result: Option<Passing>,
-    /// Whether it takes more arguments after the parameters, as a C
-    /// function may.
-    pub variadic: bool,
     /// For a call of a C function: how C passes each argument, the extra
     /// ones of a variadic call too, and the result, as clang does on the
     /// target. `None` in Peeper's own convention.
@@ -1276,7 +1271,7 @@ impl Printer<'_> {
 
     /// A slot as its name and index, `sum.2`; a temporary has no name.
     fn write_slot(&mut self, slot: Id<Slot>) {
-        if !self.body.slots[slot].hidden {
+        if self.body.slots[slot].debug_type.is_some() {
             self.out
                 .push_str(self.file.slice(self.body.slots.span(slot)));
         }
