@@ -425,6 +425,17 @@ pub enum Passing {
     Memory { size: u64, align: u64 },
 }
 
+impl Passing {
+    /// The class of the register that carries it: its own, or the address
+    /// of its memory.
+    pub fn register_class(self) -> Class {
+        match self {
+            Passing::Register { class, .. } => class,
+            Passing::Memory { .. } => Class::Pointer,
+        }
+    }
+}
+
 pub struct Block {
     pub instructions: List<Instruction>,
     pub terminator: Terminator,
@@ -613,6 +624,17 @@ pub enum Comparison {
     UnsignedLessOrEqual,
     FloatLess,
     FloatLessOrEqual,
+}
+
+impl Comparison {
+    /// `<` and `<=` of two integers, `signed` or not.
+    pub fn integer_less(signed: bool) -> (Comparison, Comparison) {
+        if signed {
+            (Comparison::SignedLess, Comparison::SignedLessOrEqual)
+        } else {
+            (Comparison::UnsignedLess, Comparison::UnsignedLessOrEqual)
+        }
+    }
 }
 
 /// How a `Convert` instruction reads a register as another class.
@@ -983,10 +1005,9 @@ impl Body {
                 kind => kind.own_class(),
             },
             Operand::Constant { class, .. } => Some(class),
-            Operand::Parameter(index) => match self.signature.parameters[index as usize] {
-                Passing::Register { class, .. } => Some(class),
-                Passing::Memory { .. } => Some(Class::Pointer),
-            },
+            Operand::Parameter(index) => {
+                Some(self.signature.parameters[index as usize].register_class())
+            }
             Operand::Global(_) => Some(Class::Pointer),
         }
     }

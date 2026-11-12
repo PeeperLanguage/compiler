@@ -566,12 +566,14 @@ impl Lowering<'_> {
         integer: Integer,
         span: Span,
     ) -> Operand {
-        let comparison = if integer.signed {
-            Comparison::SignedLessOrEqual
-        } else {
-            Comparison::UnsignedLessOrEqual
-        };
-        self.compare(comparison, Class::integer(integer.bits), start, end, span)
+        let (_, less_or_equal) = Comparison::integer_less(integer.signed);
+        self.compare(
+            less_or_equal,
+            Class::integer(integer.bits),
+            start,
+            end,
+            span,
+        )
     }
 
     /// Lowers the `thir::Stmt::ForRange` `statement`. On entry, once:
@@ -700,11 +702,7 @@ impl Lowering<'_> {
             let next = self.integer(IntegerOp::Add, passes_class, passes_now, one, range_span);
             self.store(passes_class, Place::whole(passes), next, range_span);
         }
-        let (less, less_or_equal) = if step_integer.signed {
-            (Comparison::SignedLess, Comparison::SignedLessOrEqual)
-        } else {
-            (Comparison::UnsignedLess, Comparison::UnsignedLessOrEqual)
-        };
+        let (less, less_or_equal) = Comparison::integer_less(step_integer.signed);
         let more = match included {
             Some(true) => self.compare(less_or_equal, size_class, step, left_now, range_span),
             Some(false) => self.compare(less, size_class, step, left_now, range_span),

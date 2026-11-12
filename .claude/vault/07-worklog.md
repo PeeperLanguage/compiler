@@ -392,3 +392,22 @@
   can be in a table today (a probe of `#[extern] fn P::size(self)` is
   refused), so it is naming, not a second decision. Mutation: a wrong C
   name fails the browser run tests. check.sh ok.
+- Untangle fix 5, one owner for class and passing decisions:
+  `Passing::register_class` (a value in memory travels as its address)
+  replaces three copies of that match: `Body::class_of`, the
+  interpreter's `fits`, LLVM's `peeper_types`. `Comparison::integer_less`
+  picks signed or unsigned `<`/`<=` once for `binary_operation` and the
+  two for-range comparisons. Lowering's `class` reuses `float_class`, as
+  float negate now does. `Lowering::signature` turns a function type into
+  a MIR signature once, for a body's own signature and for each interface
+  table entry. The table entry's receiver override (`self` as a pointer
+  register) is dropped: the entry is built from the interface's method
+  types, where `self` is `&Shape` (a pointer register) or an owned `Shape`
+  (memory, passed by address), and the only reader (LLVM's `declare`)
+  writes `ptr` for both. No dump
+  changes. Mutation: `register_class` giving `I64` for memory and
+  `integer_less` swapping signed both fail the browser run tests; dropping
+  the override failed nothing, which is how it was found dead. Skipped:
+  layout's size bands (alignment, not a class), `Class::bits` on Pointer,
+  `class` vs `in_memory`, the call-site signature (it carries C variadic
+  arguments the type does not), "void means none". check.sh ok.

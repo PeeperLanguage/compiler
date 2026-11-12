@@ -734,10 +734,7 @@ impl<'b, 'f> Interpreter<'b, 'f> {
 /// struct behind it differs by implementation, and the struct itself in the
 /// body of one that takes `self` whole.
 fn fits(called: &Signature, body: &Signature) -> bool {
-    let class = |passing: &Passing| match *passing {
-        Passing::Register { class, .. } => class,
-        Passing::Memory { .. } => Class::Pointer,
-    };
+    let class = |passing: &Passing| passing.register_class();
     let parameters = called.parameters.iter().map(class);
     called.hidden_parameters() == body.hidden_parameters()
         && called.result.as_ref().map(class) == body.result.as_ref().map(class)

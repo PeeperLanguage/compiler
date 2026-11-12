@@ -29,10 +29,10 @@ pub fn binary_operation(op: BinaryOp, number: &Type) -> BinaryOperation {
         Type::Integer(Integer { signed, .. }) => (false, signed),
         _ => unreachable!("only numbers have arithmetic"),
     };
-    let (less, less_or_equal) = match (float, signed) {
-        (true, _) => (Comparison::FloatLess, Comparison::FloatLessOrEqual),
-        (false, true) => (Comparison::SignedLess, Comparison::SignedLessOrEqual),
-        (false, false) => (Comparison::UnsignedLess, Comparison::UnsignedLessOrEqual),
+    let (less, less_or_equal) = if float {
+        (Comparison::FloatLess, Comparison::FloatLessOrEqual)
+    } else {
+        Comparison::integer_less(signed)
     };
     let compare = |comparison, swapped| BinaryOperation::Compare {
         comparison,

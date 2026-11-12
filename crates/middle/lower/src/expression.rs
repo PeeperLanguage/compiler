@@ -758,11 +758,7 @@ impl Lowering<'_> {
                 self.arithmetic(IntegerOp::Subtract, integer, zero, operand, span)
             }
             (UnaryOp::Negate, &Type::Float(float)) => {
-                let class = if float == Float::F32 {
-                    Class::F32
-                } else {
-                    Class::F64
-                };
+                let class = float_class(float);
                 // From -0.0, so that -(0.0) is -0.0 and -(-0.0) is 0.0.
                 let sign = if float == Float::F32 {
                     1 << 31
@@ -1084,35 +1080,15 @@ impl Lowering<'_> {
         else {
             unreachable!("an interface reference's interface is checked")
         };
-        // As a call through the table passes them: `self` as an address.
+        // In the interface's method types `self` is `&Shape` or an owned
+        // `Shape`; both pass an address, as a call through the table does.
         let table = (methods.iter().zip(signatures))
             .map(|(&definition, &signature)| {
-                let Type::Function {
-                    parameters,
-                    result,
-                    origins,
-                    ..
-                } = &self.types[signature]
-                else {
-                    unreachable!("a method's signature is a function type")
-                };
-                let receiver = Passing::Register {
-                    class: Class::Pointer,
-                    signed: false,
-                };
-                let parameters = std::iter::once(receiver)
-                    .chain(parameters[1..].iter().map(|&ty| self.passing(ty)));
                 let copy = FunctionCopy {
                     definition,
                     arguments: ConstArguments::NONE,
                 };
-                let signature = Signature {
-                    parameters: parameters.collect(),
-                    result: self.result_passing(*result),
-                    c: None,
-                    origins: origins.clone(),
-                };
-                (copy, signature)
+                (copy, self.signature(signature))
             })
             .collect();
         let table = self.global(Global::Functions(table));

@@ -55,6 +55,8 @@ use model::semantic_types::range_fields;
 use model::thir;
 use source::Span;
 
+use crate::expression::float_class;
+
 /// The MIR of the checked body `body` of a function of the type
 /// `function`, for `target`. `None` when checking it reported an error
 /// (`has_errors`) or left it incomplete. `modules` names types for a
@@ -71,10 +73,7 @@ pub fn lower(
         return None;
     }
     let Type::Function {
-        parameters,
-        result,
-        origins,
-        ..
+        parameters, result, ..
     } = &types[function]
     else {
         unreachable!("a body is a function's")
@@ -117,12 +116,7 @@ pub fn lower(
         pointer_bytes,
         usize: Class::integer(target.pointer_bits),
     };
-    lowering.mir.signature = Signature {
-        parameters: parameters.iter().map(|&ty| lowering.passing(ty)).collect(),
-        result: lowering.result_passing(*result),
-        c: None,
-        origins: origins.clone(),
-    };
+    lowering.mir.signature = lowering.signature(function);
     lowering.mir.result_debug_type =
         (types.real(*result) != TypeId::VOID).then(|| lowering.debug_type(*result));
     // One debug scope per block and one slot per THIR variable, in order:
@@ -504,8 +498,7 @@ impl Lowering<'_> {
         match self.types[ty] {
             Type::Bool => Some(Class::I8),
             Type::Integer(integer) => Some(Class::integer(integer.bits)),
-            Type::Float(Float::F32) => Some(Class::F32),
-            Type::Float(Float::F64) => Some(Class::F64),
+            Type::Float(float) => Some(float_class(float)),
             Type::CString | Type::Reference { .. } | Type::RawPointer { .. } => {
                 Some(Class::Pointer)
             }
@@ -540,6 +533,26 @@ impl Lowering<'_> {
     /// none.
     fn result_passing(&self, result: TypeId) -> Option<Passing> {
         (self.types.real(result) != TypeId::VOID).then(|| self.passing(result))
+    }
+
+    /// How a Peeper function of the type `function` is passed its
+    /// parameters and gives its result.
+    fn signature(&self, function: TypeId) -> Signature {
+        let Type::Function {
+            parameters,
+            result,
+            origins,
+            ..
+        } = &self.types[function]
+        else {
+            unreachable!("a signature is a function type's")
+        };
+        Signature {
+            parameters: parameters.iter().map(|&ty| self.passing(ty)).collect(),
+            result: self.result_passing(*result),
+            c: None,
+            origins: origins.clone(),
+        }
     }
 
     /// The pointers, from `at`, in a value of the type `ty` that may hold

@@ -372,10 +372,10 @@ fn peeper_types(signature: &Signature) -> (String, Vec<String>) {
         }
         None => "void".to_string(),
     };
-    parameters.extend(signature.parameters.iter().map(|passing| match *passing {
-        Passing::Register { class, .. } => llvm_type(class).to_string(),
-        Passing::Memory { .. } => "ptr".to_string(),
-    }));
+    parameters.extend(
+        (signature.parameters.iter())
+            .map(|passing| llvm_type(passing.register_class()).to_string()),
+    );
     (result, parameters)
 }
 
