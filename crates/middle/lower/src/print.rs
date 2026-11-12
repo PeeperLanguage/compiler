@@ -166,19 +166,14 @@ impl Lowering<'_> {
                     root: Root::At(value.register()),
                     steps: Box::default(),
                 };
-                let referred = self.read_for_print(at, target, span);
+                // A `&str` is printed from its place, kept in memory.
+                let referred = match self.class(target) {
+                    Some(class) => Value::Register(self.load(class, at, span)),
+                    None => Value::Memory(at),
+                };
                 self.print_value(text, referred, target, span);
             }
             _ => unreachable!("check prints only numbers, `bool`, `&cstr`, `&str` and pointers"),
-        }
-    }
-
-    /// The value of the type `ty` at `place`, to print: loaded, or the
-    /// place itself for a `&str`, kept in memory. Nothing is moved.
-    fn read_for_print(&mut self, place: Place, ty: TypeId, span: Span) -> Value {
-        match self.class(ty) {
-            Some(class) => Value::Register(self.load(class, place, span)),
-            None => Value::Memory(place),
         }
     }
 
@@ -194,7 +189,7 @@ impl Lowering<'_> {
 
     /// A call of the runtime function `runtime` with `arguments`, one per
     /// parameter.
-    fn runtime_call(&mut self, runtime: Runtime, arguments: &[Operand], span: Span) -> Operand {
+    fn runtime_call(&mut self, runtime: Runtime, arguments: &[Operand], span: Span) {
         let signature = Signature::of_runtime(runtime, self.usize);
         self.mir.signatures.push(signature);
         let kind = InstructionKind::Call {
@@ -203,6 +198,6 @@ impl Lowering<'_> {
             arguments: arguments.into(),
             result: None, // the runtime gives no result in memory
         };
-        self.emit(kind, span)
+        self.emit(kind, span);
     }
 }

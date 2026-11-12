@@ -168,7 +168,7 @@ impl Lowering<'_> {
                     let (to, room) = at(&position);
                     let count = count.expect_err("a slice is counted when the program runs");
                     let count = self.as_usize(count, wide, span);
-                    let from = Self::through_slice(value.memory());
+                    let from = value.memory().then(Step::Through);
                     self.copy_elements(to, room, from, count, size, span);
                 }
                 // A value in memory is read by its copy, at the part's own
@@ -774,7 +774,7 @@ impl Lowering<'_> {
             Type::Slice { element, .. } => {
                 let length = self.second_word(place.clone());
                 let read = self.load(self.usize, length, span);
-                place = Self::through_slice(place);
+                place = place.then(Step::Through);
                 (element, Length::Read(read))
             }
             _ => unreachable!("the checker slices only an array or a slice"),

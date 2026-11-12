@@ -35,7 +35,7 @@ pub(super) fn c_signature(
         if target.c_abi != CAbi::SystemV {
             return passing;
         }
-        let needed = match (passing, &types[types.real(ty)]) {
+        let needed = match (passing, &types[ty]) {
             (CPassing::Pieces { count, .. }, _) => count,
             (CPassing::Register { .. }, Type::Integer(integer)) if integer.bits == 128 => 2,
             (CPassing::Register { .. }, Type::Float(_)) | (CPassing::Memory { .. }, _) => 0,
@@ -69,7 +69,7 @@ pub(super) fn c_signature(
 fn c_passing(types: &Types, target: &Machine, ty: TypeId, result: bool) -> CPassing {
     let abi = target.c_abi;
     let direct = |extension| CPassing::Register { extension };
-    let Integer { signed, bits } = match types[types.real(ty)] {
+    let Integer { signed, bits } = match types[ty] {
         Type::Bool if abi == CAbi::Aapcs64 => return direct(None),
         Type::Bool => return direct(Some(Extension::Zero)),
         Type::Integer(integer) => integer,

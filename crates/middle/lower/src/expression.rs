@@ -298,7 +298,10 @@ impl Lowering<'_> {
         let root = loop {
             match self.thir.exprs[outer].kind {
                 thir::ExprKind::Field { value, index } => {
-                    steps.push(Ok(Step::Offset(self.field_offset(value, index))));
+                    let ty = self.thir.exprs[value].ty;
+                    let (offset, _) =
+                        model::layout::field_placed(self.types, ty, index as usize, self.target);
+                    steps.push(Ok(Step::Offset(offset)));
                     outer = value;
                 }
                 thir::ExprKind::Dereference(reference) => {
@@ -358,14 +361,6 @@ impl Lowering<'_> {
             place = place.then(step);
         }
         Some(place)
-    }
-
-    /// Where field `index` of the struct or range value `value` is from
-    /// its start.
-    fn field_offset(&self, value: Id<thir::Expr>, index: u32) -> u64 {
-        let ty = self.types.real(self.thir.exprs[value].ty);
-        let (offset, _) = model::layout::field_placed(self.types, ty, index as usize, self.target);
-        offset
     }
 
     /// The element `indexing` (`thir::ExprKind::Index`) takes of the
@@ -1115,7 +1110,7 @@ impl Lowering<'_> {
         let borrowed_type = self.types.real(self.thir.exprs[borrowed].ty);
         match (&self.types[borrowed_type], &self.types[ty]) {
             // A slice of an array's elements, or a slice's elements lent again.
-            (_, Type::Slice { .. } | Type::Str) => {
+            (_, Type::Slice { .. }) => {
                 let (elements, size, length) =
                     if let Type::Array { length, .. } = self.types[borrowed_type] {
                         let (size, _) = layout(self.types, borrowed_type, self.target);
@@ -1124,7 +1119,7 @@ impl Lowering<'_> {
                     } else {
                         let length = self.second_word(place.clone());
                         let length = self.load(self.usize, length, span);
-                        (Self::through_slice(place), None, length)
+                        (place.then(Step::Through), None, length)
                     };
                 let address = self.borrow(elements, size, mutable, &SLICE_WORDS, span);
                 self.slice_words(address, length, to, span);
@@ -1142,7 +1137,7 @@ impl Lowering<'_> {
                         },
                         place,
                     ),
-                    _ => (place.clone(), Self::through_slice(place)),
+                    _ => (place.clone(), place.then(Step::Through)),
                 };
                 // Only the program knows which struct it views.
                 let address = self.borrow(struct_place, None, mutable, &REFERENCE_WORDS, span);

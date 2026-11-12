@@ -92,7 +92,7 @@ pub fn lower(
                 c: None,
                 origins: Box::default(),
             },
-            returned: match &types[types.real(*result)] {
+            returned: match &types[*result] {
                 Type::Interface { .. } => Some("an interface holding"),
                 Type::Slice { .. } => Some("a slice of"),
                 _ if types.holds_loans(*result).is_some() => Some("a reference into"),
@@ -662,7 +662,6 @@ impl Lowering<'_> {
                     .map_or(TypeId::U8, |(element, _)| element);
                 let base = self.debug_type_at_depth(element, depth);
                 let name = model::program::type_text(self.modules, self.types, ty);
-                let composite = self.debug_types.reserve(ty);
                 let pointer = DebugType::Pointer {
                     name: "".into(),
                     to: Some(base),
@@ -683,13 +682,11 @@ impl Lowering<'_> {
                         ty: usize,
                     },
                 ];
-                let composite_type = DebugType::Composite {
+                DebugType::Composite {
                     name: name.into(),
                     size: 2 * pointer_bytes,
                     members: members.into(),
-                };
-                self.debug_types.define(composite, composite_type);
-                return composite;
+                }
             }
             // Its address and its methods' table, neither of a known type.
             Type::InterfaceReference { .. } | Type::Interface { .. } => {
@@ -795,12 +792,6 @@ impl Lowering<'_> {
     fn field(&self, place: Place, ty: TypeId, index: usize) -> (Place, TypeId) {
         let (offset, field) = field_placed(self.types, ty, index, self.target);
         (place.then(Step::Offset(offset)), self.types.real(field))
-    }
-
-    /// The step from a slice's words to its elements: through the pointer
-    /// at its start.
-    fn through_slice(place: Place) -> Place {
-        place.then(Step::Through)
     }
 
     /// The second word of a two-word value at `place`: a slice's length,
