@@ -235,11 +235,9 @@ impl Lowering<'_> {
         }
     }
 
-    /// The integer `value` of the type `ty` as a constant.
-    pub(super) fn integer_constant(&mut self, ty: TypeId, value: u64, span: Span) -> Operand {
-        let Type::Integer(integer) = self.types[ty] else {
-            unreachable!("an integer constant has an integer type")
-        };
+    /// The integer `value`, of one limb, of the type `integer` as a
+    /// constant. A `usize` one is `Operand::integer(self.usize, value)`.
+    pub(super) fn integer_constant(&mut self, integer: Integer, value: u64, span: Span) -> Operand {
         self.integer_operand(integer, &Limbs::new(integer.bits, &[value]), span)
     }
 
@@ -276,11 +274,7 @@ impl Lowering<'_> {
             let Type::Array { length, .. } = self.types[self.types.real(array)] else {
                 unreachable!("`.len` is the length of an array, slice or `&str`")
             };
-            return Some(Value::Register(self.integer_constant(
-                self.types.usize,
-                length,
-                span,
-            )));
+            return Some(Value::Register(Operand::integer(self.usize, length)));
         }
         let length = self.second_word(place);
         Some(Value::Register(self.load(self.usize, length, span)))
@@ -378,7 +372,7 @@ impl Lowering<'_> {
             Type::Array {
                 element, length, ..
             } if let Some(at) = self.known_position(index) => {
-                let at = self.integer_constant(self.types.usize, at, span);
+                let at = Operand::integer(self.usize, at);
                 (element, at, Some(length))
             }
             Type::Array {
@@ -466,7 +460,7 @@ impl Lowering<'_> {
         };
         let wide = integer.bits > size.bits;
         if wide && integer.signed {
-            let zero = self.integer_constant(ty, 0, span);
+            let zero = self.integer_constant(integer, 0, span);
             let class = Class::integer(integer.bits);
             let failed = self.compare(Comparison::SignedLess, class, value, zero, span);
             self.emit_check(failed, message, span);
@@ -476,8 +470,8 @@ impl Lowering<'_> {
         } else {
             self.convert_integer(value, integer, size, span)
         };
-        let compared_type = if wide { ty } else { self.types.usize };
-        let compared_class = Class::integer(if wide { integer.bits } else { size.bits });
+        let compared_type = if wide { integer } else { size };
+        let compared_class = Class::integer(compared_type.bits);
         let limit = match length {
             Length::Known(length) => self.integer_constant(compared_type, length, span),
             Length::Read(length) if wide => self.convert_integer(length, size, integer, span),
@@ -529,15 +523,7 @@ impl Lowering<'_> {
             } else {
                 Conversion::ZeroExtend
             };
-            self.emit(
-                InstructionKind::Convert {
-                    conversion,
-                    from: from_class,
-                    to: to_class,
-                    value,
-                },
-                span,
-            )
+            self.convert(conversion, from_class, to_class, value, span)
         };
         // To a type narrower than its class, or one read with the other sign.
         if to.bits < from.bits || to.bits < to_class.bits() && from.signed != to.signed {
@@ -699,8 +685,7 @@ impl Lowering<'_> {
     ) -> Operand {
         let count_class = Class::integer(count_type.bits);
         if !constant {
-            let width = Limbs::new(count_type.bits, &[u64::from(shifted.bits)]);
-            let width = self.integer_operand(count_type, &width, span);
+            let width = self.integer_constant(count_type, u64::from(shifted.bits), span);
             // An unsigned count type too narrow to reach the width holds no
             // count outside it; a signed one holds negative counts.
             if count_type.signed || count_type.bits > shifted.bits.ilog2() {
@@ -728,15 +713,7 @@ impl Lowering<'_> {
         } else {
             Conversion::ZeroExtend
         };
-        self.emit(
-            InstructionKind::Convert {
-                conversion,
-                from: count_class,
-                to: shifted_class,
-                value: count,
-            },
-            span,
-        )
+        self.convert(conversion, count_class, shifted_class, count, span)
     }
 
     fn lower_unary(
@@ -749,7 +726,7 @@ impl Lowering<'_> {
         let operand = self.lower_expr(value)?.register();
         let result = match (op, &self.types[ty]) {
             (UnaryOp::Negate, &Type::Integer(integer)) => {
-                let zero = self.integer_operand(integer, &Limbs::new(integer.bits, &[]), span);
+                let zero = self.integer_constant(integer, 0, span);
                 self.arithmetic(IntegerOp::Subtract, integer, zero, operand, span)
             }
             (UnaryOp::Negate, &Type::Float(float)) => {
@@ -851,7 +828,7 @@ impl Lowering<'_> {
         Some(Value::Register(converted))
     }
 
-    fn convert(
+    pub(super) fn convert(
         &mut self,
         conversion: Conversion,
         from: Class,
@@ -1112,7 +1089,7 @@ impl Lowering<'_> {
                 let (elements, size, length) =
                     if let Type::Array { length, .. } = self.types[borrowed_type] {
                         let (size, _) = layout(self.types, borrowed_type, self.target);
-                        let length = self.integer_constant(self.types.usize, length, span);
+                        let length = Operand::integer(self.usize, length);
                         (place, Some(size), length)
                     } else {
                         let length = self.second_word(place.clone());

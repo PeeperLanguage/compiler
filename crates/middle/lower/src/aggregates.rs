@@ -209,13 +209,7 @@ impl Lowering<'_> {
         if wide == self.usize {
             return count;
         }
-        let kind = InstructionKind::Convert {
-            conversion: Conversion::Truncate,
-            from: wide,
-            to: self.usize,
-            value: count,
-        };
-        self.emit(kind, span)
+        self.convert(Conversion::Truncate, wide, self.usize, count, span)
     }
 
     /// How many elements the spread part `part`, of the type `part_type`,
@@ -284,13 +278,7 @@ impl Lowering<'_> {
         if from == to {
             return value;
         }
-        let kind = InstructionKind::Convert {
-            conversion: Conversion::ZeroExtend,
-            from,
-            to,
-            value,
-        };
-        self.emit(kind, span)
+        self.convert(Conversion::ZeroExtend, from, to, value, span)
     }
 
     /// Copies `count` elements of `size` bytes from `from`, a slice's
@@ -453,8 +441,11 @@ impl Lowering<'_> {
         let end = self.lower_expr(end)?.register();
         let step = self.lower_expr(step)?.register();
         if !matches!(step, Operand::Constant { .. }) {
-            let zero = self.integer_constant(size, 0, step_span);
-            let class = self.class(size).expect("a step is an integer");
+            let Type::Integer(step_integer) = self.types[size] else {
+                unreachable!("a step is an integer")
+            };
+            let zero = self.integer_constant(step_integer, 0, step_span);
+            let class = Class::integer(step_integer.bits);
             let failed = self.compare(Comparison::Equal, class, step, zero, step_span);
             self.emit_check(failed, RANGE_STEP_MESSAGE, step_span);
         }
@@ -515,7 +506,7 @@ impl Lowering<'_> {
             None if up => lowering.convert_integer(step, step_integer, integer, span),
             None => {
                 let delta = lowering.convert_integer(step, step_integer, integer, span);
-                let zero = lowering.integer_operand(integer, &Limbs::new(integer.bits, &[]), span);
+                let zero = lowering.integer_constant(integer, 0, span);
                 lowering.arithmetic(IntegerOp::Subtract, integer, zero, delta, span)
             }
         };
@@ -798,10 +789,9 @@ impl Lowering<'_> {
             Some(start) if checked(known_start) => {
                 self.lower_slice_end(start, BinaryOp::GreaterThan, length)?
             }
-            _ => self.integer_constant(
-                self.types.usize,
+            _ => Operand::integer(
+                self.usize,
                 known_start.expect("an unchecked start is known"),
-                span,
             ),
         };
         let end_operand = match (end, known_end) {
@@ -820,7 +810,7 @@ impl Lowering<'_> {
                     end
                 }
             }
-            (_, Some(known)) => self.integer_constant(self.types.usize, known, span),
+            (_, Some(known)) => Operand::integer(self.usize, known),
             // A slice's missing end is its length.
             (_, None) => match length {
                 Length::Read(length) => length,
@@ -843,7 +833,7 @@ impl Lowering<'_> {
             self.emit_check(failed, SLICE_ORDER_MESSAGE, span);
         }
         let count = match (known_start, known_end) {
-            (Some(start), Some(end)) => self.integer_constant(self.types.usize, end - start, span),
+            (Some(start), Some(end)) => Operand::integer(self.usize, end - start),
             (Some(0), None) => end_operand,
             _ => self.integer(
                 IntegerOp::Subtract,

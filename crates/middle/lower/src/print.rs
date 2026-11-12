@@ -82,13 +82,7 @@ impl Lowering<'_> {
                     } else {
                         Conversion::ZeroExtend
                     };
-                    let kind = InstructionKind::Convert {
-                        conversion,
-                        from: class,
-                        to: wide,
-                        value,
-                    };
-                    self.emit(kind, span)
+                    self.convert(conversion, class, wide, value, span)
                 };
                 let limbs = self.register_slot(wide, span);
                 self.store(wide, Place::whole(limbs), value, span);
@@ -105,15 +99,10 @@ impl Lowering<'_> {
             Type::Float(float) => {
                 let value = value.register();
                 let (value, bits) = match float {
-                    Float::F32 => {
-                        let kind = InstructionKind::Convert {
-                            conversion: Conversion::FloatWiden,
-                            from: Class::F32,
-                            to: Class::F64,
-                            value,
-                        };
-                        (self.emit(kind, span), 32)
-                    }
+                    Float::F32 => (
+                        self.convert(Conversion::FloatWiden, Class::F32, Class::F64, value, span),
+                        32,
+                    ),
                     Float::F64 => (value, 64),
                 };
                 self.print_text(text, span);
