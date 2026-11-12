@@ -357,3 +357,12 @@
   dropping the high word fails the browser run fixtures. check.sh ok.
   Uncommitted together with the third part; that part is saved as
   `target/step12-probes/untangle/call-result*.patch` to commit alone.
+- Untangle fix 4, fifth part: a `panic`'s message is on its terminator,
+  `Terminator::Panic { message: Box<[u8]>, span }`, as a `Check`'s is on
+  its instruction, instead of an index into the body's globals. The
+  globals entry was read back by LLVM and the interpreter through an
+  `unreachable!` that it was bytes, and LLVM wrote it as an `@.str` that
+  nothing used (the panic writes its own "panic: ... -->" text). The
+  two terminator matches now match on a reference. `mir_panic` dump:
+  `panic "too big"`, no `global 0`. Mutation: the interpreter writing
+  the message short fails the browser run tests. check.sh ok.

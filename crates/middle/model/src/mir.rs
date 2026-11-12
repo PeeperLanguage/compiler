@@ -878,10 +878,10 @@ pub enum Terminator {
         value: Option<Operand>,
         span: Span,
     },
-    /// `panic message` at `span`: writes the global's bytes and where, then
-    /// ends the program.
+    /// `panic message` at `span`: writes `message` and where, then ends
+    /// the program.
     Panic {
-        message: u32,
+        message: Box<[u8]>,
         span: Span,
     },
     /// The function's closing brace, reached without a `return`.
@@ -1219,7 +1219,7 @@ impl Printer<'_> {
                 }
             }
             Terminator::Panic { message, .. } => {
-                _ = write!(self.out, "panic global {message}");
+                _ = write!(self.out, "panic \"{}\"", message.escape_ascii());
             }
             Terminator::FallOff(_) => self.out.push_str("fall off at `}`"),
         }

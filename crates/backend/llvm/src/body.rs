@@ -615,13 +615,13 @@ impl Writer<'_, '_, '_> {
             self.write_instruction(out, id);
         }
         // The line, then the location of its span, if it has one.
-        let span = match data.terminator {
-            Terminator::Jump(target) => {
+        let span = match &data.terminator {
+            &Terminator::Jump(target) => {
                 let target = self.targets[target.index()];
                 _ = write!(out, "  br label %bb{}", target.index());
                 None
             }
-            Terminator::Branch {
+            &Terminator::Branch {
                 condition,
                 span,
                 then,
@@ -638,7 +638,7 @@ impl Writer<'_, '_, '_> {
                 );
                 Some(span)
             }
-            Terminator::Return {
+            &Terminator::Return {
                 value: Some(value),
                 span,
             } => {
@@ -646,19 +646,16 @@ impl Writer<'_, '_, '_> {
                 Some(span)
             }
             Terminator::Panic { message, span } => {
-                let Global::Bytes(text) = &body.globals[message as usize] else {
-                    unreachable!("a panic's message is bytes")
-                };
-                self.write_panic(out, text, span, data.debug_scope);
+                self.write_panic(out, message, *span, data.debug_scope);
                 None
             }
             // Reachable with a result only in a function with an error,
             // which is not lowered.
-            Terminator::FallOff(_) if body.signature.result.is_some() => {
+            &Terminator::FallOff(_) if body.signature.result.is_some() => {
                 out.push_str("  unreachable");
                 None
             }
-            Terminator::Return { value: None, span } | Terminator::FallOff(span) => {
+            &Terminator::Return { value: None, span } | &Terminator::FallOff(span) => {
                 out.push_str("  ret void");
                 Some(span)
             }

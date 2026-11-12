@@ -457,9 +457,9 @@ impl<'b, 'f> Interpreter<'b, 'f> {
             };
             self.count_steps(1)
                 .map_err(|message| self.fail(message, span))?;
-            let next = match block.terminator {
-                Terminator::Jump(target) => target,
-                Terminator::Branch {
+            let next = match &block.terminator {
+                &Terminator::Jump(target) => target,
+                &Terminator::Branch {
                     condition,
                     then,
                     otherwise,
@@ -468,21 +468,17 @@ impl<'b, 'f> Interpreter<'b, 'f> {
                     0 => otherwise,
                     _ => then,
                 },
-                Terminator::Return { value, .. } => {
+                &Terminator::Return { value, .. } => {
                     let value = value.map(|value| self.operand(value));
                     match self.finish_call(value) {
                         Some(returned) => return Ok((returned, span)),
                         None => continue,
                     }
                 }
-                Terminator::Panic { message, span } => {
-                    let body = self.frame().body;
-                    let Global::Bytes(text) = &body.globals[message as usize] else {
-                        unreachable!("a panic's message is read-only data")
-                    };
-                    return Err(self.fail(String::from_utf8_lossy(text), span));
+                Terminator::Panic { message, .. } => {
+                    return Err(self.fail(String::from_utf8_lossy(message), span));
                 }
-                Terminator::FallOff(_) => match self.finish_call(None) {
+                &Terminator::FallOff(_) => match self.finish_call(None) {
                     Some(returned) => return Ok((returned, span)),
                     None => continue,
                 },

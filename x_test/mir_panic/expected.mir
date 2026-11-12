@@ -8,7 +8,7 @@ fn check:
     %5 = slt i32 10, %4
     branch %5, bb1, bb2
   bb1:
-    panic global 0
+    panic "too big"
   bb2:
     %6 = load i32 doubled.1
     dead doubled.1
@@ -20,7 +20,6 @@ fn check:
     dead doubled.1
     dead n.0
     fall off at `}`
-  global 0 = "too big"
 fn each:
   bb0:
     %0 = ne i32 3, 0
@@ -41,7 +40,7 @@ fn each:
     store i32 .1, %9
     store i32 .2, %10
     store i8 .3, %8
-    panic global 0
+    panic "in a loop"
   bb3:
     dead .3
     dead .2
@@ -52,7 +51,6 @@ fn each:
   bb5:
     dead v.0
     jump bb4
-  global 0 = "in a loop"
 fn main:
   bb0:
     %0 = call check(2)

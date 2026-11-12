@@ -2,7 +2,6 @@
 //! `continue`, and each statement kind.
 
 use arena::Id;
-use model::mir::Global;
 use model::mir::InstructionKind;
 use model::mir::Passing;
 use model::mir::Place;
@@ -151,11 +150,8 @@ impl Lowering<'_> {
                     else {
                         unreachable!("the checker gives a panic a constant message")
                     };
-                    let message = self.global(Global::Bytes(text.clone()));
-                    let model::mir::Operand::Global(message) = message else {
-                        unreachable!("`global` gives a global")
-                    };
                     // No `Dead`s: a panic ends the program without unwinding.
+                    let message = text.clone();
                     self.finish(Terminator::Panic { message, span });
                     self.block = self.new_block(span); // unreachable, as after a `return`
                 }
