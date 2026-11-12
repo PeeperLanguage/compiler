@@ -431,3 +431,19 @@
   writes the same `.ll` before and after. Mutation: dropping either half
   of the filter fails `jumps_skip_empty_blocks_and_unreached_ones_are_left_out`.
   check.sh ok.
+- Untangle, `flow` split into modules (Fuad: "yes, modules, in that
+  order"): `lib.rs` keeps only the engine (`dataflow`, `predecessors`,
+  `Bits`); `missing_return.rs` and `unreachable.rs` hold the two small
+  checks; `loans.rs` became `loans/` with `mod.rs` (`Holder`, `Loan`,
+  `Holders`, `Loans`, `report_loan_errors`, `holder_ids`, the walk
+  `Loans::report`), `places.rs`, `holders.rs`, `two_phase.rs`,
+  `passes.rs` (with `sorted_union`, used only there) and `errors.rs`.
+  Each file adds its job's methods in its own `impl` block; items a
+  sibling uses are `pub(super)`, nothing wider. The checker calls
+  `flow::missing_return::report_missing_return` and
+  `flow::unreachable::warn_unreachable_code`; no re-exports. A pure move:
+  the old and new files hold the same lines, apart from imports, `impl`
+  wrappers, `pub(super)` and two signatures rustfmt wrapped. `check
+  mixed`: 1,181-1,185 M instructions after, 1,180-1,193 M before. The
+  code database's flow rows were regenerated from the source (they named
+  items deleted before this, such as `Loans::variable_name`). check.sh ok.

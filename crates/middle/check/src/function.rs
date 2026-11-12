@@ -213,14 +213,14 @@ impl Checker<'_> {
         flow::variable_state::report_variable_state_errors(&mir, file, diagnostics);
         let pointer_bytes = u64::from(self.target.pointer_bits / 8);
         flow::loans::report_loan_errors(&mir, pointer_bytes, file, diagnostics);
-        flow::warn_unreachable_code(&mir, file, diagnostics);
+        flow::unreachable::warn_unreachable_code(&mir, file, diagnostics);
         // Last: it points at the closing brace.
         let result_text = || {
             types.text(*result, |definition| {
                 model::program::declared_text(modules, definition)
             })
         };
-        flow::report_missing_return(&mir, file, result_text, diagnostics);
+        flow::missing_return::report_missing_return(&mir, file, result_text, diagnostics);
         Some(mir)
     }
 

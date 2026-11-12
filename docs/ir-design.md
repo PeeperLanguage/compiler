@@ -706,7 +706,7 @@ of the arguments at the callee's origins, so they stay borrowed while it
 is in use, and a `&mut` argument there is not reserved: its loan outlives
 the call. Callers read only the signature, never the callee's body.
 
-The unreachable-code check (W0001, `flow::warn_unreachable_code`)
+The unreachable-code check (W0001, `flow::unreachable::warn_unreachable_code`)
 warns once at the first code of each stretch of blocks no path reaches, such
 as code after a `return` ("this never runs"); the blocks that stretch leads to
 are not warned about again. Reachability ignores constant values, as for the
