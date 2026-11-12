@@ -277,3 +277,26 @@
   lookup. A `Dead`'s width is now `None` (all there is) for `Some(size)`:
   the same bytes. Mutation: `Dead` giving no access fails the fixtures.
   `check mixed` 1,207 M (was 1,193). check.sh ok.
+- Untangle fix 3, the loan check built in one step (Fuad: "Yes"):
+  `Holders` (body, pointer bytes, borrows, holder starts, loans through)
+  owns every per-place and per-line query and the steps (`uses`,
+  `defines`, `step_live`, `step_held`, `step_write`); `reserved_loans`
+  and `lines_that_matter` are its methods returning values; `Loans {
+  holders, reserved, lines }` is one literal, no placeholder. The lines
+  that matter are stored by block and are what every walk walks (no
+  filter); `next_use` walks them too (a line not among them uses and sets
+  no holder). `Holders::lent` gives a loan's `Borrowed` (instruction,
+  place, size, mutable, words) or `Parameter(position)`: five hand
+  destructures and four numbering decodes gone; `loan_count`,
+  `first_level`, `value_holder`, `call_arguments` (destination and
+  written arguments, the hidden count decided once; `origin_holders`
+  takes them) each replace two or three copies; `holder_words` indexes
+  the instruction instead of `ids().nth`; `returned` is
+  `returned_holders`; `step_write` finds the result kept in memory by
+  its holders. Left: the literal `Root::At(Parameter(0))` (lowering's,
+  next fix), `sorted_union` beside `loans_of` (different jobs),
+  `mir::Holder` (same idea, not named here). Mutation: a parameter
+  loan's position, the hidden split, the result write each fail the
+  fixtures; `holder_words`' `Borrow` branch cannot be seen (a slice
+  borrow is stored to a slot before use; a reference's words are the
+  fallback's). `check mixed` 1,207 -> 1,178 M. check.sh ok.
