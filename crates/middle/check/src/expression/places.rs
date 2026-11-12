@@ -22,20 +22,16 @@ impl ThirBuilder<'_, '_> {
     /// slice's or a `&str`'s only field. An array's type gives it, so the
     /// array is not read.
     pub(super) fn check_field(&mut self, value: Id<ast::Expr>, field: Ident) -> Expr {
-        let mut value = self.add_expr(value, None);
+        let value = self.add_expr(value, None);
         let ty = self.body.exprs[value].ty;
         let pointee = self.checker.types[ty].pointee();
         let viewed = pointee.unwrap_or(ty);
         // `Some(length)` for an array, `Some(None)` for a slice or a `&str`,
-        // whose length is known only when the program runs: it is read from
-        // the value, so through the reference to it.
+        // whose length is known only when the program runs.
         let length = match &self.checker.types[viewed] {
             Type::Str => Some(None),
             other => other.elements().map(|(_, length)| length),
         };
-        if length == Some(None) {
-            value = self.through_pointer(value, self.body.exprs.span(value));
-        }
         // shortcut: `len` as a field until the language can write it as a
         // free function over any array; then move it there.
         if let Some(length) = length {
@@ -49,7 +45,10 @@ impl ThirBuilder<'_, '_> {
                 return Expr::INVALID;
             }
             let usize = self.checker.types.usize;
+            // Read from the value, so through the reference to it: a slice's
+            // or a `&str`'s, or an array's whose call must still run.
             let Some(length) = length.filter(|_| !self.body.has_call(value)) else {
+                let value = self.through_pointer(value, self.body.exprs.span(value));
                 return Expr {
                     ty: usize,
                     kind: ExprKind::Length(value),

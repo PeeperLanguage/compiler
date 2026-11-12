@@ -138,15 +138,8 @@ impl Lowering<'_> {
         Some(Value::Memory(Place::whole(slot)))
     }
 
-    /// The `&str` constant `bytes` at `place`: their address and length.
-    fn str_constant(&mut self, bytes: &[u8], place: Place, span: Span) {
-        let address = self.global(Global::Bytes(bytes.into()));
-        let length = Operand::integer(self.usize, bytes.len() as u64);
-        self.slice_words(address, length, place, span);
-    }
-
     /// The constant `value`, of the type `ty`, as a register; a `&str` is
-    /// `str_constant`'s.
+    /// in memory (`lower_into`).
     fn constant(&mut self, value: &Constant, ty: TypeId, span: Span) -> Value {
         match value {
             Constant::Bool(value) => {
@@ -194,7 +187,7 @@ impl Lowering<'_> {
     /// bits.
     pub(super) fn class_constant(&mut self, class: Class, value: &Limbs, span: Span) -> Operand {
         if let Class::Wide(_) = class {
-            let mut bytes = vec![0; class.bytes(self.pointer_bytes) as usize];
+            let mut bytes = vec![0; class.bytes(self.target.pointer_bytes()) as usize];
             value.write_le_bytes(&mut bytes);
             let global = self.global(Global::Bytes(bytes.into()));
             let place = Place {
@@ -210,8 +203,9 @@ impl Lowering<'_> {
         }
     }
 
-    /// The integer `value`, of one limb, of the type `integer` as a
-    /// constant. A `usize` one is `Operand::integer(self.usize, value)`.
+    /// The integer `value`, of one limb, of the type `integer` as an
+    /// operand, cut to the type's width: `value` must fit it. A `usize` one
+    /// is `Operand::integer(self.usize, value)`.
     pub(super) fn integer_constant(&mut self, integer: Integer, value: u64, span: Span) -> Operand {
         self.integer_operand(integer, &Limbs::new(integer.bits, &[value]), span)
     }
@@ -245,11 +239,20 @@ impl Lowering<'_> {
         // copied, and a `&mut []` stays usable.
         let place = self.place_of(value)?;
         if !self.types[value_type].is_slice_shaped() {
-            let array = self.types[value_type].pointee().unwrap_or(value_type);
-            let Type::Array { length, .. } = self.types[self.types.real(array)] else {
+            let Type::Array { length, .. } = self.types[value_type] else {
                 unreachable!("`.len` is the length of an array, slice or `&str`")
             };
-            return Some(Value::Register(Operand::integer(self.usize, length)));
+            // A register, not a constant: the checker took this length as
+            // known only when the program runs, after the call, so a
+            // division, shift, step or count using it is checked then.
+            let slot = Place::whole(self.register_slot(self.usize, span));
+            self.store(
+                self.usize,
+                slot.clone(),
+                Operand::integer(self.usize, length),
+                span,
+            );
+            return Some(Value::Register(self.load(self.usize, slot, span)));
         }
         let length = self.second_word(place);
         Some(Value::Register(self.load(self.usize, length, span)))
@@ -500,10 +503,8 @@ impl Lowering<'_> {
         let number = &self.types[left_type];
         let value = match *number {
             Type::Integer(_) | Type::Float(_) => {
-                let class = match *number {
-                    Type::Integer(integer) => Class::integer(integer.bits),
-                    Type::Float(Float::F32) => Class::F32,
-                    _ => Class::F64,
+                let Some(class) = self.class(left_type) else {
+                    unreachable!("a number is a register")
                 };
                 match binary_operation(op, number) {
                     BinaryOperation::Compare {
@@ -547,8 +548,6 @@ impl Lowering<'_> {
                                     );
                                     self.emit_check(failed, DIVISION_BY_ZERO, span);
                                 }
-                                // The lowest signed value over -1 wraps to
-                                // itself, so the result fits the width.
                                 right_value
                             }
                             IntegerOp::ShiftLeft
@@ -574,15 +573,6 @@ impl Lowering<'_> {
             Type::Bool => {
                 let class = Class::I8;
                 match op {
-                    BinaryOp::BitAnd => {
-                        self.integer(IntegerOp::And, class, left_value, right_value, span)
-                    }
-                    BinaryOp::BitOr => {
-                        self.integer(IntegerOp::Or, class, left_value, right_value, span)
-                    }
-                    BinaryOp::BitXor => {
-                        self.integer(IntegerOp::Xor, class, left_value, right_value, span)
-                    }
                     BinaryOp::EqualTo => {
                         self.compare(Comparison::Equal, class, left_value, right_value, span)
                     }
@@ -637,17 +627,21 @@ impl Lowering<'_> {
     ) -> Operand {
         let count_class = Class::integer(count_type.bits);
         if !constant {
-            let width = self.integer_constant(count_type, u64::from(shifted.bits), span);
-            // An unsigned count type too narrow to reach the width holds no
-            // count outside it; a signed one holds negative counts.
-            if count_type.signed || count_type.bits > shifted.bits.ilog2() {
-                let failed = self.compare(
-                    Comparison::UnsignedLessOrEqual,
-                    count_class,
-                    width,
-                    count,
-                    span,
-                );
+            // The bits a count needs to reach the width, besides a sign bit.
+            let width_bits = u32::BITS - shifted.bits.leading_zeros();
+            let failed = if count_type.bits - u32::from(count_type.signed) >= width_bits {
+                let width = self.integer_constant(count_type, u64::from(shifted.bits), span);
+                let failed = Comparison::UnsignedLessOrEqual;
+                Some(self.compare(failed, count_class, width, count, span))
+            } else if count_type.signed {
+                // No count of its type reaches the width: only a negative
+                // one is outside.
+                let zero = self.integer_constant(count_type, 0, span);
+                Some(self.compare(Comparison::SignedLess, count_class, count, zero, span))
+            } else {
+                None // an unsigned count too narrow to reach the width
+            };
+            if let Some(failed) = failed {
                 self.emit_check(failed, &shift_count_message(shifted.bits), span);
             }
         }
@@ -773,8 +767,11 @@ impl Lowering<'_> {
                 thir::ExprKind::StructLiteral(fields) => {
                     self.lower_struct_literal(*fields, ty, place)
                 }
+                // Its address and length.
                 thir::ExprKind::Constant(Constant::Bytes(bytes)) if ty == TypeId::STR => {
-                    self.str_constant(bytes, place, span);
+                    let address = self.global(Global::Bytes(bytes.clone()));
+                    let length = Operand::integer(self.usize, bytes.len() as u64);
+                    self.slice_words(address, length, place, span);
                     Some(())
                 }
                 thir::ExprKind::ToInterface {
@@ -837,7 +834,6 @@ impl Lowering<'_> {
             }
             Callee::Method(_) => None,
         };
-        let mut argument_types = Vec::new();
         let result = self.result_passing(ty);
         let result_place = match result {
             Some(Passing::Memory { size, .. }) => {
@@ -848,13 +844,13 @@ impl Lowering<'_> {
         };
         // Each argument is passed as it is when lowered, before the next
         // one runs: a value in memory is copied then.
-        let mut arguments = self.thir.children.lists.items(arguments);
+        let mut pending = self.thir.children.lists.items(arguments);
         let callee = match callee {
             Callee::Function(function) => MirCallee::Function(function),
             // The receiver, the first argument, is an interface value: its
             // address is passed, and its table holds the method at `slot`.
             Callee::Method(slot) => {
-                let receiver = arguments.next().expect("a method call has its receiver");
+                let receiver = pending.next().expect("a method call has its receiver");
                 let receiver_type = self.types.real(self.thir.exprs[receiver].ty);
                 // An owned interface taken by value moves once its words
                 // are read.
@@ -870,7 +866,7 @@ impl Lowering<'_> {
                 }
                 let method_place = Place {
                     root: Root::At(table),
-                    steps: Box::new([Step::Offset(u64::from(slot) * self.pointer_bytes)]),
+                    steps: Box::new([Step::Offset(u64::from(slot) * self.target.pointer_bytes())]),
                 };
                 let method = self.load(Class::Pointer, method_place, span);
                 passed.push(address);
@@ -881,7 +877,7 @@ impl Lowering<'_> {
                 MirCallee::Pointer(method)
             }
         };
-        for argument in arguments {
+        for argument in pending {
             let argument_type = self.types.real(self.thir.exprs[argument].ty);
             // An argument to a parameter whose type has an error, reported
             // where it was written, which may be another module.
@@ -890,7 +886,6 @@ impl Lowering<'_> {
             }
             let passing = self.passing(argument_type);
             parameters.push(passing);
-            argument_types.push(argument_type);
             match passing {
                 Passing::Register { .. } => passed.push(self.lower_expr(argument)?.register()),
                 Passing::Memory { size, .. } => {
@@ -906,13 +901,9 @@ impl Lowering<'_> {
         }
         let c_function = c_symbol.is_some();
         let c = c_symbol.map(|symbol| {
-            c_signature(
-                self.types,
-                self.target,
-                symbol,
-                ty,
-                argument_types.into_iter(),
-            )
+            let argument_types = (self.thir.children.lists.items(arguments))
+                .map(|argument| self.types.real(self.thir.exprs[argument].ty));
+            c_signature(self.types, self.target, symbol, ty, argument_types)
         });
         self.mir.signatures.push(Signature {
             parameters: parameters.into(),

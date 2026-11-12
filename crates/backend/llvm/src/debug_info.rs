@@ -73,13 +73,13 @@ impl Metadata {
 
     /// The number of a node to `define` later, for a node that the nodes
     /// added before it name.
-    pub(crate) fn reserve(&mut self) -> usize {
+    fn reserve(&mut self) -> usize {
         let id = self.count;
         self.count += 1;
         id
     }
 
-    pub(crate) fn define(&mut self, id: usize, node: impl fmt::Display) {
+    fn define(&mut self, id: usize, node: impl fmt::Display) {
         _ = writeln!(self.text, "!{id} = {node}");
     }
 
@@ -230,8 +230,8 @@ impl Module<'_> {
     /// declares a variable a debugger shows. Gives the subprogram and the
     /// metadata of each debug scope: its lexical block, else its parent's;
     /// `None` in a release build, which has no debug info. The function's
-    /// block takes the subprogram when there are parameters, whose scope
-    /// is the function.
+    /// block always takes the subprogram, which is its parameters' scope
+    /// too.
     pub(crate) fn add_debug_info(
         &mut self,
         copy: FunctionCopy,
@@ -292,9 +292,8 @@ impl Module<'_> {
                 declares[slot.debug_scope.index()] = true;
             }
         }
-        if !body.signature.parameters.is_empty() {
-            declares[0] = false;
-        }
+        // The function's own block is its subprogram, as its parameters' scope.
+        declares[0] = false;
         // A block comes after its parent, so the parent's metadata is known.
         let mut scopes: Vec<usize> = Vec::with_capacity(declares.len());
         for scope in body.debug_scopes.ids() {

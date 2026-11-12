@@ -115,13 +115,18 @@ impl Lowering<'_> {
             }
             _ => self.usize,
         };
-        for &part in &parts {
+        let last_call = parts.iter().rposition(|&part| self.thir.has_call(part));
+        for (index, &part) in parts.iter().enumerate() {
             let part_type = self.types.real(self.thir.exprs[part].ty);
             // An element may itself be a slice or a range: one part, not a spread.
             let spread = !self.types.same(part_type, element);
             let value = match self.types[part_type] {
                 Type::Range { .. } if spread => Part::Range(self.walk_range(part)?),
-                _ => Part::Value(self.lower_expr(part)?),
+                _ => {
+                    let called_later = last_call.is_some_and(|last| index < last);
+                    let value = self.lower_expr(part)?;
+                    Part::Value(self.settled(value, part_type, called_later, span))
+                }
             };
             let count = match self.types[part_type] {
                 _ if !spread => Ok(1),
@@ -232,7 +237,8 @@ impl Lowering<'_> {
     /// How many elements the spread part `part`, of the type `part_type`,
     /// gives, as the class `wide`: a slice's length, or a range's count, its
     /// `left` over its `step`, one more when it includes its end or when
-    /// that leaves a rest. A constant when the range's fields are.
+    /// that leaves a rest (`Integer::count_over`). A constant when the
+    /// range's fields are.
     fn part_count(&mut self, part: &Part, part_type: TypeId, wide: Class, span: Span) -> Operand {
         match (part, &self.types[part_type]) {
             (Part::Value(value), Type::Slice { .. }) => {
@@ -242,47 +248,33 @@ impl Lowering<'_> {
             }
             (Part::Range(walk), Type::Range { .. }) => {
                 let (_, size) = self.range_integers(part_type);
-                self.range_count(walk.left, walk.step, walk.inclusive, size, wide, span)
+                let (left, step, inclusive) = (walk.left, walk.step, walk.inclusive);
+                if let (
+                    Operand::Constant { bits: left, .. },
+                    Operand::Constant { bits: step, .. },
+                    Operand::Constant {
+                        bits: inclusive, ..
+                    },
+                ) = (left, step, inclusive)
+                {
+                    let (left, step) = (Limbs::new(size.bits, &left), Limbs::new(size.bits, &step));
+                    let count = size.count_over(&left, &step, inclusive[0] != 0);
+                    let count = count.expect("the checker refused a zero step");
+                    let count = bigint::extend(size.bits + 1, false, &count, wide.bits());
+                    return self.class_constant(wide, &count, span);
+                }
+                let class = Class::integer(size.bits);
+                let whole = self.integer(IntegerOp::UnsignedDivide, class, left, step, span);
+                let whole = self.widen_unsigned(whole, class, wide, span);
+                let rest = self.integer(IntegerOp::UnsignedRemainder, class, left, step, span);
+                let zero = self.class_constant(class, &Limbs::new(class.bits(), &[]), span);
+                let more = self.compare(Comparison::NotEqual, class, rest, zero, span);
+                let last = self.integer(IntegerOp::Or, Class::I8, inclusive, more, span);
+                let extra = self.widen_unsigned(last, Class::I8, wide, span);
+                self.integer(IntegerOp::Add, wide, whole, extra, span)
             }
             _ => unreachable!("only a slice and a range are counted when the program runs"),
         }
-    }
-
-    /// How many values a range with `left`, `step` and `inclusive`, of the
-    /// step type `size`, has, as the class `wide` (`Integer::count_over`).
-    /// A constant when the three are.
-    fn range_count(
-        &mut self,
-        left: Operand,
-        step: Operand,
-        inclusive: Operand,
-        size: Integer,
-        wide: Class,
-        span: Span,
-    ) -> Operand {
-        if let (
-            Operand::Constant { bits: left, .. },
-            Operand::Constant { bits: step, .. },
-            Operand::Constant {
-                bits: inclusive, ..
-            },
-        ) = (left, step, inclusive)
-        {
-            let (left, step) = (Limbs::new(size.bits, &left), Limbs::new(size.bits, &step));
-            let count = size.count_over(&left, &step, inclusive[0] != 0);
-            let count = count.expect("the checker refused a zero step");
-            let count = bigint::extend(size.bits + 1, false, &count, wide.bits());
-            return self.class_constant(wide, &count, span);
-        }
-        let class = Class::integer(size.bits);
-        let whole = self.integer(IntegerOp::UnsignedDivide, class, left, step, span);
-        let whole = self.widen_unsigned(whole, class, wide, span);
-        let rest = self.integer(IntegerOp::UnsignedRemainder, class, left, step, span);
-        let zero = self.class_constant(class, &Limbs::new(class.bits(), &[]), span);
-        let more = self.compare(Comparison::NotEqual, class, rest, zero, span);
-        let last = self.integer(IntegerOp::Or, Class::I8, inclusive, more, span);
-        let extra = self.widen_unsigned(last, Class::I8, wide, span);
-        self.integer(IntegerOp::Add, wide, whole, extra, span)
     }
 
     /// `value` of the class `from` as the class `to`, no narrower, read
@@ -521,7 +513,8 @@ impl Lowering<'_> {
             let delta = delta(lowering, up);
             lowering.store(class, Place::whole(delta_slot), delta, span);
         };
-        let up = self.compare_integers_le(start, end, integer, span);
+        let (_, less_or_equal) = Comparison::integer_less(integer.signed);
+        let up = self.compare(less_or_equal, class, start, end, span);
         let [upward, downward, counted] = [(); 3].map(|()| self.new_block(span));
         self.finish(Terminator::Branch {
             condition: up,
@@ -559,23 +552,6 @@ impl Lowering<'_> {
             unreachable!("a range is of integers")
         };
         (integer, step_integer)
-    }
-
-    fn compare_integers_le(
-        &mut self,
-        start: Operand,
-        end: Operand,
-        integer: Integer,
-        span: Span,
-    ) -> Operand {
-        let (_, less_or_equal) = Comparison::integer_less(integer.signed);
-        self.compare(
-            less_or_equal,
-            Class::integer(integer.bits),
-            start,
-            end,
-            span,
-        )
     }
 
     /// Lowers the `thir::Stmt::ForRange` `statement`. On entry, once:
@@ -635,8 +611,8 @@ impl Lowering<'_> {
         let left = self.register_slot(size_class, range_span);
         let going = self.register_slot(Class::I8, range_span);
         let index_slot = index.map(slot_of);
-        let passes_class = index_slot.map(|slot| {
-            let passes_type = self.thir.variables[Id::from_index(slot.index())].ty;
+        let passes_class = index.map(|index| {
+            let passes_type = self.thir.variables[index].ty;
             self.class(self.types.real(passes_type))
                 .expect("a count is a register")
         });

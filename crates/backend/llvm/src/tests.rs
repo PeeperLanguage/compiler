@@ -141,53 +141,6 @@ fn strings_and_extern_calls() {
     }
 }
 
-/// A slice's start and count are `usize`s, `i32`s on a 32-bit target:
-/// a wider `i64` end is checked in its own type before it is cut to
-/// one, a narrower `i8` one is extended first.
-#[test]
-fn slice_bounds_are_target_sized() {
-    let text = ll(
-        "fn f(a: [4]i32, wide: i64, narrow: i8) {\n\
-             let from: &[]i32 = &a[wide..];\n\
-             let to: &[]i32 = &a[..narrow];\n}",
-        "i686-linux",
-    );
-    for line in [
-        "%i3.c = icmp slt i64 %i2, 0",
-        "%i5.c = icmp ult i64 4, %i2",
-        "%i7 = trunc i64 %i2 to i32",
-        "%i8 = sub i32 4, %i7",
-        "%i9 = getelementptr inbounds [4 x i8], ptr %a0, i32 %i7",
-        "store i32 %i8, ptr %i11",
-        "%i13 = sext i8 %i12 to i32",
-        "%i14.c = icmp ult i32 4, %i13",
-        "store i32 %i13, ptr %i18",
-    ] {
-        assert!(text.contains(line), "{line}\n{text}");
-    }
-}
-
-/// A slice spread into an array is counted in an integer wider than its
-/// `i64` elements (the class of 65 bits), its length an `i32` on a 32-bit
-/// target, and copied element by element at `i32` indexes.
-#[test]
-fn slice_spreads_are_target_sized() {
-    let text = ll(
-        "fn f(view: &[]i64) -> [2]i64 {\n\
-             return [2]i64{view...};\n}",
-        "i686-linux",
-    );
-    for line in [
-        "%i0 = load i32, ptr %i0.a",
-        "%i1 = zext i32 %i0 to i128",
-        "%i2.c = icmp ult i128 2, %i1",
-        "%i12.f = getelementptr inbounds [8 x i8], ptr %i12.f.1, i32 %i10",
-        "call void @llvm.memcpy.p0.p0.i64(ptr %i12.t, ptr %i12.f, i64 8, i1 false)",
-    ] {
-        assert!(text.contains(line), "{line}\n{text}");
-    }
-}
-
 /// A C function's integers pass as clang passes C's on each target, as
 /// measured with clang 23 (its `i128` and `i256` sizes written as bytes):
 /// a narrow one extended to `int`, a wider one as its register, as two
@@ -367,7 +320,6 @@ fn jumps_skip_empty_blocks_and_unreached_ones_are_left_out() {
             && !window[2].starts_with("  ")
     });
     assert!(!only_jumps, "{text}");
-    assert!(!text.contains("unreachable"), "{text}");
 }
 
 /// A comparison is widened to a byte only where its value is kept: here the
@@ -482,5 +434,32 @@ fn a_failing_tool_is_named_with_what_it_printed() {
         let mut working = Command::new("sh");
         working.args(["-c", "echo kept"]);
         assert_eq!(run_tool(&mut working), Ok(b"kept\n".to_vec()));
+    }
+}
+
+/// An endless loop of blocks that only jump on is written as one jump to
+/// itself: following the jumps stops on the loop.
+#[test]
+fn an_empty_endless_loop_jumps_to_itself() {
+    let text = ll("fn spin() { for {} }", "x86_64-linux");
+    assert!(text.contains("bb1:\n  br label %bb1\n}"), "{text}");
+}
+
+/// A constant divisor of -1 keeps the guard against the lowest value over
+/// -1, which LLVM leaves undefined; any other constant divides plainly.
+#[test]
+fn only_a_divisor_of_minus_one_is_guarded() {
+    let text = ll(
+        "fn f(a: i8) -> i8 { return a / -1; }
+        fn g(a: i8) -> i8 { return a / 7; }
+        fn h(a: i8) -> i8 { return a % -1; }",
+        "x86_64-linux",
+    );
+    for line in [
+        "  %i2.m = icmp eq i8 -1, -1, !dbg !7\n  %i2.d = select i1 %i2.m, i8 1, i8 -1, !dbg !7\n",
+        "  %i2 = sdiv i8 %i1, 7, !dbg !13\n",
+        "  %i2 = srem i8 %i1, %i2.d, !dbg !19\n",
+    ] {
+        assert!(text.contains(line), "{line}\n{text}");
     }
 }

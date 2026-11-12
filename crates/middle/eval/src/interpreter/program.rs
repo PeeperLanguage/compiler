@@ -32,10 +32,6 @@ use super::Interpreter;
 use super::memory::Memory;
 use crate::operations::mask;
 
-/// How many steps a program may run: more than any page should wait for, so a
-/// page's own time limit usually ends a program first.
-const PROGRAM_STEP_LIMIT: u32 = 2_000_000_000;
-
 /// How many bytes a program may print, so one that prints forever stops
 /// before its output fills the host's memory.
 const OUTPUT_LIMIT: u64 = 1 << 20;
@@ -73,7 +69,7 @@ pub fn run<'b>(
     target: &Machine,
     mir_of: &dyn Fn(FunctionCopy) -> Option<&'b Body>,
 ) -> Outcome {
-    let mut run = Interpreter::new(target, mir_of, PROGRAM_STEP_LIMIT, Memory::for_program());
+    let mut run = Interpreter::new(target, mir_of, Memory::for_program());
     let ending = match run.run_from(main, body) {
         Ok((Some(code), _)) => Ok(code as u32 as i32),
         Ok(_) => Ok(0),
@@ -89,7 +85,7 @@ pub fn run<'b>(
 /// What a program printed; a constant's call prints nothing.
 #[derive(Default)]
 pub(super) struct Host {
-    pub(super) output: Vec<Written>,
+    output: Vec<Written>,
     printed: u64, // bytes in `output`, kept as output can have a piece per print
     /// What `print` has written and not flushed, kept as the runtime keeps
     /// it: a program that stops in the middle of a `print` loses it.
@@ -112,16 +108,15 @@ impl<'f> Interpreter<'_, 'f> {
         Ok(())
     }
 
-    /// Adds `text` to the output of the descriptor `fd`: false for one that
-    /// is neither of a program's outputs.
-    fn write_output(&mut self, fd: i32, text: &[u8], id: Id<Instruction>) -> Result<bool, Halt> {
+    /// Adds `text` to the output `stream`.
+    fn write_output(
+        &mut self,
+        stream: Stream,
+        text: &[u8],
+        id: Id<Instruction>,
+    ) -> Result<(), Halt> {
         self.count_copy(text.len() as u64, id)?;
         self.check_output(text.len() as u64, id)?;
-        let stream = match fd {
-            STDOUT => Stream::Stdout,
-            STDERR => Stream::Stderr,
-            _ => return Ok(false),
-        };
         let host = &mut self.host;
         host.printed += text.len() as u64;
         let full = host.output.len() >= PIECE_LIMIT;
@@ -133,14 +128,6 @@ impl<'f> Interpreter<'_, 'f> {
                 text: text.to_vec(),
             }),
         }
-        Ok(true)
-    }
-
-    /// Keeps `text` for `print`'s next flush.
-    fn keep_output(&mut self, text: &[u8], id: Id<Instruction>) -> Result<(), Halt> {
-        self.count_copy(text.len() as u64, id)?;
-        self.check_output(text.len() as u64, id)?;
-        self.host.kept.extend_from_slice(text);
         Ok(())
     }
 
@@ -190,14 +177,18 @@ impl<'f> Interpreter<'_, 'f> {
             Runtime::PrintPointer => number_text::write_pointer(argument(self, 0), &mut push),
             Runtime::Flush => {
                 let kept = std::mem::take(&mut self.host.kept);
-                self.write_output(STDOUT, &kept, id)?;
+                self.write_output(Stream::Stdout, &kept, id)?;
                 return Ok(());
             }
             Runtime::PanicWrite | Runtime::PanicExit => {
                 unreachable!("the LLVM writer writes a panic's calls; lowering makes none")
             }
         }
-        self.keep_output(&text, id)
+        // Kept for `print`'s next flush.
+        self.count_copy(text.len() as u64, id)?;
+        self.check_output(text.len() as u64, id)?;
+        self.host.kept.extend_from_slice(&text);
+        Ok(())
     }
 
     /// The integer argument `index` of the call of the signature
@@ -281,7 +272,11 @@ impl<'f> Interpreter<'_, 'f> {
                             self.span_of(id),
                         ));
                     };
-                    self.count_copy(size, id)?;
+                    // As `allocated`: a block too large is not made, so
+                    // nothing is copied.
+                    if moved.is_some() {
+                        self.count_copy(size, id)?;
+                    }
                     Some(u128::from(moved.unwrap_or(0)))
                 }
             }
@@ -297,16 +292,23 @@ impl<'f> Interpreter<'_, 'f> {
             // A negative length gives -1, as the runtime refuses it.
             (WRITE | READ, 3) if size(self, 2).is_none() => Some(u128::MAX),
             (WRITE, 3) => {
-                let (fd, buffer) = (self.i32_argument(arguments, 0), address(self, 1));
-                let length = any_size(self, 2);
-                self.check_output(length, id)?;
-                let bytes = self.read_bytes(buffer, length, id)?.to_vec();
-                let written = self.write_output(fd, &bytes, id)?;
-                Some(if written {
-                    u128::from(length)
-                } else {
-                    u128::MAX
-                })
+                let stream = match self.i32_argument(arguments, 0) {
+                    STDOUT => Some(Stream::Stdout),
+                    STDERR => Some(Stream::Stderr),
+                    _ => None,
+                };
+                match stream {
+                    Some(stream) => {
+                        let (buffer, length) = (address(self, 1), any_size(self, 2));
+                        self.check_output(length, id)?;
+                        let bytes = self.read_bytes(buffer, length, id)?.to_vec();
+                        self.write_output(stream, &bytes, id)?;
+                        Some(u128::from(length))
+                    }
+                    // No other descriptor is open: the write fails before
+                    // it reads a byte.
+                    None => Some(u128::MAX),
+                }
             }
             // No program here has an input, so its stream is always at its end.
             (READ, 3) => {

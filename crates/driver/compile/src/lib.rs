@@ -150,7 +150,7 @@ pub struct Interpreted {
     pub exit_code: u8,        // as a program's parent on Linux sees it: the low 8 bits
 }
 
-/// Compiles `program`, of `project`, as `run` does, then runs it from its entry
+/// Compiles `program` as `run` does, then runs it from its entry
 /// file's `main` with no backend or system (`eval::interpreter::program`).
 /// Gives what the compile found and, when that left a program to start, what
 /// it did. A program that cannot be checked has only loading's errors, and

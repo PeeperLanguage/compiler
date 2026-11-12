@@ -33,21 +33,15 @@ impl Lowering<'_> {
         span: Span,
     ) -> Option<()> {
         // Every value is worked out before any is written, as a value's
-        // code may print too; one in memory is copied when code follows
-        // that could change it.
+        // code may print too.
         let values: Vec<_> = self.thir.children.lists.items(values).collect();
         let mut lowered = Vec::with_capacity(values.len());
+        let last_call = values.iter().rposition(|&value| self.thir.has_call(value));
         for (index, &value) in values.iter().enumerate() {
             let ty = self.types.real(self.thir.exprs[value].ty);
-            let value = match self.lower_expr(value)? {
-                Value::Memory(place) if index + 1 < values.len() => {
-                    let copy = self.temporary(ty, span);
-                    self.put(Place::whole(copy), Value::Memory(place), ty, span);
-                    Value::Memory(Place::whole(copy))
-                }
-                value => value,
-            };
-            lowered.push((value, ty));
+            let called_later = last_call.is_some_and(|last| index < last);
+            let value = self.lower_expr(value)?;
+            lowered.push((self.settled(value, ty, called_later, span), ty));
         }
         let mut text = Vec::new();
         for (index, (value, ty)) in lowered.into_iter().enumerate() {
@@ -88,7 +82,7 @@ impl Lowering<'_> {
                 self.store(wide, Place::whole(limbs), value, span);
                 let kind = InstructionKind::Address {
                     place: Place::whole(limbs),
-                    size: wide.bytes(self.pointer_bytes),
+                    size: wide.bytes(self.target.pointer_bytes()),
                 };
                 let address = self.emit(kind, span);
                 self.print_text(text, span);

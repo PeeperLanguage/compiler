@@ -39,7 +39,7 @@ impl Lowering<'_> {
 
     /// Writes the `Dead`s of the slots from `start` on in `declared`,
     /// newest first, at `span`.
-    pub(super) fn emit_scope_ends(&mut self, start: usize, span: Span) {
+    fn emit_scope_ends(&mut self, start: usize, span: Span) {
         for index in (start..self.declared.len()).rev() {
             let slot = self.declared[index];
             self.emit(InstructionKind::Dead(slot), span);
@@ -74,7 +74,7 @@ impl Lowering<'_> {
         Some(())
     }
 
-    pub(super) fn lower_statement(&mut self, statement: Id<thir::Stmt>) -> Option<()> {
+    fn lower_statement(&mut self, statement: Id<thir::Stmt>) -> Option<()> {
         // Blocks in blocks and long `else if` chains are a deep recursion.
         source::grow_stack(|| {
             let span = self.thir.stmts.span(statement);
@@ -104,6 +104,8 @@ impl Lowering<'_> {
                 thir::Stmt::Assign { target, value } => {
                     let ty = self.types.real(self.thir.exprs[value].ty);
                     let value = self.lower_expr(value)?;
+                    // The value is read before the target's code runs.
+                    let value = self.settled(value, ty, self.thir.has_call(target), span);
                     let place = self.place_of(target)?;
                     self.put(place, value, ty, span);
                 }

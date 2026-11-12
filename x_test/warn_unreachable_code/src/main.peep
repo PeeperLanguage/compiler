@@ -37,6 +37,14 @@ fn DeadBranch(ready: bool) {
     }
 }
 
+// A `for` works out its range before the name it binds; the loop warns once.
+fn LoopAfterReturn() {
+    return;
+    for i in 0..3 {
+        Work();
+    }
+}
+
 // Silent: every line here can run, or is only skipped by a constant.
 
 fn ReturnLast() {

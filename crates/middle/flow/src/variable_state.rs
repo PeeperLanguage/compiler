@@ -114,7 +114,7 @@ pub fn report_variable_state_errors(
                         };
                         second_assignment(body, file, slot, span, set)
                     })
-                } else if !facts.always.has(followed) {
+                } else if !facts.always.has(followed) || facts.moved.has(followed) {
                     // Writing through a reference only reads the variable.
                     let writes_part = writes && !access.place.is_behind_pointer();
                     let written = writes_part.then(|| part_and_holder(access.place)[0]);
@@ -173,9 +173,9 @@ fn tracked_slots(body: &mir::Body) -> (Vec<Option<Id<Tracked>>>, usize) {
 /// per tracked slot in each set.
 #[derive(Clone, PartialEq)]
 struct Facts {
-    always: Bits<Tracked>, // set on every path to here (joined with "and")
+    always: Bits<Tracked>, // set on every path to here, even if moved since ("and")
     maybe: Bits<Tracked>,  // set on some path to here, even if moved since ("or")
-    moved: Bits<Tracked>,  // moved on some path to here and not set since ("or")
+    moved: Bits<Tracked>,  // moved on some path to here, not set or declared anew since ("or")
 }
 
 impl Facts {
@@ -204,8 +204,8 @@ impl Facts {
 
     /// The facts after `kind` runs in `body`, `tracked` giving each slot's
     /// number if it is tracked: a whole write sets it, a `Moved` of all of it
-    /// unsets it, and the end of its storage declares it anew for the next
-    /// pass of a loop.
+    /// marks it moved, and the end of its storage declares it anew for the
+    /// next pass of a loop.
     fn step(
         &mut self,
         body: &mir::Body,
@@ -221,10 +221,7 @@ impl Facts {
             };
             match access.kind {
                 AccessKind::Write => self.declare(followed, true),
-                AccessKind::Move => {
-                    self.always.clear(followed);
-                    self.moved.set(followed);
-                }
+                AccessKind::Move => self.moved.set(followed),
                 AccessKind::End => self.declare(followed, body.slots[slot].initialized),
                 AccessKind::Read | AccessKind::Borrow { .. } | AccessKind::Address => {}
             }
@@ -341,8 +338,13 @@ fn moved_use(
         error = error.label(file, moved, format!("`{name}` is moved here"));
     }
     // Code runs in the order written except where a loop goes back, so a
-    // move written at or after the use reaches it from an earlier pass.
-    if moves.iter().any(|moved| moved.start >= span.start) {
+    // move written after the use, or the use itself, reaches it from an
+    // earlier pass; one inside the use, such as the value an assignment
+    // sets, ran just before it.
+    if moves
+        .iter()
+        .any(|&moved| moved.start >= span.end || moved == span)
+    {
         error = error.note("it was moved in an earlier pass of the loop");
     }
     error

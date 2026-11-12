@@ -197,7 +197,7 @@ impl Module<'_> {
 }
 
 /// The LLVM type of a register of `class`.
-pub(crate) fn llvm_type(class: Class) -> impl Display {
+fn llvm_type(class: Class) -> impl Display {
     fmt::from_fn(move |out| match class {
         Class::F32 => out.write_str("float"),
         Class::F64 => out.write_str("double"),
@@ -503,18 +503,13 @@ impl Writer<'_, '_, '_> {
         })
     }
 
-    /// The LLVM type of `operand`'s register.
-    fn type_of(&self, operand: Operand) -> impl Display + use<> {
-        llvm_type(
-            self.body
-                .class_of(operand)
-                .expect("an operand is a register"),
-        )
-    }
-
     /// `operand` with its type before it, as an argument.
     fn typed(&self, operand: Operand) -> impl Display {
-        let ty = self.type_of(operand);
+        let class = self
+            .body
+            .class_of(operand)
+            .expect("an operand is a register");
+        let ty = llvm_type(class);
         fmt::from_fn(move |out| write!(out, "{ty} {}", self.operand(operand)))
     }
 

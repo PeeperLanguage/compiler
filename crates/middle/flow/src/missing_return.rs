@@ -47,7 +47,7 @@ pub fn report_missing_return(
     if !reachable[end.index()] {
         return;
     }
-    let mut causes = missing_return_causes(body, end, &reachable);
+    let mut causes = missing_return_causes(body, end);
     causes.sort_by_key(|&(span, _): &(Span, &str)| span.start);
     let hidden = causes.len().saturating_sub(SHOWN_CAUSES);
     let end_label = format!("function ends without returning `{}`", result_text());
@@ -74,11 +74,7 @@ pub fn report_missing_return(
 
 /// Where each path arrives at `end`, a reachable block, and the label for it:
 /// nothing when `end` itself runs code, as one `return` there fixes every path.
-fn missing_return_causes(
-    body: &mir::Body,
-    end: Id<mir::Block>,
-    reachable: &[bool],
-) -> Vec<(Span, &'static str)> {
+fn missing_return_causes(body: &mir::Body, end: Id<mir::Block>) -> Vec<(Span, &'static str)> {
     let mut causes = Vec::new();
     let mut end_code = body.lists.items(body.blocks[end].instructions);
     if end_code.any(|id| body.instructions[id].kind.runs()) {
@@ -92,9 +88,6 @@ fn missing_return_causes(
     let mut pending = vec![end];
     while let Some(block) = pending.pop() {
         for &predecessor in &predecessors[block.index()] {
-            if !reachable[predecessor.index()] {
-                continue;
-            }
             let mir::Block {
                 instructions,
                 terminator,
@@ -107,9 +100,8 @@ fn missing_return_causes(
                 ..
             } = *terminator
             {
-                // A constant condition still has two sides here, as in Go
-                // and Rust, so whether code compiles never depends on a
-                // constant's value; the label only says which side it takes.
+                // A constant condition still has two sides (the module doc
+                // of `lib.rs`); the label only says which side it takes.
                 let always = match condition {
                     mir::Operand::Constant { bits, .. } => Some(bits[0] != 0),
                     _ => None,

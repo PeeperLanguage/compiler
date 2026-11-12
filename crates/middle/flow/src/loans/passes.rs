@@ -25,7 +25,7 @@ use crate::loans::places::names_exactly;
 use crate::predecessors;
 
 /// What is in `a` or `b`, both in order, in order and once each.
-pub(super) fn sorted_union<T: Copy + Ord>(a: &[T], b: &[T]) -> Vec<T> {
+fn sorted_union<T: Copy + Ord>(a: &[T], b: &[T]) -> Vec<T> {
     let mut union = a.to_vec();
     union.extend_from_slice(b);
     union.sort_unstable();
@@ -110,14 +110,13 @@ impl<'b> Holders<'b> {
             // come from.
             InstructionKind::Load { class, place } if let Some(target) = target => {
                 let width = class.bytes(self.pointer_bytes);
-                let loans =
-                    self.loans_of(held, self.place_holders(place.as_place_ref(), Some(width)));
+                let loans = held.loans_of(self.place_holders(place.as_place_ref(), Some(width)));
                 held.set(target, &loans);
             }
             // What the place holds, or goes through, stays borrowed while
             // the new reference is in use.
             InstructionKind::Borrow { place, size, .. } => {
-                let loans = self.loans_of(held, self.place_holders(place.as_place_ref(), *size));
+                let loans = held.loans_of(self.place_holders(place.as_place_ref(), *size));
                 let holder = self.value_holder(id);
                 held.set(holder, &loans);
                 held.add(holder, self.loan(id));
@@ -135,7 +134,7 @@ impl<'b> Holders<'b> {
                         self.step_write(held, place, *size, &sources, false, None);
                     }
                     (None, Some(target)) => {
-                        let loans = self.loans_of(held, sources.into_iter().flatten());
+                        let loans = held.loans_of(sources.into_iter().flatten());
                         held.set(target, &loans);
                     }
                     (None, None) => {}
@@ -166,7 +165,7 @@ impl<'b> Holders<'b> {
         paired: bool,
         parameter: Option<Id<Loan>>,
     ) {
-        let all = || self.loans_of(held, sources.iter().cloned().flatten());
+        let all = || held.loans_of(sources.iter().cloned().flatten());
         let targets = match place.root {
             Root::Result => self.result_holders(),
             _ if place.is_behind_pointer() => return, // the checker lets no store here hold a loan

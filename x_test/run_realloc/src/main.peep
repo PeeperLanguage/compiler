@@ -30,6 +30,9 @@ fn Heap() {
     let grown_sum = Sum(grown, 4);
     let shrunk = heap.Realloc(grown, 4096, 2, 8);
     println("heap:", grown_sum, Sum(shrunk, 2), heap.Realloc(shrunk, 2, 8, 3) == none);
+    // Too large for any heap: `none`, and the piece is kept.
+    let one: usize = 1;
+    println("heap too large:", heap.Realloc(shrunk, 2, one << 62, 8) == none, Sum(shrunk, 2));
     // Shrunk to nothing, it is still a piece to free.
     let empty = heap.Realloc(shrunk, 2, 0, 8);
     println("heap to nothing:", empty != none);

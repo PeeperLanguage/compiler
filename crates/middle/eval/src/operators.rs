@@ -73,9 +73,6 @@ pub fn binary(
                 BinaryOp::LogicalOr => *left || *right,
                 BinaryOp::EqualTo => left == right,
                 BinaryOp::NotEqualTo => left != right,
-                // Only a range's loop, which lowering writes, uses these.
-                BinaryOp::BitAnd => left & right,
-                BinaryOp::BitOr => left | right,
                 _ => unreachable!("check gives `{op:?}` no bool operands"),
             }));
         }
@@ -156,12 +153,12 @@ fn integer_value(bits: u32, register: &RegisterValue) -> Value {
 }
 
 /// The count of a shift of a `shifted` value by `count`, of the type
-/// `count_type`, at the shifted type's width: as lowering reads it, a count
-/// out of range, negative ones included, stays out of range.
+/// `count_type`, at the shifted type's width: as lowering checks it, a
+/// negative count or one past the width is the width, out of range.
 fn shift_count(shifted: Integer, count_type: Integer, count: &Limbs) -> Limbs {
     let width = u64::from(shifted.bits);
-    let count =
-        bigint::to_u64(count_type.bits, false, count).map_or(width, |count| count.min(width));
+    let count = bigint::to_u64(count_type.bits, count_type.signed, count)
+        .map_or(width, |count| count.min(width));
     Limbs::new(shifted.bits, &[count])
 }
 

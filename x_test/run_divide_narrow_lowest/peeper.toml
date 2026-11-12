@@ -1,0 +1,12 @@
+name = "run_divide_narrow_lowest"
+build = "program"
+
+[test]
+mode = "run"
+outcome = "exit_code"
+exit_code = 0
+stdout_contains = [
+    "i5: -16 -16 0\n",
+    "i13: -4096 -4096 0\n",
+    "i100: -633825300114114700748351602688 -633825300114114700748351602688 0\n",
+]

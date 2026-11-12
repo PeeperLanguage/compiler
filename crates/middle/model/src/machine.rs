@@ -149,6 +149,11 @@ impl Machine {
             .ok_or_else(|| format!("peeper has no target for this machine, {arch}-{os}"))
     }
 
+    /// The bytes of a pointer, and of a `usize`.
+    pub fn pointer_bytes(&self) -> u64 {
+        u64::from(self.pointer_bits / 8)
+    }
+
     /// The most bytes one value may take, `isize::MAX`: LLVM reads offsets
     /// in memory as signed.
     pub fn largest_object(&self) -> u64 {

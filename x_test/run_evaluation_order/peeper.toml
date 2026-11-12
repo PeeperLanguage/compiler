@@ -1,0 +1,8 @@
+name = "run_evaluation_order"
+build = "program"
+
+[test]
+mode = "run"
+outcome = "exit_code"
+exit_code = 0
+stdout_contains = ["1 2 3 1\n1\n1\nbefore 1\n"]

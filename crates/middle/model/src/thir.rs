@@ -356,9 +356,24 @@ impl Body {
     /// Whether computing `expression` calls a function, `print` too: then
     /// it runs even where only its type is needed (`ExprKind::Length`).
     pub fn has_call(&self, expression: Id<Expr>) -> bool {
-        let kind = &self.exprs[expression].kind;
-        matches!(kind, ExprKind::Call { .. } | ExprKind::Print { .. })
-            || self.any_part(kind, |part| self.has_call(part))
+        // A list, not recursion: `a[0][0]...` nests as deep as it is written.
+        // `pending` stays empty, so unallocated, for one with no parts.
+        let mut part = expression;
+        let mut pending = Vec::new();
+        loop {
+            let kind = &self.exprs[part].kind;
+            if matches!(kind, ExprKind::Call { .. } | ExprKind::Print { .. }) {
+                return true;
+            }
+            self.any_part(kind, |inner| {
+                pending.push(inner);
+                false
+            });
+            match pending.pop() {
+                Some(next) => part = next,
+                None => return false,
+            }
+        }
     }
 
     /// The first variable with a name that `kind` reads, going through its

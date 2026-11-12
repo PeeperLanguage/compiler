@@ -943,95 +943,91 @@ impl Types {
     /// which `name_of` gives for its declaration: an alias is followed by the
     /// type itself (`Meters (aka i64)`).
     pub fn text<N: fmt::Display>(&self, id: TypeId, name_of: impl Fn(DefId) -> N + Copy) -> String {
-        match self.types[id.0 as usize] {
-            Type::Alias { definition, real } => {
-                format!(
-                    "{} (aka {})",
-                    name_of(definition),
-                    self.real_text(real, name_of)
-                )
-            }
-            _ => self.real_text(id, name_of),
+        let mut text = String::new();
+        if let Type::Alias { definition, real } = self.types[id.0 as usize] {
+            _ = write!(text, "{} (aka ", name_of(definition));
+            self.write_real_text(&mut text, real, name_of);
+            text.push(')');
+        } else {
+            self.write_real_text(&mut text, id, name_of);
         }
+        text
     }
 
-    /// The type `id` itself, aliases looked through: `u8`, `fn(i32) -> bool`,
-    /// a named type by its name.
-    fn real_text<N: fmt::Display>(
+    /// Writes the type `id` itself to `out`, aliases looked through: `u8`,
+    /// `fn(i32) -> bool`, a named type by its name. Into one text, so a type
+    /// nested as deep as the source does costs its length, not its square.
+    fn write_real_text<N: fmt::Display>(
         &self,
+        out: &mut String,
         id: TypeId,
         name_of: impl Fn(DefId) -> N + Copy,
-    ) -> String {
+    ) {
         let id = self.real(id);
         match &self[id] {
-            Type::Invalid => "{invalid}".to_string(),
-            Type::Void => "void".to_string(),
+            Type::Invalid => out.push_str("{invalid}"),
+            Type::Void => out.push_str("void"),
             Type::Bool | Type::Float(_) | Type::CString | Type::Str => {
                 let (text, _) = NAMED
                     .iter()
                     .find(|&&(_, named)| named == id)
                     .expect("in `NAMED`");
                 // A text type is the view, written behind `&`.
-                match self[id] {
-                    Type::CString | Type::Str => format!("&{text}"),
-                    _ => text.to_string(),
+                if let Type::CString | Type::Str = self[id] {
+                    out.push('&');
                 }
+                out.push_str(text);
             }
-            Type::Integer(integer) => integer.to_string(),
+            Type::Integer(integer) => _ = write!(out, "{integer}"),
             Type::Function {
                 parameters, result, ..
             } => {
-                let parameters: Vec<String> = parameters
-                    .iter()
-                    .map(|&parameter| self.real_text(parameter, name_of))
-                    .collect();
-                let mut text = format!("fn({})", parameters.join(", "));
-                if *result != TypeId::VOID {
-                    text.push_str(" -> ");
-                    text.push_str(&self.real_text(*result, name_of));
+                out.push_str("fn(");
+                for (index, &parameter) in parameters.iter().enumerate() {
+                    if index > 0 {
+                        out.push_str(", ");
+                    }
+                    self.write_real_text(out, parameter, name_of);
                 }
-                text
+                out.push(')');
+                if *result != TypeId::VOID {
+                    out.push_str(" -> ");
+                    self.write_real_text(out, *result, name_of);
+                }
             }
             Type::Named(definition)
             | Type::Struct { definition, .. }
-            | Type::Interface { definition, .. } => name_of(*definition).to_string(),
+            | Type::Interface { definition, .. } => _ = write!(out, "{}", name_of(*definition)),
             Type::Array { internals, .. } => {
-                let mut text = String::new();
                 for length in self.array_lengths(id) {
-                    _ = write!(text, "[{length}]");
+                    _ = write!(out, "[{length}]");
                 }
-                text + &self.real_text(internals.base, name_of)
+                self.write_real_text(out, internals.base, name_of);
             }
             Type::Range { element, .. } => {
-                format!("{RANGE}[{}]", self.real_text(*element, name_of))
+                _ = write!(out, "{RANGE}[");
+                self.write_real_text(out, *element, name_of);
+                out.push(']');
             }
+            // References, slices and pointers nest as deep as the source does.
             Type::Reference { mutable, target }
             | Type::InterfaceReference {
                 mutable,
                 interface: target,
             } => {
-                // References, slices and pointers nest as deep as the source does.
-                let target = source::grow_stack(|| self.real_text(*target, name_of));
-                if *mutable {
-                    format!("&mut {target}")
-                } else {
-                    format!("&{target}")
-                }
+                out.push_str(if *mutable { "&mut " } else { "&" });
+                source::grow_stack(|| self.write_real_text(out, *target, name_of));
             }
             Type::Slice { mutable, element } => {
-                let element = source::grow_stack(|| self.real_text(*element, name_of));
-                if *mutable {
-                    format!("&mut []{element}")
-                } else {
-                    format!("&[]{element}")
-                }
+                out.push_str(if *mutable { "&mut []" } else { "&[]" });
+                source::grow_stack(|| self.write_real_text(out, *element, name_of));
             }
-            Type::RawPointer { target: None } => "rawptr".to_string(),
+            Type::RawPointer { target: None } => out.push_str("rawptr"),
             Type::RawPointer {
                 target: Some(target),
             } => {
-                let target = source::grow_stack(|| self.real_text(*target, name_of));
-                format!("*{target}")
+                out.push('*');
+                source::grow_stack(|| self.write_real_text(out, *target, name_of));
             }
             Type::Alias { .. } => unreachable!("`real` looks through aliases"),
         }

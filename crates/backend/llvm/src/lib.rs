@@ -18,7 +18,6 @@ use model::DefId;
 use model::ModuleId;
 use model::machine::Machine;
 use rustc_hash::FxHashMap;
-use source::SourceFile;
 
 use crate::debug_info::Metadata;
 use crate::text::global;
@@ -103,17 +102,13 @@ impl<'p> Module<'p> {
         );
     }
 
-    fn file(&self) -> &'p SourceFile {
-        &self.program.modules[self.module.index()].ast.file
-    }
-
     /// Whether no function was added.
     pub fn is_empty(&self) -> bool {
         self.functions.is_empty()
     }
 
     pub fn text(&self) -> String {
-        let path = &self.file().path;
+        let path = &self.program.modules[self.module.index()].ast.file.path;
         let mut out = String::new();
         _ = writeln!(out, "source_filename = {}\n", quoted(path.as_bytes()));
         out.push_str(&self.strings);

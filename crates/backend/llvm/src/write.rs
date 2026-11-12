@@ -103,15 +103,12 @@ impl FunctionQueue<'_> {
             return;
         };
         self.sent[module.index()] = true;
-        let debug_types = match self.mode {
-            BuildMode::Debug => self.debug_types.clone(),
-            BuildMode::Release => DebugTypes::default(),
-        };
+        // A release build adds none, so this is empty.
         let batch = Batch {
             module,
             functions: std::mem::take(&mut self.functions),
             symbols: std::mem::take(&mut self.symbols),
-            debug_types,
+            debug_types: self.debug_types.clone(),
         };
         _ = self.batches.send(batch);
     }

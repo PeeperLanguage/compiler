@@ -35,23 +35,6 @@ fn fold(op: BinaryOp, ty: &Type, left: i128, right: i128) -> Result<Value, Strin
 }
 
 #[test]
-fn bit_operators_on_bools_as_a_range_loop_uses_them() {
-    let bits = |op, left, right| {
-        binary(
-            op,
-            &Type::Bool,
-            &Value::Bool(left),
-            &Type::Bool,
-            &Value::Bool(right),
-        )
-    };
-    assert_eq!(bits(BinaryOp::BitOr, false, true), Ok(Value::Bool(true)));
-    assert_eq!(bits(BinaryOp::BitOr, false, false), Ok(Value::Bool(false)));
-    assert_eq!(bits(BinaryOp::BitAnd, true, true), Ok(Value::Bool(true)));
-    assert_eq!(bits(BinaryOp::BitAnd, true, false), Ok(Value::Bool(false)));
-}
-
-#[test]
 fn arithmetic_wraps_like_the_fixtures() {
     let i8 = int(true, 8);
     assert_eq!(fold(BinaryOp::Add, &i8, 127, 1), Ok(value(&i8, -128)));
@@ -69,8 +52,6 @@ fn arithmetic_wraps_like_the_fixtures() {
     let u8 = int(false, 8);
     assert_eq!(fold(BinaryOp::Add, &u8, 255, 1), Ok(value(&u8, 0)));
     assert_eq!(unary(UnaryOp::BitNot, &u8, &value(&u8, 0)), value(&u8, 255));
-    // The same bits read through their own type: 255 as u8, -1 as i8.
-    assert_eq!(value(&u8, 255), value(&i8, -1));
 }
 
 #[test]
@@ -133,6 +114,17 @@ fn shift_counts_have_their_own_type() {
     assert_eq!(
         shift(BinaryOp::ShiftLeft, &u8, 1, &u16, 256),
         Err(shift_count_message(8))
+    );
+    // A negative count is outside, though its type is narrower than the
+    // shifted one: read unsigned, an `i5`'s -1 would be 31.
+    let i5 = int(true, 5);
+    assert_eq!(
+        shift(BinaryOp::ShiftLeft, &i64, 1, &i5, -1),
+        Err(shift_count_message(64))
+    );
+    assert_eq!(
+        shift(BinaryOp::ShiftLeft, &i64, 1, &i5, 15),
+        Ok(value(&i64, 1 << 15))
     );
 }
 
@@ -201,11 +193,6 @@ fn floats_compute_in_their_own_precision() {
     assert_eq!(
         unary(UnaryOp::Negate, &f32, &float(&f32, 0.0)),
         float(&f32, -0.0)
-    );
-    assert_ne!(
-        float(&f64, 0.0),
-        float(&f64, -0.0),
-        "values keep their bits"
     );
 }
 

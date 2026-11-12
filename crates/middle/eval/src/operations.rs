@@ -157,7 +157,8 @@ fn signed(bits: u32, value: u128) -> i128 {
 /// `left operation right` on integers of `bits` bits, wrapping there; the
 /// lowest signed value over -1 wraps to itself. Lowering checks a divisor
 /// against zero and a shift count against the width, but bytes a raw
-/// pointer wrote are not checked, so those trap here, as the machine does.
+/// pointer wrote are not checked, so those trap here, though a machine's
+/// shift would not.
 fn narrow_integer(
     operation: IntegerOp,
     bits: u32,

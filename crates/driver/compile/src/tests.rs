@@ -1330,3 +1330,94 @@ fn array_elements_keep_their_own_loans() {
         assert_eq!(check(function), [("T0037", message)], "{function}");
     }
 }
+
+/// A move in code that never runs moves nothing: it is not named, and the
+/// use before it in the loop was not moved by an earlier pass.
+#[test]
+fn a_move_that_never_runs_is_not_named() {
+    let program = load(&[(
+        "app:main",
+        "struct Pair { left: i32, right: &i32 }
+        fn consume(p: Pair) {}
+        fn f(flag: bool, n: &i32) {
+            let p = Pair.{ left = 1, right = n };
+            if flag { consume(p); }
+            for {
+                consume(p);
+                return;
+                consume(p);
+            }
+        }
+        fn main() {}",
+    )]);
+    let found = run(
+        &program,
+        x86_64(),
+        Results::default(),
+        Options::default(),
+        |_| {},
+    );
+    let moved: Vec<&Diagnostic> = found
+        .diagnostics()
+        .filter(|diagnostic| diagnostic.message == "`p` is used after it was moved")
+        .collect();
+    let [moved] = moved[..] else {
+        panic!("one use after a move: {moved:?}")
+    };
+    let labels: Vec<&str> = moved
+        .labels
+        .iter()
+        .map(|label| label.message.as_str())
+        .collect();
+    assert_eq!(labels, ["`p` is used here", "`p` is moved here"]);
+    let notes: Vec<&str> = moved.notes.iter().map(|note| note.text.as_str()).collect();
+    assert!(
+        !notes.contains(&"it was moved in an earlier pass of the loop"),
+        "{notes:?}"
+    );
+}
+
+/// A move inside the use, such as in the value an assignment sets, ran just
+/// before it, not in an earlier pass; the same move seen again does come
+/// from one.
+#[test]
+fn only_a_move_from_a_loop_pass_says_so() {
+    let program = load(&[(
+        "app:main",
+        "struct Pair { left: i32, right: &i32 }
+        fn consume(p: Pair) -> i32 { return 1; }
+        fn set_from_move(n: &i32) {
+            let mut p = Pair.{ left = 1, right = n };
+            p.left = consume(p);
+        }
+        fn move_each_pass(n: &i32) {
+            let q = Pair.{ left = 1, right = n };
+            for { consume(q); }
+        }
+        fn main() {}",
+    )]);
+    let found = run(
+        &program,
+        x86_64(),
+        Results::default(),
+        Options::default(),
+        |_| {},
+    );
+    let loop_notes: Vec<(&str, bool)> = found
+        .diagnostics()
+        .map(|diagnostic| {
+            let from_a_pass = diagnostic
+                .notes
+                .iter()
+                .any(|note| note.text == "it was moved in an earlier pass of the loop");
+            (diagnostic.message.as_str(), from_a_pass)
+        })
+        .collect();
+    assert_eq!(
+        loop_notes,
+        [
+            ("cannot set a field of `p` after `p` was moved", false),
+            ("`q` is used after it was moved", true),
+        ]
+    );
+}

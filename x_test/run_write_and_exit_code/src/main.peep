@@ -7,5 +7,10 @@ fn main() -> i32 {
     if util::Half(10) == 5 {
         Write(Stdout, c"half is 5\n", 10);
     }
+    // No descriptor 7 is open: the write fails before it reads a byte, so
+    // its length passes no output limit.
+    if Write(7, Greeting, 2000000) == -1 {
+        Write(Stdout, c"no descriptor 7\n", 16);
+    }
     return 7;
 }

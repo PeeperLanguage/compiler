@@ -43,7 +43,7 @@ impl Interpreter<'_, '_> {
                 let (left, right) = (self.register(class, left), self.register(class, right));
                 let value = operations::integer(operation, self.class_bits(class), &left, &right);
                 let value = value.map_err(|message| self.fail(message, self.span_of(id)))?;
-                self.hold(at, class, value)
+                self.hold(at, value)
             }
             &InstructionKind::Float {
                 operation,
@@ -87,14 +87,14 @@ impl Interpreter<'_, '_> {
                 let (from_bits, to_bits) = (self.class_bits(from), self.class_bits(to));
                 let value = self.register(from, value);
                 let value = operations::convert(conversion, from, from_bits, to, to_bits, &value);
-                self.hold(at, to, value)
+                self.hold(at, value)
             }
             InstructionKind::Load { class, place } => {
                 let address = self.address(place, id)?;
                 if let Class::Wide(bits) = *class {
-                    let size = class.bytes(self.pointer_bytes());
+                    let size = u64::from(bits.div_ceil(8)); // as `store` keeps it
                     let value = Limbs::from_le_bytes(bits, self.read_bytes(address, size, id)?);
-                    self.of_limbs(at, *class, value)
+                    self.hold(at, RegisterValue::Wide(Cow::Owned(value)))
                 } else {
                     self.load(*class, address, id)?
                 }
@@ -149,11 +149,18 @@ impl Interpreter<'_, '_> {
         }
     }
 
-    /// The register at `at`, of `class`, holding `value`.
-    fn hold(&mut self, at: usize, class: Class, value: RegisterValue) -> u128 {
+    /// The register at `at` holding `value`: a wide value is kept in
+    /// `wides` at `at`.
+    pub(super) fn hold(&mut self, at: usize, value: RegisterValue) -> u128 {
         match value {
             RegisterValue::Narrow(value) => value,
-            RegisterValue::Wide(limbs) => self.of_limbs(at, class, limbs.into_owned()),
+            RegisterValue::Wide(limbs) => {
+                if self.wides.len() <= at {
+                    self.wides.resize(at + 1, Limbs::new(0, &[]));
+                }
+                self.wides[at] = limbs.into_owned();
+                at as u128
+            }
         }
     }
 
@@ -167,11 +174,11 @@ impl Interpreter<'_, '_> {
             Root::At(operand) => self.operand(operand) as u64,
             Root::Result => self.registers[self.first_register] as u64,
         };
-        let wrap = operations::mask(self.pointer_bits) as u64;
+        let wrap = operations::mask(self.target.pointer_bits) as u64;
         for &step in &place.steps {
             address = match step {
                 Step::Offset(bytes) => address.wrapping_add(bytes) & wrap,
-                Step::Through => self.read_word(address, id)?,
+                Step::Through => self.load(Class::Pointer, address, id)? as u64,
                 Step::Index { index, size, .. } => {
                     let offset = (self.operand(index) as u64).wrapping_mul(size);
                     address.wrapping_add(offset) & wrap
@@ -192,14 +199,9 @@ impl Interpreter<'_, '_> {
         bytes.ok_or_else(|| self.fail(INVALID_ACCESS, self.span_of(id)))
     }
 
-    /// The pointer kept at `address`.
-    fn read_word(&self, address: u64, id: Id<Instruction>) -> Result<u64, Halt> {
-        Ok(self.load(Class::Pointer, address, id)? as u64)
-    }
-
     /// The register of `class`, not `Wide`, kept at `address`.
     fn load(&self, class: Class, address: u64, id: Id<Instruction>) -> Result<u128, Halt> {
-        let size = class.bytes(self.pointer_bytes());
+        let size = class.bytes(self.target.pointer_bytes());
         let bytes = self.read_bytes(address, size, id)?;
         let mut word = [0; 16];
         word[..size as usize].copy_from_slice(bytes);
@@ -214,7 +216,11 @@ impl Interpreter<'_, '_> {
         value: u128,
         id: Id<Instruction>,
     ) -> Result<(), Halt> {
-        let size = class.bytes(self.pointer_bytes());
+        // A wide integer covers its own bytes, not the padding of its slot.
+        let size = match class {
+            Class::Wide(bits) => u64::from(bits.div_ceil(8)),
+            _ => class.bytes(self.target.pointer_bytes()),
+        };
         let Some(bytes) = self.memory.bytes_mut(address, size) else {
             return Err(self.fail(INVALID_ACCESS, self.span_of(id)));
         };

@@ -72,11 +72,17 @@ fn lengths:
     %11 = sext i32 %10 to i64
     %12 = ule i64 2, %11
     check %12, "index out of bounds: the length is 2"
-    call make() into 12 .3
-    %15 = add i64 3, 3
+    store i64 .3, 3
+    %15 = load i64 .3
+    call make() into 12 .4
+    store i64 .5, 3
+    %18 = load i64 .5
+    %19 = add i64 %15, %18
+    dead .5
+    dead .4
     dead .3
     dead grid.0
-    return %15
+    return %19
   bb1:
     dead grid.0
     fall off at `}`

@@ -212,7 +212,7 @@ impl<'b> Loans<'b> {
                 for &id in ids {
                     self.holders.step_held(&mut at_return, id);
                 }
-                let loans = self.holders.loans_of(&at_return, returned);
+                let loans = at_return.loans_of(returned);
                 self.return_errors(span, &loans, &mut reported, file, &mut errors);
             }
             // The holders used later: walked back to the block's start once,
@@ -228,8 +228,9 @@ impl<'b> Loans<'b> {
             }
             for (position, &id) in walked {
                 // `live` is before `id` here, when a call's reserved arguments
-                // take hold. No call accesses a place, so an instruction has
-                // at most one of the two errors.
+                // take hold. A call's only access is the write of a result in
+                // memory, to a new place no loan reaches (`lower_into`), so an
+                // instruction has at most one of the two errors.
                 let first = reservations.partition_point(|&(call, _)| call < id);
                 let end = reservations.partition_point(|&(call, _)| call <= id);
                 let waiting = reservations[first..end].iter().map(|&(_, loan)| loan);

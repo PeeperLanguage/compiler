@@ -16,6 +16,7 @@ mod instructions;
 mod memory;
 pub mod program;
 
+use std::borrow::Cow;
 use std::num::NonZeroU64;
 use std::rc::Rc;
 
@@ -46,6 +47,7 @@ use rustc_hash::FxHashMap;
 use source::Span;
 
 use crate::operations;
+use crate::operations::RegisterValue;
 use memory::Memory;
 use program::Host;
 
@@ -53,6 +55,10 @@ use program::Host;
 /// endless loop stops with an error instead of hanging the compiler or an
 /// editor. A copy counts a step for each `BYTES_PER_STEP` bytes too.
 const CONSTANT_STEP_LIMIT: u32 = 1_000_000;
+
+/// How many steps a program may run: more than any page should wait for, so a
+/// page's own time limit usually ends a program first.
+const PROGRAM_STEP_LIMIT: u32 = 2_000_000_000;
 
 /// How many bytes a copy moves for each step it counts as: about what one
 /// step costs, as copying is far faster than running an instruction.
@@ -138,7 +144,7 @@ pub fn run_function<'b>(
     else {
         unreachable!("a body is a function's")
     };
-    let mut run = Interpreter::new(target, mir_of, CONSTANT_STEP_LIMIT, Memory::for_constant());
+    let mut run = Interpreter::new(target, mir_of, Memory::for_constant());
     let span = body.blocks.span(Id::from_index(0));
     let failed = |message: &str| Failure::Stopped {
         message: message.to_owned(),
@@ -206,10 +212,9 @@ struct Frame<'b> {
 }
 
 struct Interpreter<'b, 'f> {
-    pointer_bits: u32,
+    target: &'f Machine,
     mir_of: &'f dyn Fn(FunctionCopy) -> Option<&'b Body>,
     steps: u64, // run so far, by every call; past the limit the run stops, so it cannot wrap
-    step_limit: u32,
     host: Host, // what a program printed; a constant's call prints nothing
     memory: Memory,
     /// Each function called so far: its body and layout, or `None` when
@@ -225,7 +230,7 @@ struct Interpreter<'b, 'f> {
     /// value is.
     registers: Vec<u128>,
     /// The value of each register of the class `Wide`, at the register's
-    /// own index (`of_limbs`), so a loop writes over its last value.
+    /// own index (`hold`), so a loop writes over its last value.
     wides: Vec<Limbs>,
     first_register: usize, // where the running call's arguments start
     first_value: usize,    // where its instructions' values start, after its arguments
@@ -233,16 +238,14 @@ struct Interpreter<'b, 'f> {
 
 impl<'b, 'f> Interpreter<'b, 'f> {
     fn new(
-        target: &Machine,
+        target: &'f Machine,
         mir_of: &'f dyn Fn(FunctionCopy) -> Option<&'b Body>,
-        step_limit: u32,
         memory: Memory,
     ) -> Self {
         Interpreter {
-            pointer_bits: target.pointer_bits,
+            target,
             mir_of,
             steps: 0,
-            step_limit,
             memory,
             host: Host::default(),
             called: FxHashMap::default(),
@@ -282,14 +285,10 @@ impl<'b, 'f> Interpreter<'b, 'f> {
         })
     }
 
-    fn pointer_bytes(&self) -> u64 {
-        u64::from(self.pointer_bits / 8)
-    }
-
     /// How many bits a register of `class` holds; a float's are its bits.
     fn class_bits(&self, class: Class) -> u32 {
         match class {
-            Class::Pointer => self.pointer_bits,
+            Class::Pointer => self.target.pointer_bits,
             class => class.bits(),
         }
     }
@@ -300,11 +299,17 @@ impl<'b, 'f> Interpreter<'b, 'f> {
         self.frame().body.instructions.span(id)
     }
 
-    /// Counts `steps` more steps: an error past the run's limit.
+    /// Counts `steps` more steps: an error past the limit of a constant's
+    /// call or of a program's run.
     fn count_steps(&mut self, steps: u64) -> Result<(), String> {
         self.steps += steps;
-        if self.steps > u64::from(self.step_limit) {
-            return Err(format!("this ran more than {} steps", self.step_limit));
+        let limit = if self.memory.is_constant() {
+            CONSTANT_STEP_LIMIT
+        } else {
+            PROGRAM_STEP_LIMIT
+        };
+        if self.steps > u64::from(limit) {
+            return Err(format!("this ran more than {limit} steps"));
         }
         Ok(())
     }
@@ -338,7 +343,7 @@ impl<'b, 'f> Interpreter<'b, 'f> {
                 offset
             })
             .collect();
-        let pointer = self.pointer_bytes() as usize;
+        let pointer = self.target.pointer_bytes() as usize;
         let globals = (body.globals.iter())
             .map(|global| match global {
                 Global::Bytes(bytes) => self.memory.string_address(bytes),
@@ -589,7 +594,8 @@ impl<'b, 'f> Interpreter<'b, 'f> {
                 && let Class::Wide(_) = class
             {
                 let limbs = self.wides[value as usize].clone();
-                value = self.of_limbs(self.first_value + result.index(), class, limbs);
+                let wide = RegisterValue::Wide(Cow::Owned(limbs));
+                value = self.hold(self.first_value + result.index(), wide);
             }
             self.set_value(result, value);
         }
@@ -614,20 +620,6 @@ impl<'b, 'f> Interpreter<'b, 'f> {
             }
             Operand::Global(index) => u128::from(self.frame().layout.globals[index as usize]),
         }
-    }
-
-    /// The register of `class` holding the integer `limbs`, for the
-    /// register at `at`: a wide value is kept in `wides` at `at`.
-    fn of_limbs(&mut self, at: usize, class: Class, limbs: Limbs) -> u128 {
-        if let Class::Wide(_) = class {
-            if self.wides.len() <= at {
-                self.wides.resize(at + 1, Limbs::new(0, &[]));
-            }
-            self.wides[at] = limbs;
-            return at as u128;
-        }
-        let limbs = limbs.as_slice();
-        u128::from(limbs[0]) | u128::from(limbs[1]) << 64
     }
 
     /// Where `slot` of the running call is. In a constant's run it gets a
@@ -656,7 +648,7 @@ impl<'b, 'f> Interpreter<'b, 'f> {
     /// The register `value`, of the type `ty`, is, passed as `passing`:
     /// `None` when a value kept in memory finds no room.
     fn register_of(&mut self, value: &Value, passing: Passing, ty: &Type) -> Option<u128> {
-        let pointer = self.pointer_bytes() as usize;
+        let pointer = self.target.pointer_bytes() as usize;
         Some(match (value, passing) {
             (Value::Bool(value), _) => u128::from(*value),
             // Extended to its class, as its type's values are kept.
@@ -667,7 +659,8 @@ impl<'b, 'f> Interpreter<'b, 'f> {
                 let to = class.bits();
                 let extended = bigint::extend(integer.bits, integer.signed, limbs, to);
                 // Its register is the next one pushed.
-                self.of_limbs(self.registers.len(), class, extended)
+                let value = RegisterValue::of_limbs(to, Cow::Owned(extended));
+                self.hold(self.registers.len(), value)
             }
             (Value::Float(bits), Passing::Register { class, .. }) => {
                 operations::float_bits(class, f64::from_bits(*bits))
@@ -693,7 +686,7 @@ impl<'b, 'f> Interpreter<'b, 'f> {
     /// The constant of the type `ty` the run gave in `value`: an address
     /// for a value kept in memory. `Err` says why it cannot be one.
     fn constant_of(&self, bits: u128, ty: &Type) -> Result<Value, &'static str> {
-        let pointer = self.pointer_bytes();
+        let pointer = self.target.pointer_bytes();
         let word = |at: u64| -> Result<u64, &'static str> {
             let bytes = self.memory.bytes(at, pointer);
             let bytes = bytes.ok_or(INVALID_ACCESS)?;
@@ -705,10 +698,7 @@ impl<'b, 'f> Interpreter<'b, 'f> {
             Type::Bool => Value::Bool(bits != 0),
             Type::Integer(integer) => match Class::integer(integer.bits) {
                 Class::Wide(_) => Value::Integer(self.wides[bits as usize].clone()),
-                _ => Value::Integer(Limbs::new(
-                    integer.bits,
-                    &[bits as u64, (bits >> 64) as u64],
-                )),
+                _ => Value::Integer(RegisterValue::Narrow(bits).limbs(integer.bits).into_owned()),
             },
             &Type::Float(float) => {
                 Value::Float(operations::float_value(Class::float(float), bits).to_bits())

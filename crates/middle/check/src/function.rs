@@ -212,7 +212,7 @@ impl Checker<'_> {
         let diagnostics = &mut self.module_checks[module].diagnostics;
         let types = &self.types;
         flow::variable_state::report_variable_state_errors(&mir, file, diagnostics);
-        let pointer_bytes = u64::from(self.target.pointer_bits / 8);
+        let pointer_bytes = self.target.pointer_bytes();
         flow::loans::report_loan_errors(&mir, pointer_bytes, file, diagnostics);
         flow::unreachable::warn_unreachable_code(&mir, file, diagnostics);
         // Last: it points at the closing brace.

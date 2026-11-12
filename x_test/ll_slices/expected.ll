@@ -69,31 +69,31 @@ bb0:
 define void @"ll_slices:main.main"() !dbg !43 {
 entry:
   %s0 = alloca [8 x i8], align 4
-  call void @llvm.dbg.declare(metadata ptr %s0, metadata !47, metadata !DIExpression()), !dbg !48
+  call void @llvm.dbg.declare(metadata ptr %s0, metadata !46, metadata !DIExpression()), !dbg !47
   %s1 = alloca [4 x i8], align 4
-  call void @llvm.dbg.declare(metadata ptr %s1, metadata !49, metadata !DIExpression()), !dbg !50
+  call void @llvm.dbg.declare(metadata ptr %s1, metadata !48, metadata !DIExpression()), !dbg !49
   %s2 = alloca [16 x i8], align 8
   %s3 = alloca [16 x i8], align 8
   %s4 = alloca [16 x i8], align 8
   br label %bb0
 bb0:
-  store i32 3, ptr %s0, !dbg !51
-  %i1 = getelementptr inbounds i8, ptr %s0, i64 4, !dbg !51
-  store i32 4, ptr %i1, !dbg !51
-  store ptr %s0, ptr %s2, !dbg !52
-  %i4 = getelementptr inbounds i8, ptr %s2, i64 8, !dbg !52
-  store i64 2, ptr %i4, !dbg !52
-  call void @"ll_slices:main.set"(ptr %s2), !dbg !53
-  store ptr %s0, ptr %s3, !dbg !54
-  %i10 = getelementptr inbounds i8, ptr %s3, i64 8, !dbg !54
-  store i64 2, ptr %i10, !dbg !54
-  call void @"ll_slices:main.lend"(ptr %s3), !dbg !55
-  store ptr %s0, ptr %s4, !dbg !56
-  %i16 = getelementptr inbounds i8, ptr %s4, i64 8, !dbg !56
-  store i64 2, ptr %i16, !dbg !56
-  %i18 = call i32 @"ll_slices:main.get"(ptr %s4, i64 1), !dbg !57
-  store i32 %i18, ptr %s1, !dbg !58
-  ret void, !dbg !59
+  store i32 3, ptr %s0, !dbg !50
+  %i1 = getelementptr inbounds i8, ptr %s0, i64 4, !dbg !50
+  store i32 4, ptr %i1, !dbg !50
+  store ptr %s0, ptr %s2, !dbg !51
+  %i4 = getelementptr inbounds i8, ptr %s2, i64 8, !dbg !51
+  store i64 2, ptr %i4, !dbg !51
+  call void @"ll_slices:main.set"(ptr %s2), !dbg !52
+  store ptr %s0, ptr %s3, !dbg !53
+  %i10 = getelementptr inbounds i8, ptr %s3, i64 8, !dbg !53
+  store i64 2, ptr %i10, !dbg !53
+  call void @"ll_slices:main.lend"(ptr %s3), !dbg !54
+  store ptr %s0, ptr %s4, !dbg !55
+  %i16 = getelementptr inbounds i8, ptr %s4, i64 8, !dbg !55
+  store i64 2, ptr %i16, !dbg !55
+  %i18 = call i32 @"ll_slices:main.get"(ptr %s4, i64 1), !dbg !56
+  store i32 %i18, ptr %s1, !dbg !57
+  ret void, !dbg !58
 }
 
 declare void @"peeper_rt_v1_exit"(i32)
@@ -103,7 +103,7 @@ declare i32 @"peeper_rt_v1_write"(i32, ptr, i32)
 declare void @llvm.dbg.declare(metadata, metadata, metadata)
 
 !llvm.dbg.cu = !{!1}
-!llvm.module.flags = !{!60, !61}
+!llvm.module.flags = !{!59, !60}
 !0 = !DIFile(filename: "main.peep", directory: "<fixture>/src")
 !1 = distinct !DICompileUnit(language: DW_LANG_C, file: !0, producer: "peeper", isOptimized: false, runtimeVersion: 0, emissionKind: FullDebug)
 !2 = !DIBasicType(name: "i32", size: 32, encoding: DW_ATE_signed)
@@ -148,21 +148,20 @@ declare void @llvm.dbg.declare(metadata, metadata, metadata)
 !41 = !DILocation(line: 15, column: 1, scope: !36)
 !42 = !DISubroutineType(types: !{null})
 !43 = distinct !DISubprogram(name: "main", linkageName: "ll_slices:main.main", scope: !0, file: !0, line: 17, type: !42, scopeLine: 17, spFlags: DISPFlagDefinition, unit: !1)
-!44 = !DILexicalBlock(scope: !43, file: !0, line: 17, column: 11)
-!46 = !DISubrange(count: 2)
-!45 = !DICompositeType(tag: DW_TAG_array_type, baseType: !2, size: 64, elements: !{!46})
-!47 = !DILocalVariable(name: "values", scope: !44, file: !0, line: 18, type: !45)
-!48 = !DILocation(line: 18, column: 13, scope: !44)
-!49 = !DILocalVariable(name: "read", scope: !44, file: !0, line: 21, type: !2)
-!50 = !DILocation(line: 21, column: 9, scope: !44)
-!51 = !DILocation(line: 18, column: 22, scope: !44)
-!52 = !DILocation(line: 19, column: 9, scope: !44)
-!53 = !DILocation(line: 19, column: 5, scope: !44)
-!54 = !DILocation(line: 20, column: 10, scope: !44)
-!55 = !DILocation(line: 20, column: 5, scope: !44)
-!56 = !DILocation(line: 21, column: 20, scope: !44)
-!57 = !DILocation(line: 21, column: 16, scope: !44)
-!58 = !DILocation(line: 21, column: 5, scope: !44)
-!59 = !DILocation(line: 22, column: 1, scope: !44)
-!60 = !{i32 7, !"Dwarf Version", i32 4}
-!61 = !{i32 2, !"Debug Info Version", i32 3}
+!45 = !DISubrange(count: 2)
+!44 = !DICompositeType(tag: DW_TAG_array_type, baseType: !2, size: 64, elements: !{!45})
+!46 = !DILocalVariable(name: "values", scope: !43, file: !0, line: 18, type: !44)
+!47 = !DILocation(line: 18, column: 13, scope: !43)
+!48 = !DILocalVariable(name: "read", scope: !43, file: !0, line: 21, type: !2)
+!49 = !DILocation(line: 21, column: 9, scope: !43)
+!50 = !DILocation(line: 18, column: 22, scope: !43)
+!51 = !DILocation(line: 19, column: 9, scope: !43)
+!52 = !DILocation(line: 19, column: 5, scope: !43)
+!53 = !DILocation(line: 20, column: 10, scope: !43)
+!54 = !DILocation(line: 20, column: 5, scope: !43)
+!55 = !DILocation(line: 21, column: 20, scope: !43)
+!56 = !DILocation(line: 21, column: 16, scope: !43)
+!57 = !DILocation(line: 21, column: 5, scope: !43)
+!58 = !DILocation(line: 22, column: 1, scope: !43)
+!59 = !{i32 7, !"Dwarf Version", i32 4}
+!60 = !{i32 2, !"Debug Info Version", i32 3}

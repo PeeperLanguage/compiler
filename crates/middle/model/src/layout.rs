@@ -3,6 +3,7 @@
 //! backend places and copies values with it, and LLVM sees only the bytes.
 
 use crate::machine::Machine;
+use crate::mir::Class;
 use crate::semantic_types::Float;
 use crate::semantic_types::Type;
 use crate::semantic_types::TypeId;
@@ -28,20 +29,21 @@ pub fn layout(types: &Types, ty: TypeId, target: &Machine) -> (u64, u64) {
                 33..=64 => target.i64_align,
                 _ => 16,
             };
-            let bytes = u64::from(integer.bits.div_ceil(8));
-            (bytes.next_multiple_of(align), align)
+            // The class's bytes: its own, rounded up to the alignment.
+            let bytes = Class::integer(integer.bits).bytes(target.pointer_bytes());
+            (bytes, align)
         }
         Type::Float(Float::F32) => (4, 4),
         Type::Float(Float::F64) => (8, target.i64_align),
         Type::CString | Type::Reference { .. } | Type::RawPointer { .. } => {
-            let bytes = u64::from(target.pointer_bits / 8);
+            let bytes = target.pointer_bytes();
             (bytes, bytes)
         }
         Type::Slice { .. }
         | Type::Str
         | Type::InterfaceReference { .. }
         | Type::Interface { .. } => {
-            let bytes = u64::from(target.pointer_bits / 8);
+            let bytes = target.pointer_bytes();
             (2 * bytes, bytes)
         }
         Type::Struct { internals, .. } => (internals.size, internals.align),

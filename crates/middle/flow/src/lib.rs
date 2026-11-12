@@ -30,13 +30,12 @@
 //!
 //! - No type, name or operator rules, and no constant folding: the checker did
 //!   those while building THIR. A function whose checking reported an error
-//!   is not lowered at all (`Checker::check_body`), so these checks never
+//!   is not lowered at all (`lower::lower`), so these checks never
 //!   repeat or follow from an earlier error.
 //! - No changes to the MIR, and no fixes: they only report.
 //! - No use of constant values to decide which paths exist. `if false { ... }`
-//!   still has two sides, as in Go and Rust, so whether code compiles never
-//!   depends on a constant's value; a label only says which side the constant
-//!   takes.
+//!   still has two sides, so whether code compiles never depends on a
+//!   constant's value; a label only says which side the constant takes.
 //! - No errors from blocks that cannot be reached: the unreachable-code
 //!   check warns about them once, and the other checks skip them.
 //! - No warning that a condition is always true or false: `if DEBUG` with a
@@ -95,10 +94,12 @@ fn dataflow<B, F: Clone + PartialEq, E: IntoIterator<Item = Id<B>>>(
     entered
 }
 
-/// The blocks that go straight to each block, by index.
+/// The blocks that go straight to each block, by index: only those that
+/// run, so a walk back from a block never enters code that never runs.
 fn predecessors(body: &mir::Body) -> Vec<Vec<Id<mir::Block>>> {
+    let reachable = body.reachable();
     let mut predecessors = vec![Vec::new(); body.blocks.len()];
-    for from in body.blocks.ids() {
+    for from in body.blocks.ids().filter(|from| reachable[from.index()]) {
         for target in body.blocks[from].terminator.targets() {
             predecessors[target.index()].push(from);
         }

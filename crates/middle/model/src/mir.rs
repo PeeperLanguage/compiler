@@ -3,7 +3,10 @@
 //! No part of it names a language feature: a struct is a slot with offsets,
 //! an interface value is two pointers, a method call is a load from a table
 //! and a call through the pointer. Lowering writes it; the path checks, the
-//! interpreter and the LLVM writer read it and need no type.
+//! interpreter and the LLVM writer read it and need no type. Two things
+//! only the source types give are the exceptions: the words of the loan
+//! check's messages (`Body.returned`, `LoanWords` and `Moved.lent_again`),
+//! and the debug types a debugger shows (`DebugTypes`).
 
 use std::fmt::Write;
 
@@ -85,7 +88,7 @@ impl Class {
         }
     }
 
-    /// How many bits an integer class holds.
+    /// How many bits a number class holds.
     pub fn bits(self) -> u32 {
         match self {
             Class::I8 => 8,
@@ -238,7 +241,7 @@ pub struct DebugMember {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct DebugTypeId(pub u32);
+pub struct DebugTypeId(u32);
 
 /// The debug types of a program: one per language type that has a value
 /// (`of_type`), and those that stand for none (`push`). Lowering fills it;
@@ -312,9 +315,9 @@ pub enum Global {
 pub struct Signature {
     pub parameters: Box<[Passing]>,
     pub result: Option<Passing>,
-    /// For a call of a C function: how C passes each argument, the extra
-    /// ones of a variadic call too, and the result, as clang does on the
-    /// target. `None` in Peeper's own convention.
+    /// For a call of a C function: how C passes each argument and the
+    /// result, as clang does on the target. `None` in Peeper's own
+    /// convention.
     pub c: Option<CSignature>,
     /// The positions of the parameters a returned pointer may point into,
     /// for the loan check.
@@ -477,7 +480,7 @@ pub enum Operand {
 }
 
 impl Operand {
-    /// The integer `value` as a constant of `class`, which is not `Wide`:
+    /// `value`'s bits as a constant of `class`, which is not `Wide`:
     /// lowering keeps a wide constant as read-only data.
     pub fn integer(class: Class, value: u64) -> Operand {
         let fits = match class {
@@ -809,7 +812,9 @@ pub enum InstructionKind {
     },
     /// A call, with the callee's signature (`Body::signatures`). A result
     /// kept in memory is written to `result`'s place, of its size in bytes:
-    /// the call passes its address as a hidden first argument.
+    /// the call passes its address as a hidden first argument. The size is
+    /// the signature's, kept here as `Address` keeps its own, because
+    /// `accesses` reads an instruction without its body.
     Call {
         callee: Callee,
         signature: u32,
@@ -860,13 +865,13 @@ pub enum Callee {
 pub struct PlaceAccess<'p> {
     pub place: PlaceRef<'p>,
     pub kind: AccessKind,
-    width: AccessWidth,
+    touched: AccessWidth,
 }
 
 /// How many bytes an access touches: a register's, or a size.
 #[derive(Clone, Copy)]
 enum AccessWidth {
-    Class(Class),
+    Register(Class),
     Bytes(Option<u64>), // `None`: all there are
 }
 
@@ -875,8 +880,8 @@ impl PlaceAccess<'_> {
     /// are `pointer_bytes` wide; `None` for all there are.
     #[inline]
     pub fn width(&self, pointer_bytes: u64) -> Option<u64> {
-        match self.width {
-            AccessWidth::Class(class) => Some(class.bytes(pointer_bytes)),
+        match self.touched {
+            AccessWidth::Register(class) => Some(class.bytes(pointer_bytes)),
             AccessWidth::Bytes(size) => size,
         }
     }
@@ -904,17 +909,21 @@ impl InstructionKind {
     /// `match`.
     #[inline]
     pub fn accesses<'p>(&'p self, mut each: impl FnMut(PlaceAccess<'p>)) {
-        let mut on = |place: &'p Place, width, kind| {
+        let mut on = |place: &'p Place, touched, kind| {
             let place = place.as_place_ref();
-            each(PlaceAccess { place, kind, width });
+            each(PlaceAccess {
+                place,
+                kind,
+                touched,
+            });
         };
         let bytes = |size: &u64| AccessWidth::Bytes(Some(*size));
         match self {
             InstructionKind::Load { class, place } => {
-                on(place, AccessWidth::Class(*class), AccessKind::Read);
+                on(place, AccessWidth::Register(*class), AccessKind::Read);
             }
             InstructionKind::Store { class, place, .. } => {
-                on(place, AccessWidth::Class(*class), AccessKind::Write);
+                on(place, AccessWidth::Register(*class), AccessKind::Write);
             }
             InstructionKind::Copy { to, from, size } => {
                 on(from, bytes(size), AccessKind::Read);
@@ -947,7 +956,7 @@ impl InstructionKind {
                     steps: &[],
                 },
                 kind: AccessKind::End,
-                width: AccessWidth::Bytes(None),
+                touched: AccessWidth::Bytes(None),
             }),
         }
     }
@@ -991,27 +1000,6 @@ impl InstructionKind {
             self,
             InstructionKind::Moved { .. } | InstructionKind::Dead(_)
         )
-    }
-
-    /// The class of the value it gives, if any; a call's is read from its
-    /// signature (`Body::class_of`).
-    fn own_class(&self) -> Option<Class> {
-        match self {
-            InstructionKind::Integer { class, .. }
-            | InstructionKind::Float { class, .. }
-            | InstructionKind::Load { class, .. } => Some(*class),
-            InstructionKind::Compare { .. } => Some(Class::I8),
-            InstructionKind::Convert { to, .. } => Some(*to),
-            InstructionKind::Address { .. } | InstructionKind::Borrow { .. } => {
-                Some(Class::Pointer)
-            }
-            InstructionKind::Call { .. }
-            | InstructionKind::Store { .. }
-            | InstructionKind::Copy { .. }
-            | InstructionKind::Check { .. }
-            | InstructionKind::Moved { .. }
-            | InstructionKind::Dead(_) => None,
-        }
     }
 }
 
@@ -1059,16 +1047,23 @@ impl Body {
     /// Which blocks control can reach from the entry, by index.
     pub fn reachable(&self) -> Vec<bool> {
         let mut reachable = vec![false; self.blocks.len()];
-        self.mark_reachable(Id::from_index(0), &mut reachable);
+        self.mark_reachable(Id::from_index(0), &mut reachable, |_| {});
         reachable
     }
 
     /// Marks in `marked` `from` and every block control can reach from it,
-    /// stopping at blocks already marked.
-    pub fn mark_reachable(&self, from: Id<Block>, marked: &mut [bool]) {
+    /// stopping at blocks already marked, and gives each it marks to
+    /// `newly_marked`.
+    pub fn mark_reachable(
+        &self,
+        from: Id<Block>,
+        marked: &mut [bool],
+        mut newly_marked: impl FnMut(Id<Block>),
+    ) {
         let mut pending = vec![from];
         while let Some(block) = pending.pop() {
             if !std::mem::replace(&mut marked[block.index()], true) {
+                newly_marked(block);
                 pending.extend(self.blocks[block].terminator.targets());
             }
         }
@@ -1105,8 +1100,9 @@ impl Body {
         }
     }
 
-    /// The class of the register `operand` is; `None` for a call that gives
-    /// nothing or gives its result in memory.
+    /// The class of the register `operand` is; `None` for an instruction
+    /// that gives no register: a store, copy, check, `Moved`, `Dead`, or a
+    /// call that gives nothing or gives its result in memory.
     pub fn class_of(&self, operand: Operand) -> Option<Class> {
         match operand {
             Operand::Value(id) => match &self.instructions[id].kind {
@@ -1116,7 +1112,19 @@ impl Body {
                         Some(Passing::Memory { .. }) | None => None,
                     }
                 }
-                kind => kind.own_class(),
+                InstructionKind::Integer { class, .. }
+                | InstructionKind::Float { class, .. }
+                | InstructionKind::Load { class, .. } => Some(*class),
+                InstructionKind::Compare { .. } => Some(Class::I8),
+                InstructionKind::Convert { to, .. } => Some(*to),
+                InstructionKind::Address { .. } | InstructionKind::Borrow { .. } => {
+                    Some(Class::Pointer)
+                }
+                InstructionKind::Store { .. }
+                | InstructionKind::Copy { .. }
+                | InstructionKind::Check { .. }
+                | InstructionKind::Moved { .. }
+                | InstructionKind::Dead(_) => None,
             },
             Operand::Constant { class, .. } => Some(class),
             Operand::Parameter(index) => {

@@ -633,3 +633,139 @@
   `pub` mappings, waiting on the `pub` question. The interpreter's
   arithmetic is the folder's since fix 7 (`operations`), so the folder's
   parity covers it.
+- Untangle check 2, bugs (fresh reviewers after the tests pass; each
+  reproduced on the bundle first; patches bug1..bug7 under
+  target/step12-probes/untangle):
+  1. `.len` of a call giving `&[N]T` crashed lowering: `check_field`
+     went through the pointer only for a slice or `&str`. It now does
+     for every value read; `lower_length`'s `pointee` fallback is gone.
+     Fixture run_array_length (`passed_on(&values).len`).
+  2. A deep `&[]&[]...` type overflowed the stack in
+     `debug_type_at_depth`: the slice arm now nests like a pointer's
+     (depth + 1, `grow_stack`, stop at `DEEPEST_DEBUG_TYPE`), and
+     `Types::text` writes into one String (`write_real_text`), which was
+     cubic for such a chain. Test: the depth test has a `&[]` chain.
+  3. A shift count of a signed type too narrow to reach the width always
+     panicked (`i32 << i5`: 32 cut to an `i5` is 0). Such a count is now
+     checked only for being negative (`slt`); a count that can reach the
+     width keeps the unsigned check. Fixtures run_shift_narrow_counts,
+     run_panic_shift_negative_narrow; the lowering test asserts the `slt`
+     and an `i7`'s `ule`.
+  4. `MIN / -1` of a narrow signed type was 16 for `i5` at run time and
+     -16 folded: `arithmetic` now cuts a `SignedDivide` back like `Add`.
+     Fixture run_divide_narrow_lowest (widths 5, 13, 100, folded and
+     run, remainders); lowering test of the `shl`/`sshr` after `sdiv`.
+  5. The interpreter counted a `realloc`'s size as steps when no block
+     was made, so a failed huge one stopped the run: it counts only a
+     made block, as `allocated` does. run_realloc has the too-large case
+     (64-bit only: a 2 GiB request on i686 may succeed).
+  6. Use after move named moves in code that never runs, with a false
+     "earlier pass of the loop" note: `flow::predecessors` now lists only
+     blocks that run, so no backward walk enters others; the skip by hand
+     in `missing_return_causes` and its parameter are gone. Compile test
+     `a_move_that_never_runs_is_not_named`. Check output of every fixture
+     unchanged.
+  7. "`p` may already be set here" for a variable set on every path, after
+     a move: a move no longer clears `always`; a use needs `always` and not
+     `moved`, which gives the same answer for every use. Fixture
+     negative_assigned_twice (`d`); every other fixture's messages
+     unchanged.
+  Each test failed with its fix undone. check.sh ok.
+- Untangle check 2, cleanups:
+  - one owner: `Machine::pointer_bytes` (layout, check, lowering; lowering's
+    stored copy is gone); `lower_binary` takes a number's class from
+    `class`; `debug_struct` takes offsets from `field_placed` and size from
+    `layout`, not a second `struct_layout`; eval's step limit comes from
+    the memory's run (field and parameter gone); `hold` keeps a wide
+    register, `Interpreter::of_limbs` is gone, `constant_of` reads limbs
+    through `RegisterValue`.
+  - surplus: the dead `bool` `&`/`|`/`^` arms in lowering and eval (check
+    refuses them) and the test that reached them; `str_constant`,
+    `compare_integers_le`, `own_class`, `Module::file`, `Writer::type_of`
+    and `next_use` merged into their one caller; `loans_of` is `Held`'s;
+    a C call's argument types are read only for a C call; the `for`
+    index is read from THIR by its own id; `reserve`, `define`,
+    `llvm_type`, `sorted_union` and `DebugTypeId`'s field are private.
+  - debug info: a function's own block is always its subprogram, as for a
+    function with parameters; a parameterless function lost the lexical
+    block around its whole body. Six ll fixtures re-blessed; with node
+    numbers masked the only change is those lines.
+  - comments: the MIR header names the loan words as its exception;
+    `Signature.c` (no variadic), `Class::bits`, `Operand::integer`,
+    `Call.result` (why it keeps the size), flow lib (`lower::lower`
+    refuses), missing_return (no copy, no comparison), unreachable (what
+    counts as code), loans (why one error per instruction), compile
+    `interpret`.
+  - tests: the two slice tests move from the LLVM writer to lowering; new
+    writer tests for an empty endless loop and for the -1 divisor guard
+    (fails without the mask); eval's test comparing its own helper is gone.
+  The `.ll` of every x_test project, host and i686, is byte-identical
+  with only the debug-scope change undone. Not done, with reasons: the
+  "result in memory" matches in the writer (each reads `Passing::Memory`,
+  the one owner; no decision repeats); `write_c_call`'s two matches print
+  two parts on either side of the call line; `c_function` is a local,
+  not a stored copy; `copy_type` stays `pub` (lowering's tests call it);
+  `register_slot`'s alignment (over-aligning only, low value).
+- Untangle check 3 (fresh reviewers after check 2), bugs (uncommitted;
+  reports and probes in target/step12-probes/untangle/check3*):
+  1. `.len` of a call skipped the checks on what used it: lowering gave a
+     MIR constant, which reads as "the checker checked it". `x /
+     make().len` with `[0]` died by SIGFPE, `1 << make().len` printed 256,
+     a zero step looped forever or crashed lowering, and a spread count
+     wrote 5 values into a `[3]`. `lower_length` now gives a register
+     (store and load). Lower test `the_length_of_a_call_is_checked_where_it_is_used`;
+     fixtures run_panic_divide_by_call_length,
+     run_panic_spread_count_of_call_length; mir_array_length re-blessed.
+  2-3. An array literal's part, or an assignment's value, kept in memory
+     was copied after later code ran: `[4]i32{a..., bump(&mut a)}` gave
+     100 2 3 7, `rows[bump(&mut a)] = a` stored the changed array, and the
+     move-after-borrow forms compiled. `settled` copies such a value at
+     once when a call runs before it is read (`Thir::has_call`); print
+     uses it too, so it no longer copies a value no call can change
+     (mir_text re-blessed). Fixtures run_evaluation_order and two cases in
+     negative_use_after_move. `has_call` now walks a list, not recursion:
+     print's use of it overflowed the stack on `a[0]...` 50,000 deep.
+  4. "it was moved in an earlier pass of the loop" for `p.left = Use(p);`
+     with no loop: a move inside the use's own span ran just before it.
+     Compile test `only_a_move_from_a_loop_pass_says_so`.
+  5. Two unreachable warnings for `return; for i in 0..3 {}`: a `for`
+     works out its range before the name. A stretch now starts at a block
+     nothing jumps to and warns at its earliest code; `mark_reachable`
+     gives each newly marked block to a callback. warn_unreachable_code
+     (`LoopAfterReturn`, 7 warnings).
+  6. The folder read a narrow signed shift count unsigned: `(1 as i64) <<
+     (-1 as i5)` folded to 2147483648, and `known_trap` let the run-time
+     form through unchecked (native 1<<63, i686 0). eval `shift_count`
+     reads the count with its sign. Unit test; negative_check_numbers.
+  7. The interpreter's wide store and load covered the slot's padding (32
+     bytes for a `u200`, LLVM writes 25). run_wide_integers `store:` line.
+  8. A write to a descriptor that is no output was checked against the
+     output limit (and read its buffer): the stream is picked first, -1
+     for any other. run_write_and_exit_code.
+  Each test and fixture failed on the old bundle or with its fix undone.
+- Untangle check 3, cleanups: `debug_type` takes the depth (the forwarder
+  is gone); `holders` lost its always-0 `at`; `range_count` merged into
+  `part_count`; `emit_scope_ends`/`lower_statement` private; layout takes
+  an integer's size from `Class::bytes` (same for every width 1-4096, both
+  `i64_align`s); the writer's Release arm is gone (the table is empty
+  then); the interpreter keeps the `Machine`, not a copy of its pointer
+  bits; `read_word` and `keep_output` merged into their callers;
+  `Host.output` private; comments (MIR header's two exceptions,
+  `class_of`'s `None`, `add_debug_info`, `typed`, `narrow_integer`, eval
+  lib, the depth comments name slices, `moved` is cleared by `End` too);
+  tests: an unsigned count too narrow for any check, the LLVM assert that
+  could not fail and eval's helper-only assert are gone. check.sh ok.
+  Not done, with reasons: `Convert.from` repeats `class_of(value)` as
+  `Store` and `Integer` carry their class, so only that one would differ;
+  lowering and the writer both call `Class::integer(pointer_bits)`, the
+  one owner, not a second decision; `check::lower_function` keeps its one
+  caller (near the 60-line line). Found, not fixed: `check` of a parameter
+  50,000 arrays deep takes about 12 s, before and after this work.
+- Untangle check 3, review fixes: run_evaluation_order also prints a
+  `&str` a later call changes (`println(text, change(&mut text))`, expects
+  `before 1`; with print's `called_later` forced off it printed `after 1`).
+  `Thir::has_call` starts from the expression itself, so its list stays
+  empty, unallocated, for one with no parts (every plain assignment
+  target). `mir.rs`: `AccessWidth::Class(Class)` is `Register(Class)` and
+  `PlaceAccess`'s field `width` is `touched`, so neither shares a name with
+  what it holds or with the `width()` method. check.sh ok.

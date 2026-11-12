@@ -5,4 +5,5 @@ fn main() {
     let ratio = 10 / 0;
     let shifted = 1u8 << 8;
     let lowered = 1u16 >> 16;
+    let negative = 1i64 << (-1 as i5);
 }

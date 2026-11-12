@@ -45,6 +45,16 @@ impl Held {
             .map(|pair| pair.1)
     }
 
+    /// All the loans of `holders`, in order.
+    pub(super) fn loans_of(&self, holders: impl Iterator<Item = usize>) -> Vec<Id<Loan>> {
+        let mut loans: Vec<Id<Loan>> = holders
+            .flat_map(|holder| self.loans(Id::from_index(holder)))
+            .collect();
+        loans.sort_unstable();
+        loans.dedup();
+        loans
+    }
+
     /// Makes `loans`, in order, all that `holder` holds.
     pub(super) fn set(&mut self, holder: Id<Holder>, loans: &[Id<Loan>]) {
         let row = self.pair_range(holder);
@@ -191,20 +201,6 @@ impl<'b> Holders<'b> {
         (self.body.signatures[signature as usize].origins.iter())
             .map(|&position| self.argument_holders(arguments[position as usize]))
             .collect()
-    }
-
-    /// All the loans of `holders`, in order.
-    pub(super) fn loans_of(
-        &self,
-        held: &Held,
-        holders: impl Iterator<Item = usize>,
-    ) -> Vec<Id<Loan>> {
-        let mut loans: Vec<Id<Loan>> = holders
-            .flat_map(|holder| held.loans(Id::from_index(holder)))
-            .collect();
-        loans.sort_unstable();
-        loans.dedup();
-        loans
     }
 
     /// The holders the instruction `id` uses: those under a place it reads,

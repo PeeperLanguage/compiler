@@ -64,4 +64,9 @@ fn main() {
     println("spread:", s[0], s[1], s[2], s[3]);
     let big: i256 = -1;
     println("casts:", big as u256, (big as u256) >> 200, big as i8 as i256);
+    // A `u200` is kept in 25 bytes: those after it in its 32-byte slot stay.
+    let mut bytes = [32]u8{(0..32)...};
+    let wide = @bytes as *u200;
+    wide.* = 1;
+    println("store:", bytes[0], bytes[24], bytes[25], bytes[31]);
 }

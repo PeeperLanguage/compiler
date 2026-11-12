@@ -70,8 +70,9 @@ impl<'b> Holders<'b> {
 
 impl<'b> Loans<'b> {
     /// `error` with a label where `holder`, whose loan it breaks, is next used
-    /// after the instruction at `position` of `block`. A reference used only
-    /// by the call has no later use to show.
+    /// after the instruction at `position` of `block`, on the nearest path
+    /// that does not set it again: searched only for an error. A reference
+    /// used only by the call has no later use to show.
     pub(super) fn label_later_use(
         &self,
         error: Diagnostic,
@@ -80,7 +81,33 @@ impl<'b> Loans<'b> {
         position: usize,
         file: &Arc<SourceFile>,
     ) -> Diagnostic {
-        let Some(later) = self.next_use(holder, block, position) else {
+        let body = self.holders.body;
+        let mut seen = vec![false; body.blocks.len()];
+        let mut pending = VecDeque::from([(block, position + 1)]);
+        let later = 'search: {
+            'paths: while let Some((block, from)) = pending.pop_front() {
+                for &id in self.lines[block.index()].iter().skip(from) {
+                    let mut used = false;
+                    self.holders
+                        .uses(id, |used_holder| used |= used_holder == holder);
+                    if used {
+                        break 'search body.instructions.span(id);
+                    }
+                    if self.holders.defines(id).contains(&holder.index()) {
+                        continue 'paths; // set again: this path does not use it
+                    }
+                }
+                if let Some((returned, span)) = self.holders.returned_holders(block)
+                    && returned.contains(&holder.index())
+                {
+                    break 'search span;
+                }
+                for target in body.blocks[block].terminator.targets() {
+                    if !std::mem::replace(&mut seen[target.index()], true) {
+                        pending.push_back((target, 0));
+                    }
+                }
+            }
             return error;
         };
         let noun = self.holders.holder_words(holder).noun;
@@ -339,39 +366,6 @@ impl<'b> Loans<'b> {
                     borrowed.words.writable
                 );
                 return Some((holder, error.note(note)));
-            }
-        }
-        None
-    }
-
-    /// Where `holder` is next used after the instruction at `position` of
-    /// `block`, on the nearest path that does not set it again: searched
-    /// only for an error.
-    fn next_use(&self, holder: Id<Holder>, block: Id<mir::Block>, position: usize) -> Option<Span> {
-        let body = self.holders.body;
-        let mut seen = vec![false; body.blocks.len()];
-        let mut pending = VecDeque::from([(block, position + 1)]);
-        'paths: while let Some((block, from)) = pending.pop_front() {
-            for &id in self.lines[block.index()].iter().skip(from) {
-                let mut used = false;
-                self.holders
-                    .uses(id, |used_holder| used |= used_holder == holder);
-                if used {
-                    return Some(body.instructions.span(id));
-                }
-                if self.holders.defines(id).contains(&holder.index()) {
-                    continue 'paths; // set again: this path does not use it
-                }
-            }
-            if let Some((returned, span)) = self.holders.returned_holders(block)
-                && returned.contains(&holder.index())
-            {
-                return Some(span);
-            }
-            for target in body.blocks[block].terminator.targets() {
-                if !std::mem::replace(&mut seen[target.index()], true) {
-                    pending.push_back((target, 0));
-                }
             }
         }
         None

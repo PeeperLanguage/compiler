@@ -17,21 +17,21 @@ bb0:
 define void @"ll_struct_parameters:main.main"() !dbg !17 {
 entry:
   %s0 = alloca [8 x i8], align 4
-  call void @llvm.dbg.declare(metadata ptr %s0, metadata !19, metadata !DIExpression()), !dbg !20
+  call void @llvm.dbg.declare(metadata ptr %s0, metadata !18, metadata !DIExpression()), !dbg !19
   %s1 = alloca [8 x i8], align 4
   br label %bb0
 bb0:
-  store i32 1, ptr %s1, !dbg !21
-  %i1 = getelementptr inbounds i8, ptr %s1, i64 4, !dbg !22
-  store i32 2, ptr %i1, !dbg !22
-  call void @"ll_struct_parameters:main.swap"(ptr %s0, ptr %s1), !dbg !23
-  ret void, !dbg !24
+  store i32 1, ptr %s1, !dbg !20
+  %i1 = getelementptr inbounds i8, ptr %s1, i64 4, !dbg !21
+  store i32 2, ptr %i1, !dbg !21
+  call void @"ll_struct_parameters:main.swap"(ptr %s0, ptr %s1), !dbg !22
+  ret void, !dbg !23
 }
 
 declare void @llvm.dbg.declare(metadata, metadata, metadata)
 
 !llvm.dbg.cu = !{!1}
-!llvm.module.flags = !{!25, !26}
+!llvm.module.flags = !{!24, !25}
 !0 = !DIFile(filename: "main.peep", directory: "<fixture>/src")
 !1 = distinct !DICompileUnit(language: DW_LANG_C, file: !0, producer: "peeper", isOptimized: false, runtimeVersion: 0, emissionKind: FullDebug)
 !4 = !DIDerivedType(tag: DW_TAG_member, name: "x", scope: !2, baseType: !3, offset: 0)
@@ -50,12 +50,11 @@ declare void @llvm.dbg.declare(metadata, metadata, metadata)
 !15 = !DILocation(line: 8, column: 5, scope: !10)
 !16 = !DISubroutineType(types: !{null})
 !17 = distinct !DISubprogram(name: "main", linkageName: "ll_struct_parameters:main.main", scope: !0, file: !0, line: 11, type: !16, scopeLine: 11, spFlags: DISPFlagDefinition, unit: !1)
-!18 = !DILexicalBlock(scope: !17, file: !0, line: 11, column: 11)
-!19 = !DILocalVariable(name: "p", scope: !18, file: !0, line: 12, type: !2)
-!20 = !DILocation(line: 12, column: 9, scope: !18)
-!21 = !DILocation(line: 12, column: 30, scope: !18)
-!22 = !DILocation(line: 12, column: 37, scope: !18)
-!23 = !DILocation(line: 12, column: 13, scope: !18)
-!24 = !DILocation(line: 13, column: 1, scope: !18)
-!25 = !{i32 7, !"Dwarf Version", i32 4}
-!26 = !{i32 2, !"Debug Info Version", i32 3}
+!18 = !DILocalVariable(name: "p", scope: !17, file: !0, line: 12, type: !2)
+!19 = !DILocation(line: 12, column: 9, scope: !17)
+!20 = !DILocation(line: 12, column: 30, scope: !17)
+!21 = !DILocation(line: 12, column: 37, scope: !17)
+!22 = !DILocation(line: 12, column: 13, scope: !17)
+!23 = !DILocation(line: 13, column: 1, scope: !17)
+!24 = !{i32 7, !"Dwarf Version", i32 4}
+!25 = !{i32 2, !"Debug Info Version", i32 3}

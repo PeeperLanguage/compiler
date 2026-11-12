@@ -19,7 +19,6 @@ use arena::Id;
 use arena::Lists;
 use model::layout::field_placed;
 use model::layout::layout;
-use model::layout::struct_layout;
 use model::machine::Machine;
 use model::mir::Block;
 use model::mir::Body;
@@ -75,7 +74,6 @@ pub fn lower(
     else {
         unreachable!("a body is a function's")
     };
-    let pointer_bytes = u64::from(target.pointer_bits / 8);
     let mut lowering = Lowering {
         thir: body,
         types,
@@ -110,12 +108,11 @@ pub fn lower(
         loops: Vec::new(),
         declared: Vec::new(),
         kept: vec![Vec::new(); body.variables.len()],
-        pointer_bytes,
         usize: Class::integer(target.pointer_bits),
     };
     lowering.mir.signature = lowering.signature(function);
     lowering.mir.result_debug_type =
-        (types.real(*result) != TypeId::VOID).then(|| lowering.debug_type(*result));
+        (types.real(*result) != TypeId::VOID).then(|| lowering.debug_type(*result, 0));
     // One debug scope per block and one slot per THIR variable, in order:
     // block `i` is debug scope `i`, and the ids of variables match.
     for block in body.blocks.ids() {
@@ -132,12 +129,12 @@ pub fn lower(
         }
         let ty = types.real(variable.ty);
         let (size, align) = layout(types, ty, target);
-        let debug_type = (!variable.hidden).then(|| lowering.debug_type(ty));
+        let debug_type = (!variable.hidden).then(|| lowering.debug_type(ty, 0));
         lowering.mir.slots.push(
             Slot {
                 size,
                 align,
-                holders: lowering.holders(ty, 0).into(),
+                holders: lowering.holders(ty).into(),
                 debug_type,
                 debug_scope: Id::from_index(variable.scope.index()),
                 mutable: variable.mutable,
@@ -202,7 +199,6 @@ struct Lowering<'t> {
     /// any code: each joins `declared` just before its variable (`declare`),
     /// so it ends with it on every path.
     kept: Vec<Vec<Id<Slot>>>,
-    pointer_bytes: u64,
     usize: Class, // the class of a pointer-wide integer
 }
 
@@ -246,7 +242,8 @@ impl Value {
     }
 }
 
-/// How deep the debug types of pointers and structs follow the source:
+/// How deep the debug types of pointers, slices and structs follow the
+/// source:
 /// clang runs out of stack on debug types tens of thousands of nodes deep.
 const DEEPEST_DEBUG_TYPE: u32 = 5_000;
 
@@ -308,9 +305,13 @@ impl Lowering<'_> {
         let class = Class::integer(integer.bits);
         let result = self.integer(operation, class, left, right, span);
         match operation {
-            IntegerOp::Add | IntegerOp::Subtract | IntegerOp::Multiply | IntegerOp::ShiftLeft => {
-                self.narrow(result, integer, span)
-            }
+            // A narrow type's lowest value over -1 is its highest plus one:
+            // it fits the class, not the type.
+            IntegerOp::Add
+            | IntegerOp::Subtract
+            | IntegerOp::Multiply
+            | IntegerOp::ShiftLeft
+            | IntegerOp::SignedDivide => self.narrow(result, integer, span),
             _ => result,
         }
     }
@@ -404,6 +405,20 @@ impl Lowering<'_> {
         }
     }
 
+    /// `value`, of the type `ty`, as it is now: one in memory, or moving out
+    /// of a variable, is copied into a temporary when `called_later`, as a
+    /// call that runs before it is read could change it.
+    fn settled(&mut self, value: Value, ty: TypeId, called_later: bool, span: Span) -> Value {
+        match value {
+            Value::Memory(_) | Value::Moving(..) if called_later => {
+                let copy = Place::whole(self.temporary(ty, span));
+                self.put(copy.clone(), value, ty, span);
+                Value::Memory(copy)
+            }
+            value => value,
+        }
+    }
+
     /// The value of the type `ty` read at `place`, at `span`: a load,
     /// marked moved when it moves out, or the place itself for a value kept
     /// in memory, `Moving` when it moves out. A value read out of one of
@@ -452,7 +467,7 @@ impl Lowering<'_> {
     /// until the statement ends (`declared`).
     fn temporary(&mut self, ty: TypeId, span: Span) -> Id<Slot> {
         let (size, align) = layout(self.types, ty, self.target);
-        let holders = self.holders(ty, 0).into();
+        let holders = self.holders(ty).into();
         let slot = self.hidden_slot(size, align, holders, span);
         self.declared.push(slot);
         slot
@@ -461,7 +476,7 @@ impl Lowering<'_> {
     /// A new slot holding one register of `class`, in scope until the
     /// statement ends.
     fn register_slot(&mut self, class: Class, span: Span) -> Id<Slot> {
-        let size = class.bytes(self.pointer_bytes);
+        let size = class.bytes(self.target.pointer_bytes());
         let slot = self.hidden_slot(size, size.min(16), Box::default(), span);
         self.declared.push(slot);
         slot
@@ -558,13 +573,14 @@ impl Lowering<'_> {
         }
     }
 
-    /// The pointers, from `at`, in a value of the type `ty` that may hold
-    /// a loan, with the words a message names each by: a reference, a slice, an interface reference or
-    /// an owned interface (on the struct it took) is one, at its start; a
-    /// struct's fields' and an array's elements' are each at theirs.
-    fn holders(&self, ty: TypeId, at: u64) -> Vec<Holder> {
+    /// The pointers in a value of the type `ty` that may hold a loan, with
+    /// the words a message names each by: a reference, a slice, an
+    /// interface reference or an owned interface (on the struct it took) is
+    /// one, at its start; a struct's fields' and an array's elements' are
+    /// each at theirs.
+    fn holders(&self, ty: TypeId) -> Vec<Holder> {
         let mut holders = Vec::new();
-        self.add_holders(ty, at, &mut holders);
+        self.add_holders(ty, 0, &mut holders);
         holders
     }
 
@@ -604,12 +620,10 @@ impl Lowering<'_> {
         }
     }
 
-    /// The debug type of the language type `ty`, made once per program.
-    fn debug_type(&mut self, ty: TypeId) -> DebugTypeId {
-        self.debug_type_at_depth(ty, 0)
-    }
-
-    fn debug_type_at_depth(&mut self, ty: TypeId, depth: u32) -> DebugTypeId {
+    /// The debug type of the language type `ty`, made once per program;
+    /// `depth` pointers, slices and structs in from the type a variable or
+    /// result has.
+    fn debug_type(&mut self, ty: TypeId, depth: u32) -> DebugTypeId {
         let ty = self.types.real(ty);
         if let Some(id) = self.debug_types.of_type(ty) {
             return id;
@@ -650,9 +664,9 @@ impl Lowering<'_> {
                     Some(_) if depth == DEEPEST_DEBUG_TYPE => None,
                     // Pointers break a flat array, so they nest as deep as
                     // the source does.
-                    Some(pointee) => Some(source::grow_stack(|| {
-                        self.debug_type_at_depth(pointee, depth + 1)
-                    })),
+                    Some(pointee) => {
+                        Some(source::grow_stack(|| self.debug_type(pointee, depth + 1)))
+                    }
                     None => None, // `rawptr`
                 };
                 DebugType::Pointer {
@@ -665,16 +679,19 @@ impl Lowering<'_> {
                 let element = self.types[ty]
                     .elements()
                     .map_or(TypeId::U8, |(element, _)| element);
-                let base = self.debug_type_at_depth(element, depth);
+                // As a pointer's: a slice of slices nests as deep as the
+                // source does.
+                let base = (depth < DEEPEST_DEBUG_TYPE)
+                    .then(|| source::grow_stack(|| self.debug_type(element, depth + 1)));
                 let name = model::program::type_text(self.modules, self.types, ty);
                 let pointer = DebugType::Pointer {
                     name: "".into(),
-                    to: Some(base),
+                    to: base,
                 };
                 let pointer = self.debug_types.push(pointer);
                 let usize = basic("usize", pointer_bits, "DW_ATE_unsigned");
                 let usize = self.debug_types.push(usize);
-                let pointer_bytes = self.pointer_bytes;
+                let pointer_bytes = self.target.pointer_bytes();
                 let members = [
                     DebugMember {
                         name: "ptr".into(),
@@ -701,7 +718,7 @@ impl Lowering<'_> {
                     to: None,
                 };
                 let pointer = self.debug_types.push(pointer);
-                let pointer_bytes = self.pointer_bytes;
+                let pointer_bytes = self.target.pointer_bytes();
                 let members = [
                     DebugMember {
                         name: "ptr".into(),
@@ -722,7 +739,9 @@ impl Lowering<'_> {
             }
             // One node with a range per level, as C's debug info has.
             Type::Array { internals, .. } => {
-                let element = self.debug_type_at_depth(internals.base, depth);
+                // Its base is no array: a pointer, slice or struct in it
+                // counts the depth.
+                let element = self.debug_type(internals.base, depth);
                 let lengths = self.types.array_lengths(ty).collect();
                 let (size, _) = layout(self.types, ty, self.target);
                 DebugType::Array {
@@ -769,13 +788,13 @@ impl Lowering<'_> {
         depth: u32,
     ) -> DebugTypeId {
         let composite = self.debug_types.reserve(ty);
-        let field_types: Vec<TypeId> = fields.iter().map(|&(_, field)| field).collect();
-        let (offsets, size, _) = struct_layout(self.types, &field_types, self.target);
+        let (size, _) = layout(self.types, ty, self.target);
         let mut members = Vec::with_capacity(fields.len());
         if depth < DEEPEST_DEBUG_TYPE {
-            for ((field_name, field), offset) in fields.iter().zip(offsets) {
+            for (index, (field_name, field)) in fields.iter().enumerate() {
+                let (offset, _) = field_placed(self.types, ty, index, self.target);
                 // Structs hold structs as deep as the declarations nest.
-                let base = source::grow_stack(|| self.debug_type_at_depth(*field, depth + 1));
+                let base = source::grow_stack(|| self.debug_type(*field, depth + 1));
                 members.push(DebugMember {
                     name: field_name.as_str().into(),
                     offset,
@@ -802,6 +821,6 @@ impl Lowering<'_> {
     /// The second word of a two-word value at `place`: a slice's length,
     /// an interface value's table (the first word is the address).
     fn second_word(&self, place: Place) -> Place {
-        place.then(Step::Offset(self.pointer_bytes))
+        place.then(Step::Offset(self.target.pointer_bytes()))
     }
 }

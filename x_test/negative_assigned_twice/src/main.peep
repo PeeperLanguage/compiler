@@ -21,3 +21,19 @@ fn WithValue() -> i32 {
     c = 2;
     return c;
 }
+
+// A move takes the value, not the assignment: `d` is still set once.
+struct Pair {
+    left: i32,
+    right: &i32,
+}
+
+fn Consume(pair: Pair) {}
+
+fn MovedThenSet(n: &i32) {
+    let d: Pair;
+    d = Pair.{left = 1, right = n};
+    Consume(d);
+    d = Pair.{left = 2, right = n};
+    Consume(d);
+}

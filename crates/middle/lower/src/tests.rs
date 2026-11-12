@@ -323,8 +323,8 @@ fn print_writes_text_once_and_each_value_by_its_kind() {
     let int = Runtime::PrintInt.signature().symbol;
     let flush = Runtime::Flush.signature().symbol;
     for line in [
-        format!("call {bytes}(%5, %6)\n"),
-        format!("call {int}(1, 1, %10)\n"),
+        format!("call {bytes}(%4, %5)\n"),
+        format!("call {int}(1, 1, %9)\n"),
         format!("  bb1:\n    call {bytes}(global 3, 4)\n"),
         format!("  bb2:\n    call {bytes}(global 4, 5)\n"),
         format!("call {bytes}(global 5, 1)\n    call {flush}()\n"),
@@ -381,14 +381,38 @@ fn a_wide_integer_has_its_own_class_and_its_constants_are_data() {
 }
 
 #[test]
-fn a_signed_shift_count_is_checked_however_narrow() {
-    let text = lowered("fn main() -> i32 { let c: i5 = -1; let x = 8; return x << c; }");
-    // An `i5` cannot reach 32, but it can be negative: read unsigned, that
-    // is above the width, so the check stays.
+fn a_narrow_signed_division_is_cut_back() {
+    let text =
+        lowered("fn main() -> i32 { let a: i5 = -16; let b: i5 = -1; let c = a / b; return 0; }");
+    // `-16 / -1` is 16 in the `i8` class; cut back, it is -16 again.
     assert!(
-        text.contains("check %4, \"a shift count must be from 0 to 31\"\n"),
+        text.contains("    %6 = sdiv i8 %2, %3\n    %7 = shl i8 %6, 3\n    %8 = sshr i8 %7, 3\n"),
         "{text}"
     );
+}
+
+#[test]
+fn a_signed_shift_count_is_checked_however_narrow() {
+    let text = lowered("fn main() -> i32 { let c: i5 = -1; let x = 8; return x << c; }");
+    // An `i5` cannot reach 32, but it can be negative: only that is checked.
+    assert!(
+        text.contains(
+            "    %4 = slt i8 %3, 0\n    check %4, \"a shift count must be from 0 to 31\"\n"
+        ),
+        "{text}"
+    );
+    // An `i7` can reach 32: read unsigned, a negative count is above it.
+    let text = lowered("fn main() -> i32 { let c: i7 = 2; let x = 8; return x << c; }");
+    assert!(text.contains("    %4 = ule i8 32, %3\n"), "{text}");
+}
+
+#[test]
+fn an_unsigned_shift_count_too_narrow_to_reach_the_width_is_not_checked() {
+    let text = lowered("fn main() -> i32 { let c: u5 = 31; let x = 8; return x << c; }");
+    assert!(!text.contains("shift count"), "{text}");
+    // A `u6` can reach 32.
+    let text = lowered("fn main() -> i32 { let c: u6 = 32; let x = 8; return x << c; }");
+    assert!(text.contains("shift count"), "{text}");
 }
 
 #[test]
@@ -456,7 +480,7 @@ fn main() {
     assert_eq!(text.matches("moved").count(), 2, "{text}");
 }
 
-/// Debug types follow pointers and structs `DEEPEST_DEBUG_TYPE` deep, then
+/// Debug types follow pointers, slices and structs `DEEPEST_DEBUG_TYPE` deep, then
 /// stop: clang runs out of stack on deeper ones.
 #[test]
 fn debug_types_stop_at_the_deepest_depth() {
@@ -488,6 +512,22 @@ fn debug_types_stop_at_the_deepest_depth() {
         (structs, next) = (structs + 1, members.first().map(|member| member.ty));
     }
     assert_eq!(structs, deepest + 1);
+
+    // A slice's element is behind its first member, a pointer.
+    let source = format!("fn main(a: {}i32) {{ }}", "&[]".repeat(deepest + 10));
+    let (_, mir, debug_types) = lower_main(&source, "x86_64-linux");
+    let mut next = (mir.slots.ids()).find_map(|slot| mir.slots[slot].debug_type);
+    let mut slices = 0;
+    while let Some(id) = next {
+        let DebugType::Composite { members, .. } = debug_types.get(id) else {
+            break;
+        };
+        let DebugType::Pointer { to, .. } = debug_types.get(members[0].ty) else {
+            unreachable!("a slice's first member is its pointer")
+        };
+        (slices, next) = (slices + 1, *to);
+    }
+    assert_eq!(slices, deepest + 1);
 }
 
 /// Each way out of a block ends the variables it leaves, newest first.
@@ -530,4 +570,64 @@ fn each_way_out_of_a_block_ends_its_variables_newest_first() {
         &outer, // at the function's `}`
     ];
     assert_eq!(ends, expected.concat());
+}
+
+/// A slice's start and count are `usize`s, `i32`s on a 32-bit target:
+/// a wider `i64` end is checked in its own type before it is cut to
+/// one, a narrower `i8` one is extended first.
+#[test]
+fn slice_bounds_are_target_sized() {
+    let text = lower_main(
+        "fn main(a: [4]i32, wide: i64, narrow: i8) {
+            let from: &[]i32 = &a[wide..];
+            let to: &[]i32 = &a[..narrow];
+        }",
+        "i686-linux",
+    )
+    .0;
+    for lines in [
+        "    %3 = slt i64 %2, 0\n    check %3, \"slice out of bounds\"\n    \
+         %5 = ult i64 4, %2\n    check %5, \"slice out of bounds\"\n    \
+         %7 = trunc i64 %2 to i32\n    %8 = sub i32 4, %7\n",
+        "    store i32 from.3[+4], %8\n",
+        "    %13 = sext i8 %12 to i32\n    %14 = ult i32 4, %13\n",
+        "    store i32 to.4[+4], %13\n",
+    ] {
+        assert!(text.contains(lines), "{lines}\n{text}");
+    }
+}
+
+/// A slice spread into an array is counted in an integer wider than its
+/// `i64` elements (the class of 65 bits), its length an `i32` on a 32-bit
+/// target, and copied element by element at `i32` indexes.
+#[test]
+fn slice_spreads_are_target_sized() {
+    let text = lower_main(
+        "fn main(view: &[]i64) -> [2]i64 { return [2]i64{view...}; }",
+        "i686-linux",
+    )
+    .0;
+    for lines in [
+        "    %0 = load i32 view.0[+4]\n    %1 = zext i32 %0 to i128\n    %2 = ult i128 2, %1\n",
+        "    %10 = load i32 .1\n    %11 = ult i32 %10, %8\n",
+        "    copy 8 result[+0, %10 * 8 of 2], view.0[*, %10 * 8]\n",
+    ] {
+        assert!(text.contains(lines), "{lines}\n{text}");
+    }
+}
+
+#[test]
+fn the_length_of_a_call_is_checked_where_it_is_used() {
+    let text = lowered(
+        "fn make() -> [0]i32 { return [0]i32{}; }
+        fn main() -> i32 { let x: usize = 7; let y = x / make().len; return 0; }",
+    );
+    // Known only once the call runs, it is a register, so the division by
+    // it is checked as by any value.
+    assert!(
+        text.contains(
+            "    %4 = load i64 .3\n    %5 = eq i64 %4, 0\n    check %5, \"division by zero\"\n"
+        ),
+        "{text}"
+    );
 }
