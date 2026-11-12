@@ -20,13 +20,13 @@ use runtime_abi::messages::DIVISION_BY_ZERO;
 use runtime_abi::messages::shift_count_message;
 
 use super::ADDRESS_NOT_KNOWN;
-use super::Failure;
+use super::Halt;
 use super::INVALID_ACCESS;
 use super::Interpreter;
 
 impl Interpreter<'_, '_> {
     /// Runs the instruction `id`, giving its value, if it has one.
-    pub(super) fn run_instruction(&mut self, id: Id<Instruction>) -> Result<Option<u128>, Failure> {
+    pub(super) fn run_instruction(&mut self, id: Id<Instruction>) -> Result<Option<u128>, Halt> {
         let body = self.frame().body;
         let at = self.first_value + id.index();
         let value = match &body.instructions[id].kind {
@@ -37,7 +37,7 @@ impl Interpreter<'_, '_> {
                 right,
             } => {
                 // Only `rawptr + usize` works on the pointer class.
-                if class == Class::Pointer && self.host.is_none() {
+                if class == Class::Pointer && self.memory.is_constant() {
                     let message = "a pointer offset cannot run at compile time, \
                         as it could read an address";
                     return Err(self.fail(message, self.span_of(id)));
@@ -71,7 +71,11 @@ impl Interpreter<'_, '_> {
                     wide_compare(comparison, bits, left, right)
                 } else {
                     let (left, right) = (self.operand(left), self.operand(right));
-                    if class == Class::Pointer && self.host.is_none() && left != 0 && right != 0 {
+                    if class == Class::Pointer
+                        && self.memory.is_constant()
+                        && left != 0
+                        && right != 0
+                    {
                         return Err(self.fail(ADDRESS_NOT_KNOWN, self.span_of(id)));
                     }
                     compare(comparison, class, self.class_bits(class), left, right)
@@ -87,7 +91,7 @@ impl Interpreter<'_, '_> {
                 // `none` stays `none`; any other address could reach an
                 // address's bytes.
                 if conversion == Conversion::PointerCast
-                    && self.host.is_none()
+                    && self.memory.is_constant()
                     && self.operand(value) != 0
                 {
                     let message = "a pointer cast cannot run at compile time, \
@@ -135,11 +139,10 @@ impl Interpreter<'_, '_> {
             }
             InstructionKind::Moved { .. } => return Ok(None),
             InstructionKind::Dead(slot) => {
-                if let Some(started) = self.frame_mut().slots.get_mut(slot.index()) {
-                    let started = std::mem::take(started);
-                    if started != 0 {
-                        self.memory.close_block(started);
-                    }
+                // A program's frame keeps no slot starts: its slots stay put.
+                let started = self.frame_mut().slots.get_mut(slot.index());
+                if let Some(started) = started.and_then(Option::take) {
+                    self.memory.close_block(started.get());
                 }
                 return Ok(None);
             }
@@ -198,7 +201,7 @@ impl Interpreter<'_, '_> {
     /// pointer at each `Through`. A sum wraps at the pointer's width, as
     /// any number a raw pointer holds may be wrong: the access that follows
     /// is what refuses it.
-    pub(super) fn address(&mut self, place: &Place, id: Id<Instruction>) -> Result<u64, Failure> {
+    pub(super) fn address(&mut self, place: &Place, id: Id<Instruction>) -> Result<u64, Halt> {
         let mut address = match place.root {
             Root::Slot(slot) => self.slot_address(slot, id)?,
             Root::At(operand) => self.operand(operand) as u64,
@@ -224,18 +227,18 @@ impl Interpreter<'_, '_> {
         address: u64,
         length: u64,
         id: Id<Instruction>,
-    ) -> Result<&[u8], Failure> {
+    ) -> Result<&[u8], Halt> {
         let bytes = self.memory.bytes(address, length);
         bytes.ok_or_else(|| self.fail(INVALID_ACCESS, self.span_of(id)))
     }
 
     /// The pointer kept at `address`.
-    fn read_word(&self, address: u64, id: Id<Instruction>) -> Result<u64, Failure> {
+    fn read_word(&self, address: u64, id: Id<Instruction>) -> Result<u64, Halt> {
         Ok(self.load(Class::Pointer, address, id)? as u64)
     }
 
     /// The register of `class`, not `Wide`, kept at `address`.
-    fn load(&self, class: Class, address: u64, id: Id<Instruction>) -> Result<u128, Failure> {
+    fn load(&self, class: Class, address: u64, id: Id<Instruction>) -> Result<u128, Halt> {
         let size = class.bytes(self.pointer_bytes());
         let bytes = self.read_bytes(address, size, id)?;
         let mut word = [0; 16];
@@ -250,7 +253,7 @@ impl Interpreter<'_, '_> {
         address: u64,
         value: u128,
         id: Id<Instruction>,
-    ) -> Result<(), Failure> {
+    ) -> Result<(), Halt> {
         let size = class.bytes(self.pointer_bytes());
         let Some(bytes) = self.memory.bytes_mut(address, size) else {
             return Err(self.fail(INVALID_ACCESS, self.span_of(id)));
@@ -352,7 +355,7 @@ fn wide_integer(
 
 /// The float of `class` whose bits a register holds, as an `f64`, which
 /// holds an `f32` exactly.
-fn float_value(class: Class, bits: u128) -> f64 {
+pub(super) fn float_value(class: Class, bits: u128) -> f64 {
     match class {
         Class::F32 => f64::from(f32::from_bits(bits as u32)),
         _ => f64::from_bits(bits as u64),
@@ -360,7 +363,7 @@ fn float_value(class: Class, bits: u128) -> f64 {
 }
 
 /// The bits of `value` as a float of `class`, rounded to it.
-fn float_bits(class: Class, value: f64) -> u128 {
+pub(super) fn float_bits(class: Class, value: f64) -> u128 {
     match class {
         Class::F32 => u128::from((value as f32).to_bits()),
         _ => u128::from(value.to_bits()),

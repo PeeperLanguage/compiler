@@ -447,3 +447,27 @@
   mixed`: 1,181-1,185 M instructions after, 1,180-1,193 M before. The
   code database's flow rows were regenerated from the source (they named
   items deleted before this, such as `Loans::variable_name`). check.sh ok.
+- Untangle fix 6, the interpreter has one run mode (Fuad: "go with
+  Memory owning the mode"): `Memory::run`, an `enum Run { Constant(open
+  blocks), Program }`, is the one record of which run this is; it
+  replaces `Memory.constant_blocks: Option` and `Interpreter.host:
+  Option`, which had to agree. The host is always there (empty for a
+  constant), `Memory::is_constant` answers the ten branches, and
+  `Memory::leave_call` ends a constant's frame where `close_block` used
+  to be called as a silent no-op in a program. A slot not started is
+  `None` (`Option<NonZeroU64>`), not 0. The two `STEP_LIMIT`s are
+  `CONSTANT_STEP_LIMIT` and `PROGRAM_STEP_LIMIT`. `Failure` lost
+  `Exited`: an internal `Halt { Failed(Failure), Exited }` carries it,
+  and only `program::run` turns it into an exit code, so the checker's
+  `unreachable!` arm is gone and compile's names `NoMir`. `float_class`
+  moved from lowering to `Class::float` in `model::mir`, which the
+  interpreter now shares with lowering and the parity test; the
+  interpreter's float constants reuse `float_bits`/`float_value`.
+  Skipped: dropping `body` from `run_function` (the checker looks the
+  body up first to tell a cycle from a run). Mutations: `usable` always
+  true and a slot block never closed fail the browser check tests; a
+  constant's missing-MIR call sent to the C path failed nothing, as the
+  only fixture called the `extern` straight from the constant, which
+  never runs; `negative_comptime_calls` now also calls one from a
+  function the constant runs (`const WRITES`), which catches it.
+  `check mixed` unchanged (1,183-1,184 M). check.sh ok.

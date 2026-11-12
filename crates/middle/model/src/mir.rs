@@ -8,6 +8,7 @@
 use std::fmt::Write;
 
 use crate::FunctionCopy;
+use crate::semantic_types::Float;
 use crate::semantic_types::TypeId;
 use arena::Arena;
 use arena::Id;
@@ -70,6 +71,14 @@ impl Class {
             33..=64 => Class::I64,
             65..=128 => Class::I128,
             _ => Class::Wide(bits),
+        }
+    }
+
+    /// The class of a float of the type `float`.
+    pub fn float(float: Float) -> Class {
+        match float {
+            Float::F32 => Class::F32,
+            Float::F64 => Class::F64,
         }
     }
 

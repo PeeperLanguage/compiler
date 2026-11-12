@@ -540,10 +540,7 @@ fn write_conversions(
                     } else {
                         Conversion::FloatToUnsigned { bits: to.bits }
                     };
-                    let class = match float {
-                        Float::F32 => Class::F32,
-                        Float::F64 => Class::F64,
-                    };
+                    let class = Class::float(float);
                     let (intrinsic, _) = saturating_conversion(conversion, class);
                     if declared.insert(intrinsic.clone()) {
                         writeln!(

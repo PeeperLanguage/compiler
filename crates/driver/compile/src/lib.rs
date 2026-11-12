@@ -195,7 +195,7 @@ pub fn interpret(
             });
             PANIC_EXIT_CODE as u8
         }
-        Err(_) => unreachable!("a checked program's functions run, and it exits by `Ok`"),
+        Err(Failure::NoMir { .. }) => unreachable!("each function of a checked program has MIR"),
     };
     let interpreted = Interpreted { output, exit_code };
     (results, Some(interpreted))

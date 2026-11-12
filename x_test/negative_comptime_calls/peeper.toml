@@ -50,5 +50,7 @@ stderr_contains = [
     "return wide_calls(n + 1) + 1;\n    |            ----------------- this ran out of stack",
     "let held = values;\n    |                    ------ this ran more than 1000000 steps",
     "let values = [400000]i32{(0..400000)...};\n    |                      --------------------------- this ran more than 1000000 steps",
-    "Compilation failed with 42 error(s)",
+    "return Write(Stdout, c\"x\", 1);\n    |            ---------------------- an `extern` function cannot run at compile time",
+    "src/main.peep:277:16",
+    "Compilation failed with 43 error(s)",
 ]

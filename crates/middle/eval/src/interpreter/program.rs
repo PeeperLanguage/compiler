@@ -26,13 +26,15 @@ use runtime_abi::symbols::Runtime;
 use runtime_abi::symbols::WRITE;
 
 use super::Failure;
+use super::Halt;
 use super::INVALID_ACCESS;
 use super::Interpreter;
 use super::instructions::mask;
+use super::memory::Memory;
 
 /// How many steps a program may run: more than any page should wait for, so a
 /// page's own time limit usually ends a program first.
-pub(super) const STEP_LIMIT: u32 = 2_000_000_000;
+const PROGRAM_STEP_LIMIT: u32 = 2_000_000_000;
 
 /// How many bytes a program may print, so one that prints forever stops
 /// before its output fills the host's memory.
@@ -71,21 +73,21 @@ pub fn run<'b>(
     target: &Machine,
     mir_of: &dyn Fn(FunctionCopy) -> Option<&'b Body>,
 ) -> Outcome {
-    let host = Host::new();
-    let mut run = Interpreter::new(target, mir_of, STEP_LIMIT, Some(host));
+    let mut run = Interpreter::new(target, mir_of, PROGRAM_STEP_LIMIT, Memory::for_program());
     let ending = match run.run_from(main, body) {
         Ok((Some(code), _)) => Ok(code as u32 as i32),
         Ok(_) => Ok(0),
-        Err(Failure::Exited(code)) => Ok(code),
-        Err(failure) => Err(failure),
+        Err(Halt::Exited(code)) => Ok(code),
+        Err(Halt::Failed(failure)) => Err(failure),
     };
     Outcome {
-        output: run.host.expect("a program's run has a host").output,
+        output: run.host.output,
         ending,
     }
 }
 
-/// What a whole program's run has that a constant's call does not.
+/// What a program printed; a constant's call prints nothing.
+#[derive(Default)]
 pub(super) struct Host {
     pub(super) output: Vec<Written>,
     printed: u64, // bytes in `output`, kept as output can have a piece per print
@@ -94,26 +96,11 @@ pub(super) struct Host {
     kept: Vec<u8>,
 }
 
-impl Host {
-    pub(super) fn new() -> Host {
-        Host {
-            output: Vec::new(),
-            printed: 0,
-            kept: Vec::new(),
-        }
-    }
-}
-
 impl<'f> Interpreter<'_, 'f> {
-    /// The run's host, which only a program's run asks for.
-    fn host(&mut self) -> &mut Host {
-        self.host.as_mut().expect("a program's run has a host")
-    }
-
     /// Stops the run if `pending` more bytes of output pass the limit, before
     /// they are made.
-    fn check_output(&mut self, pending: u64, id: Id<Instruction>) -> Result<(), Failure> {
-        let host = self.host();
+    fn check_output(&mut self, pending: u64, id: Id<Instruction>) -> Result<(), Halt> {
+        let host = &self.host;
         let total = host.printed + host.kept.len() as u64;
         if total.saturating_add(pending) > OUTPUT_LIMIT {
             let limit = OUTPUT_LIMIT;
@@ -127,7 +114,7 @@ impl<'f> Interpreter<'_, 'f> {
 
     /// Adds `text` to the output of the descriptor `fd`: false for one that
     /// is neither of a program's outputs.
-    fn write_output(&mut self, fd: i32, text: &[u8], id: Id<Instruction>) -> Result<bool, Failure> {
+    fn write_output(&mut self, fd: i32, text: &[u8], id: Id<Instruction>) -> Result<bool, Halt> {
         self.count_copy(text.len() as u64, id)?;
         self.check_output(text.len() as u64, id)?;
         let stream = match fd {
@@ -135,7 +122,7 @@ impl<'f> Interpreter<'_, 'f> {
             STDERR => Stream::Stderr,
             _ => return Ok(false),
         };
-        let host = self.host();
+        let host = &mut self.host;
         host.printed += text.len() as u64;
         let full = host.output.len() >= PIECE_LIMIT;
         match host.output.last_mut() {
@@ -150,10 +137,10 @@ impl<'f> Interpreter<'_, 'f> {
     }
 
     /// Keeps `text` for `print`'s next flush.
-    fn keep_output(&mut self, text: &[u8], id: Id<Instruction>) -> Result<(), Failure> {
+    fn keep_output(&mut self, text: &[u8], id: Id<Instruction>) -> Result<(), Halt> {
         self.count_copy(text.len() as u64, id)?;
         self.check_output(text.len() as u64, id)?;
-        self.host().kept.extend_from_slice(text);
+        self.host.kept.extend_from_slice(text);
         Ok(())
     }
 
@@ -164,8 +151,8 @@ impl<'f> Interpreter<'_, 'f> {
         runtime: Runtime,
         arguments: &[Operand],
         id: Id<Instruction>,
-    ) -> Result<(), Failure> {
-        if self.host.is_none() {
+    ) -> Result<(), Halt> {
+        if self.memory.is_constant() {
             return Err(self.fail(
                 "`print` calls cannot run at compile time yet",
                 self.span_of(id),
@@ -202,7 +189,7 @@ impl<'f> Interpreter<'_, 'f> {
             }
             Runtime::PrintPointer => number_text::write_pointer(argument(self, 0), &mut push),
             Runtime::Flush => {
-                let kept = std::mem::take(&mut self.host().kept);
+                let kept = std::mem::take(&mut self.host.kept);
                 self.write_output(STDOUT, &kept, id)?;
                 return Ok(());
             }
@@ -236,7 +223,7 @@ impl<'f> Interpreter<'_, 'f> {
     /// A block of `size` bytes as a pointer: null when there is no room, as
     /// `malloc` says so, which goes on. A block made costs as copying `size`
     /// bytes does.
-    fn allocated(&mut self, size: u64, id: Id<Instruction>) -> Result<u128, Failure> {
+    fn allocated(&mut self, size: u64, id: Id<Instruction>) -> Result<u128, Halt> {
         let Some(address) = self.memory.allocate(size) else {
             return Ok(0);
         };
@@ -254,14 +241,14 @@ impl<'f> Interpreter<'_, 'f> {
         callee: FunctionCopy,
         signature: u32,
         arguments: &[Operand],
-    ) -> Result<(), Failure> {
+    ) -> Result<(), Halt> {
         let c = &self.frame().body.signatures[signature as usize].c;
         let Some(symbol) = c.as_ref().map(|c| c.symbol.clone()) else {
-            return Err(Failure::NoMir {
+            return Err(Halt::Failed(Failure::NoMir {
                 callee,
                 function: self.frame().function,
                 span: self.span_of(id),
-            });
+            }));
         };
         let size = |run: &Self, index| run.size_argument(signature, arguments, index);
         // A size past every block's: one that is negative, or too large.
@@ -327,7 +314,7 @@ impl<'f> Interpreter<'_, 'f> {
                 let at_end = self.i32_argument(arguments, 0) == STDIN;
                 Some(if at_end { 0 } else { u128::MAX })
             }
-            (EXIT, 1) => return Err(Failure::Exited(self.i32_argument(arguments, 0))),
+            (EXIT, 1) => return Err(Halt::Exited(self.i32_argument(arguments, 0))),
             (symbol, _) => {
                 let message = format!("`{symbol}` is outside Peeper, so it cannot run here");
                 return Err(self.fail(message, self.span_of(id)));

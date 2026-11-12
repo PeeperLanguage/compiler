@@ -55,8 +55,6 @@ use model::semantic_types::range_fields;
 use model::thir;
 use source::Span;
 
-use crate::expression::float_class;
-
 /// The MIR of the checked body `body` of a function of the type
 /// `function`, for `target`. `None` when checking it reported an error
 /// (`has_errors`) or left it incomplete. `modules` names types for a
@@ -498,7 +496,7 @@ impl Lowering<'_> {
         match self.types[ty] {
             Type::Bool => Some(Class::I8),
             Type::Integer(integer) => Some(Class::integer(integer.bits)),
-            Type::Float(float) => Some(float_class(float)),
+            Type::Float(float) => Some(Class::float(float)),
             Type::CString | Type::Reference { .. } | Type::RawPointer { .. } => {
                 Some(Class::Pointer)
             }

@@ -758,7 +758,7 @@ impl Lowering<'_> {
                 self.arithmetic(IntegerOp::Subtract, integer, zero, operand, span)
             }
             (UnaryOp::Negate, &Type::Float(float)) => {
-                let class = float_class(float);
+                let class = Class::float(float);
                 // From -0.0, so that -(0.0) is -0.0 and -(-0.0) is 0.0.
                 let sign = if float == Float::F32 {
                     1 << 31
@@ -816,7 +816,7 @@ impl Lowering<'_> {
                 self.convert(
                     conversion,
                     Class::integer(from.bits),
-                    float_class(to),
+                    Class::float(to),
                     operand,
                     span,
                 )
@@ -828,7 +828,7 @@ impl Lowering<'_> {
                     Conversion::FloatToUnsigned { bits: to.bits }
                 };
                 let class = Class::integer(to.bits);
-                self.convert(conversion, float_class(from), class, operand, span)
+                self.convert(conversion, Class::float(from), class, operand, span)
             }
             (Type::Float(Float::F32), Type::Float(Float::F64)) => self.convert(
                 Conversion::FloatWiden,
@@ -1232,13 +1232,5 @@ impl Lowering<'_> {
             Place::whole(result),
             span,
         )))
-    }
-}
-
-/// The class of a float of the type `float`.
-pub(super) fn float_class(float: Float) -> Class {
-    match float {
-        Float::F32 => Class::F32,
-        Float::F64 => Class::F64,
     }
 }

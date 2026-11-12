@@ -270,3 +270,8 @@ fn reads_parameter() -> i32 {
     return own_parameter(1).*;
 }
 const READS_PARAMETER = reads_parameter();
+// A C function called by a function a constant runs cannot run either.
+fn writes() -> i32 {
+    return Write(Stdout, c"x", 1);
+}
+const WRITES = writes();

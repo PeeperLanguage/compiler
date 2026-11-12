@@ -302,7 +302,6 @@ impl Checker<'_> {
                             function,
                             span,
                         }) => (callee, Some((function, span))),
-                        Err(Failure::Exited(_)) => unreachable!("a constant's call cannot exit"),
                     }
                 }
                 None => (function, None),

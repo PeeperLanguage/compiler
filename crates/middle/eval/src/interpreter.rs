@@ -16,6 +16,7 @@ mod instructions;
 mod memory;
 pub mod program;
 
+use std::num::NonZeroU64;
 use std::rc::Rc;
 
 use arena::Id;
@@ -38,27 +39,28 @@ use model::mir::Signature;
 use model::mir::Slot;
 use model::mir::Terminator;
 use model::mir::constant_value;
-use model::semantic_types::Float;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
 use model::semantic_types::Types;
 use rustc_hash::FxHashMap;
 use source::Span;
 
+use instructions::float_bits;
+use instructions::float_value;
 use memory::Memory;
 use program::Host;
 
-/// How many instructions and terminators one evaluation may run, so an
+/// How many instructions and terminators a constant's call may run, so an
 /// endless loop stops with an error instead of hanging the compiler or an
 /// editor. A copy counts a step for each `BYTES_PER_STEP` bytes too.
-const STEP_LIMIT: u32 = 1_000_000;
+const CONSTANT_STEP_LIMIT: u32 = 1_000_000;
 
 /// How many bytes a copy moves for each step it counts as: about what one
 /// step costs, as copying is far faster than running an instruction.
 const BYTES_PER_STEP: u64 = 256;
 
 /// How many calls may be running at once. A recursion that never ends meets
-/// this or `REGISTER_LIMIT` long before `STEP_LIMIT`, as each call is a few
+/// this or `REGISTER_LIMIT` long before a step limit, as each call is a few
 /// steps.
 const CALL_LIMIT: usize = 100_000;
 
@@ -103,6 +105,11 @@ pub enum Failure {
         function: DefId,
         span: Span,
     },
+}
+
+/// Why a run left its calls before the first returned.
+enum Halt {
+    Failed(Failure),
     /// A program ended itself with this exit code (`program::run`).
     Exited(i32),
 }
@@ -132,7 +139,7 @@ pub fn run_function<'b>(
     else {
         unreachable!("a body is a function's")
     };
-    let mut run = Interpreter::new(target, mir_of, STEP_LIMIT, None);
+    let mut run = Interpreter::new(target, mir_of, CONSTANT_STEP_LIMIT, Memory::for_constant());
     let span = body.blocks.span(Id::from_index(0));
     let failed = |message: &str| Failure::Stopped {
         message: message.to_owned(),
@@ -156,7 +163,10 @@ pub fn run_function<'b>(
         let register = register.ok_or_else(|| failed(OUT_OF_STACK))?;
         run.registers.push(register);
     }
-    let (value, returned_at) = run.run_from(function, body)?;
+    let (value, returned_at) = run.run_from(function, body).map_err(|halt| match halt {
+        Halt::Failed(failure) => failure,
+        Halt::Exited(_) => unreachable!("only a program's C call exits"),
+    })?;
     let value = match (value, kept_at) {
         (_, Some(at)) => u128::from(at),
         (Some(value), None) => value,
@@ -185,8 +195,9 @@ struct Frame<'b> {
     body: &'b Body,
     layout: Rc<Layout>,
     start: u64, // where the room for its frame starts; a program keeps its slots there
-    /// In a constant's run, where each slot is now; 0 for one not started.
-    slots: Vec<u64>,
+    /// In a constant's run, where each slot is now, if it started; empty in
+    /// a program's, whose slots stay at `layout.slots` from `start`.
+    slots: Vec<Option<NonZeroU64>>,
     /// The caller's `first_register` and `first_value`, put back on return.
     caller_first_register: usize,
     caller_first_value: usize,
@@ -200,7 +211,7 @@ struct Interpreter<'b, 'f> {
     mir_of: &'f dyn Fn(FunctionCopy) -> Option<&'b Body>,
     steps: u64, // run so far, by every call; past the limit the run stops, so it cannot wrap
     step_limit: u32,
-    host: Option<Host>, // a whole program's; a constant's call has none
+    host: Host, // what a program printed; a constant's call prints nothing
     memory: Memory,
     /// Each function called so far: its body and layout, or `None` when
     /// `mir_of` gives it no body; asked once each.
@@ -226,19 +237,15 @@ impl<'b, 'f> Interpreter<'b, 'f> {
         target: &Machine,
         mir_of: &'f dyn Fn(FunctionCopy) -> Option<&'b Body>,
         step_limit: u32,
-        host: Option<Host>,
+        memory: Memory,
     ) -> Self {
         Interpreter {
             pointer_bits: target.pointer_bits,
             mir_of,
             steps: 0,
             step_limit,
-            memory: if host.is_some() {
-                Memory::default()
-            } else {
-                Memory::for_constant()
-            },
-            host,
+            memory,
+            host: Host::default(),
             called: FxHashMap::default(),
             functions: Vec::new(),
             frames: Vec::new(),
@@ -251,11 +258,7 @@ impl<'b, 'f> Interpreter<'b, 'f> {
 
     /// Runs `function`, whose arguments are the registers so far, until it
     /// returns: what it returned, and the `return` or `}` it returned at.
-    fn run_from(
-        &mut self,
-        function: DefId,
-        body: &'b Body,
-    ) -> Result<(Option<u128>, Span), Failure> {
+    fn run_from(&mut self, function: DefId, body: &'b Body) -> Result<(Option<u128>, Span), Halt> {
         let span = body.blocks.span(Id::from_index(0));
         let start = memory::STACK_START;
         let layout = Rc::new(self.layout_of(body));
@@ -272,12 +275,12 @@ impl<'b, 'f> Interpreter<'b, 'f> {
     }
 
     /// The run stopped at `span` with `message`.
-    fn fail(&self, message: impl Into<String>, span: Span) -> Failure {
-        Failure::Stopped {
+    fn fail(&self, message: impl Into<String>, span: Span) -> Halt {
+        Halt::Failed(Failure::Stopped {
             message: message.into(),
             function: self.frame().function,
             span,
-        }
+        })
     }
 
     fn pointer_bytes(&self) -> u64 {
@@ -308,7 +311,7 @@ impl<'b, 'f> Interpreter<'b, 'f> {
     }
 
     /// Counts the work of `bytes` bytes copied by the instruction `id`.
-    fn count_copy(&mut self, bytes: u64, id: Id<Instruction>) -> Result<(), Failure> {
+    fn count_copy(&mut self, bytes: u64, id: Id<Instruction>) -> Result<(), Halt> {
         let counted = self.count_steps(bytes / BYTES_PER_STEP);
         counted.map_err(|message| self.fail(message, self.span_of(id)))
     }
@@ -381,7 +384,7 @@ impl<'b, 'f> Interpreter<'b, 'f> {
         end: u64,
         first_register: usize,
         span: Span,
-    ) -> Result<(), Failure> {
+    ) -> Result<(), Halt> {
         if self.frames.len() == CALL_LIMIT {
             let message = format!("this went {CALL_LIMIT} calls deep");
             return Err(self.fail(message, span));
@@ -393,16 +396,17 @@ impl<'b, 'f> Interpreter<'b, 'f> {
         // own block too, each time it starts (`slot_address`).
         let start = self.memory.enter_call(end, layout.size);
         let Some(start) = start.filter(|_| used <= REGISTER_LIMIT) else {
-            return Err(Failure::Stopped {
+            return Err(Halt::Failed(Failure::Stopped {
                 message: OUT_OF_STACK.to_owned(),
                 function: self.frames.last().map_or(function, |frame| frame.function),
                 span,
-            });
+            }));
         };
         self.registers.resize(used, 0);
-        let slots = match self.host {
-            Some(_) => Vec::new(),
-            None => vec![0; body.slots.len()],
+        let slots = if self.memory.is_constant() {
+            vec![None; body.slots.len()]
+        } else {
+            Vec::new()
         };
         self.frames.push(Frame {
             function,
@@ -423,7 +427,7 @@ impl<'b, 'f> Interpreter<'b, 'f> {
 
     /// Runs until the first frame returns, giving what it returned and
     /// where.
-    fn run_frames(&mut self) -> Result<(Option<u128>, Span), Failure> {
+    fn run_frames(&mut self) -> Result<(Option<u128>, Span), Halt> {
         'frames: loop {
             let frame = self.frame();
             let (body, block_id, done) = (frame.body, frame.block, frame.next);
@@ -499,21 +503,21 @@ impl<'b, 'f> Interpreter<'b, 'f> {
         signature: u32,
         result: Option<&Place>,
         arguments: &[Operand],
-    ) -> Result<(), Failure> {
+    ) -> Result<(), Halt> {
         let copy = match callee {
             Callee::Function(copy) => copy,
             Callee::Runtime(runtime) => return self.call_runtime(runtime, arguments, id),
             Callee::Pointer(pointer) => self.function_at(pointer, signature, id)?,
         };
         let Some((body, layout)) = self.called(copy) else {
-            if self.host.is_some() {
+            if !self.memory.is_constant() {
                 return self.call_outside(id, copy, signature, arguments);
             }
-            return Err(Failure::NoMir {
+            return Err(Halt::Failed(Failure::NoMir {
                 callee: copy,
                 function: self.frame().function,
                 span: self.span_of(id),
-            });
+            }));
         };
         let frame = self.frame();
         let end = frame.start + frame.layout.size;
@@ -549,7 +553,7 @@ impl<'b, 'f> Interpreter<'b, 'f> {
         pointer: Operand,
         signature: u32,
         id: Id<Instruction>,
-    ) -> Result<FunctionCopy, Failure> {
+    ) -> Result<FunctionCopy, Halt> {
         let address = self.operand(pointer) as u64;
         let index = (address.checked_sub(FUNCTIONS_START))
             .filter(|offset| offset % FUNCTION_STRIDE == 0)
@@ -571,10 +575,10 @@ impl<'b, 'f> Interpreter<'b, 'f> {
         let first_register = self.first_register;
         self.first_register = frame.caller_first_register;
         self.first_value = frame.caller_first_value;
-        for &start in frame.slots.iter().filter(|&&start| start != 0) {
-            self.memory.close_block(start);
+        for start in frame.slots.iter().flatten() {
+            self.memory.close_block(start.get());
         }
-        self.memory.close_block(frame.start); // only a constant's run ends it
+        self.memory.leave_call(frame.start);
         let Some(result) = frame.result else {
             return Some(value);
         };
@@ -631,23 +635,23 @@ impl<'b, 'f> Interpreter<'b, 'f> {
     /// Where `slot` of the running call is. In a constant's run it gets a
     /// new block each time it starts, so an address of the last one, from
     /// an earlier pass of a loop, cannot reach this one.
-    fn slot_address(&mut self, slot: Id<Slot>, id: Id<Instruction>) -> Result<u64, Failure> {
+    fn slot_address(&mut self, slot: Id<Slot>, id: Id<Instruction>) -> Result<u64, Halt> {
         let frame = self.frame();
         if let Some(parameter) = frame.body.parameter_in_memory(slot) {
             return Ok(self.operand(Operand::Parameter(parameter)) as u64);
         }
-        if self.host.is_some() {
+        if !self.memory.is_constant() {
             return Ok(frame.start + frame.layout.slots[slot.index()]);
         }
-        let started = frame.slots[slot.index()];
-        if started != 0 {
-            return Ok(started);
+        if let Some(started) = frame.slots[slot.index()] {
+            return Ok(started.get());
         }
         let size = frame.body.slots[slot].size;
         let Some(start) = self.memory.open_block(size) else {
             return Err(self.fail(OUT_OF_STACK, self.span_of(id)));
         };
-        self.frame_mut().slots[slot.index()] = start;
+        let started = NonZeroU64::new(start).expect("a block starts above the null address");
+        self.frame_mut().slots[slot.index()] = Some(started);
         Ok(start)
     }
 
@@ -667,10 +671,9 @@ impl<'b, 'f> Interpreter<'b, 'f> {
                 // Its register is the next one pushed.
                 self.of_limbs(self.registers.len(), class, extended)
             }
-            (Value::Float(bits), Passing::Register { class, .. }) => match class.bits() {
-                32 => u128::from((f64::from_bits(*bits) as f32).to_bits()),
-                _ => u128::from(*bits),
-            },
+            (Value::Float(bits), Passing::Register { class, .. }) => {
+                float_bits(class, f64::from_bits(*bits))
+            }
             (Value::Null, _) => 0,
             (Value::Bytes(text), Passing::Register { .. }) => {
                 u128::from(self.memory.string_address(text))
@@ -709,10 +712,7 @@ impl<'b, 'f> Interpreter<'b, 'f> {
                     &[bits as u64, (bits >> 64) as u64],
                 )),
             },
-            Type::Float(Float::F32) => {
-                Value::Float(f64::from(f32::from_bits(bits as u32)).to_bits())
-            }
-            Type::Float(Float::F64) => Value::Float(bits as u64),
+            &Type::Float(float) => Value::Float(float_value(Class::float(float), bits).to_bits()),
             Type::RawPointer { .. } if bits == 0 => Value::Null,
             Type::CString => match self.memory.c_text(bits as u64) {
                 Some(text) => Value::Bytes(text.into()),
