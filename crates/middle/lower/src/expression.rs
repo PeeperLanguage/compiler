@@ -64,11 +64,9 @@ impl Lowering<'_> {
             Some(match kind {
                 _ if ty == TypeId::INVALID => return None,
                 thir::ExprKind::Invalid => return None,
-                thir::ExprKind::Constant(Constant::Bytes(bytes)) if ty == TypeId::STR => self
-                    .in_temporary(ty, span, |this, place| {
-                        this.str_constant(bytes, place, span);
-                        Some(())
-                    })?,
+                thir::ExprKind::Constant(Constant::Bytes(_)) if ty == TypeId::STR => {
+                    self.in_temporary(expression, ty, span)?
+                }
                 thir::ExprKind::Constant(value) => self.constant(value, ty, span),
                 thir::ExprKind::Variable(variable) => {
                     self.read(Place::whole(slot_of(*variable)), ty, span)
@@ -96,35 +94,7 @@ impl Lowering<'_> {
                     signature,
                     arguments,
                 } => self.lower_call(*callee, *signature, *arguments, ty, None, span)?,
-                thir::ExprKind::ToInterface {
-                    reference,
-                    implementation,
-                } => {
-                    let reference = self.lower_expr(*reference)?.register();
-                    self.in_temporary(ty, span, |this, place| {
-                        this.lower_to_interface(reference, *implementation, ty, place, span);
-                        Some(())
-                    })?
-                }
-                thir::ExprKind::StructLiteral(fields) => {
-                    self.in_temporary(ty, span, |this, place| {
-                        this.lower_struct_literal(*fields, ty, place)
-                    })?
-                }
-                thir::ExprKind::ArrayLiteral(parts) => {
-                    self.in_temporary(ty, span, |this, place| {
-                        this.lower_array_literal(*parts, ty, place, span)
-                    })?
-                }
-                thir::ExprKind::Range { .. } => {
-                    self.in_temporary(ty, span, |this, place| this.lower_range(expression, place))?
-                }
-                thir::ExprKind::Borrow(borrowed) if self.class(ty).is_none() => {
-                    self.in_temporary(ty, span, |this, place| {
-                        this.lower_borrow(*borrowed, ty, place, span)
-                    })?
-                }
-                thir::ExprKind::Borrow(borrowed) => {
+                thir::ExprKind::Borrow(borrowed) if self.class(ty).is_some() => {
                     let Some(mutable) = self.types[ty].borrows() else {
                         unreachable!("a borrow's type is a reference, slice or interface reference")
                     };
@@ -133,9 +103,12 @@ impl Lowering<'_> {
                     let (size, _) = layout(self.types, borrowed_type, self.target);
                     Value::Register(self.borrow(place, Some(size), mutable, &REFERENCE_WORDS, span))
                 }
-                thir::ExprKind::Slice { .. } => {
-                    self.in_temporary(ty, span, |this, place| this.lower_slice(expression, place))?
-                }
+                thir::ExprKind::ToInterface { .. }
+                | thir::ExprKind::StructLiteral(_)
+                | thir::ExprKind::ArrayLiteral(_)
+                | thir::ExprKind::Range { .. }
+                | thir::ExprKind::Borrow(_)
+                | thir::ExprKind::Slice { .. } => self.in_temporary(expression, ty, span)?,
                 thir::ExprKind::Address(addressed) => {
                     let place = self.place_of(*addressed)?;
                     let addressed_type = self.types.real(self.thir.exprs[*addressed].ty);
@@ -150,16 +123,17 @@ impl Lowering<'_> {
         })
     }
 
-    /// A value of the type `ty` that `build` writes at the place it is
-    /// given, built in a new temporary.
+    /// The value of `expression`, of the type `ty`, built in a new
+    /// temporary by `lower_into`, which builds each kind `lower_expr` sends
+    /// here at a place (a kind it does not would come back here).
     fn in_temporary(
         &mut self,
+        expression: Id<thir::Expr>,
         ty: TypeId,
         span: Span,
-        build: impl FnOnce(&mut Self, Place) -> Option<()>,
     ) -> Option<Value> {
         let slot = self.temporary(ty, span);
-        build(self, Place::whole(slot))?;
+        self.lower_into(expression, Place::whole(slot))?;
         Some(Value::Memory(Place::whole(slot)))
     }
 
