@@ -45,8 +45,7 @@ use model::semantic_types::Types;
 use rustc_hash::FxHashMap;
 use source::Span;
 
-use instructions::float_bits;
-use instructions::float_value;
+use crate::operations;
 use memory::Memory;
 use program::Host;
 
@@ -672,7 +671,7 @@ impl<'b, 'f> Interpreter<'b, 'f> {
                 self.of_limbs(self.registers.len(), class, extended)
             }
             (Value::Float(bits), Passing::Register { class, .. }) => {
-                float_bits(class, f64::from_bits(*bits))
+                operations::float_bits(class, f64::from_bits(*bits))
             }
             (Value::Null, _) => 0,
             (Value::Bytes(text), Passing::Register { .. }) => {
@@ -712,7 +711,9 @@ impl<'b, 'f> Interpreter<'b, 'f> {
                     &[bits as u64, (bits >> 64) as u64],
                 )),
             },
-            &Type::Float(float) => Value::Float(float_value(Class::float(float), bits).to_bits()),
+            &Type::Float(float) => {
+                Value::Float(operations::float_value(Class::float(float), bits).to_bits())
+            }
             Type::RawPointer { .. } if bits == 0 => Value::Null,
             Type::CString => match self.memory.c_text(bits as u64) {
                 Some(text) => Value::Bytes(text.into()),

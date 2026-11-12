@@ -195,7 +195,6 @@ dependencies = [
  "arena",
  "bigint",
  "llvm",
- "lower",
  "model",
  "runtime_abi",
  "rustc-hash",

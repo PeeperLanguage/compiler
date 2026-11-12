@@ -7,6 +7,7 @@ use model::Callee;
 use model::FunctionCopy;
 use model::constant::Value as Constant;
 use model::layout::layout;
+use model::mir::BinaryOperation;
 use model::mir::Callee as MirCallee;
 use model::mir::Class;
 use model::mir::Comparison;
@@ -23,6 +24,7 @@ use model::mir::Root;
 use model::mir::SLICE_WORDS;
 use model::mir::Signature;
 use model::mir::Step;
+use model::mir::binary_operation;
 use model::operators::BinaryOp;
 use model::operators::UnaryOp;
 use model::semantic_types::ConstArguments;
@@ -40,8 +42,6 @@ use source::Span;
 
 use crate::Lowering;
 use crate::Value;
-use crate::binary::BinaryOperation;
-use crate::binary::binary_operation;
 use crate::c_abi::c_signature;
 use crate::slot_of;
 

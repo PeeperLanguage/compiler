@@ -29,8 +29,8 @@ use super::Failure;
 use super::Halt;
 use super::INVALID_ACCESS;
 use super::Interpreter;
-use super::instructions::mask;
 use super::memory::Memory;
+use crate::operations::mask;
 
 /// How many steps a program may run: more than any page should wait for, so a
 /// page's own time limit usually ends a program first.

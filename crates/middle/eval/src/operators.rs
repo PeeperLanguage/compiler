@@ -6,28 +6,28 @@
 //! zero and out-of-range shifts trap at run time, so they have no value here.
 //!
 //! Floats follow IEEE 754 in their own precision, as LLVM's `fadd`, `fsub`,
-//! `fmul`, `fdiv`, `frem` and `fneg` do: an `f32` operation computes in `f32`.
+//! `fmul`, `fdiv` and `frem` do: an `f32` operation computes in `f32`.
 //! Division by zero gives an infinity. `==` is true only for ordered equal
 //! values and `!=` is its negation (`fcmp oeq` and `une`); `<` and the others
 //! are false when either side is NaN. Which NaN an operation gives is not
 //! specified, as in LLVM.
 
-use std::cmp::Ordering;
-use std::ops::Add;
-use std::ops::Div;
-use std::ops::Mul;
-use std::ops::Rem;
-use std::ops::Sub;
+use std::borrow::Cow;
 
 use bigint::Limbs;
 use model::constant::Value;
+use model::mir::BinaryOperation;
+use model::mir::Class;
+use model::mir::FloatOp;
+use model::mir::IntegerOp;
+use model::mir::binary_operation;
 use model::operators::BinaryOp;
 use model::operators::UnaryOp;
-use model::semantic_types::Float;
 use model::semantic_types::Integer;
 use model::semantic_types::Type;
-use runtime_abi::messages::DIVISION_BY_ZERO;
-use runtime_abi::messages::shift_count_message;
+
+use crate::operations;
+use crate::operations::RegisterValue;
 
 /// `left op right`. Both operands have one type, except that a shift count
 /// has its own integer type (`value << count`). Check only gives an operator
@@ -43,22 +43,32 @@ pub fn binary(
         matches!(op, BinaryOp::ShiftLeft | BinaryOp::ShiftRight) || left_type == right_type,
         "check gives `{op:?}` operands of one type"
     );
-    match (left_type, left, right_type, right) {
+    let count;
+    let (class, bits, left, right) = match (left_type, left, right_type, right) {
         (
-            Type::Integer(integer),
+            &Type::Integer(integer),
             Value::Integer(left),
-            Type::Integer(count_type),
+            &Type::Integer(right_type),
             Value::Integer(right),
-        ) => integer_binary(op, *integer, left, *count_type, right),
-        (Type::Float(float), Value::Float(left), _, Value::Float(right)) => {
-            let (left, right) = (f64::from_bits(*left), f64::from_bits(*right));
-            Ok(match float {
-                Float::F32 => float_binary(op, left as f32, right as f32),
-                Float::F64 => float_binary(op, left, right),
-            })
+        ) => {
+            let right = if matches!(op, BinaryOp::ShiftLeft | BinaryOp::ShiftRight) {
+                count = shift_count(integer, right_type, right);
+                &count
+            } else {
+                right
+            };
+            let register = |limbs| RegisterValue::of_limbs(integer.bits, Cow::Borrowed(limbs));
+            let class = Class::integer(integer.bits);
+            (class, integer.bits, register(left), register(right))
+        }
+        (&Type::Float(float), &Value::Float(left), _, &Value::Float(right)) => {
+            let class = Class::float(float);
+            let register =
+                |bits| RegisterValue::Narrow(operations::float_bits(class, f64::from_bits(bits)));
+            (class, class.bits(), register(left), register(right))
         }
         (Type::Bool, Value::Bool(left), Type::Bool, Value::Bool(right)) => {
-            Ok(Value::Bool(match op {
+            return Ok(Value::Bool(match op {
                 BinaryOp::LogicalAnd => *left && *right,
                 BinaryOp::LogicalOr => *left || *right,
                 BinaryOp::EqualTo => left == right,
@@ -67,41 +77,92 @@ pub fn binary(
                 BinaryOp::BitAnd => left & right,
                 BinaryOp::BitOr => left | right,
                 _ => unreachable!("check gives `{op:?}` no bool operands"),
-            }))
+            }));
         }
         // The only constant pointer is `none`.
         (Type::RawPointer { .. }, Value::Null, _, Value::Null) => {
-            Ok(Value::Bool(op == BinaryOp::EqualTo))
+            return Ok(Value::Bool(op == BinaryOp::EqualTo));
         }
         _ => {
             unreachable!("check gives `{op:?}` operands of types {left_type:?} and {right_type:?}")
         }
-    }
+    };
+    Ok(match binary_operation(op, left_type) {
+        BinaryOperation::Integer(operation) => {
+            integer_value(bits, &operations::integer(operation, bits, &left, &right)?)
+        }
+        BinaryOperation::Float(operation) => {
+            let value = operations::float(operation, class, left.narrow(), right.narrow());
+            Value::Float(operations::float_value(class, value).to_bits())
+        }
+        BinaryOperation::Compare {
+            comparison,
+            swapped,
+        } => {
+            let (left, right) = if swapped {
+                (right, left)
+            } else {
+                (left, right)
+            };
+            Value::Bool(operations::compare(comparison, class, bits, &left, &right))
+        }
+    })
 }
 
-/// `op value`, where the operand has the type `operand_type`.
+/// `op value`, where the operand has the type `operand_type`; what
+/// lowering's instructions for it compute.
 pub fn unary(op: UnaryOp, operand_type: &Type, value: &Value) -> Value {
     match (op, operand_type, value) {
         (UnaryOp::LogicalNot, Type::Bool, Value::Bool(value)) => Value::Bool(!value),
-        (UnaryOp::Negate, Type::Integer(integer), Value::Integer(value)) => {
-            Value::Integer(bigint::negate(integer.bits, value))
+        (UnaryOp::Negate, &Type::Integer(integer), Value::Integer(value)) => {
+            let zero = Limbs::new(integer.bits, &[]);
+            integer_unary(IntegerOp::Subtract, integer, &zero, value)
         }
-        // Flipping the sign bit negates either precision, NaN and zero included.
-        (UnaryOp::Negate, Type::Float(_), Value::Float(bits)) => Value::Float(bits ^ 1 << 63),
-        (UnaryOp::BitNot, Type::Integer(integer), Value::Integer(value)) => {
-            Value::Integer(bigint::not(integer.bits, value))
+        // From -0.0, so that -(0.0) is -0.0 and -(-0.0) is 0.0.
+        (UnaryOp::Negate, &Type::Float(float), &Value::Float(bits)) => {
+            let class = Class::float(float);
+            let zero = operations::float_bits(class, -0.0);
+            let value = operations::float_bits(class, f64::from_bits(bits));
+            let negated = operations::float(FloatOp::Subtract, class, zero, value);
+            Value::Float(operations::float_value(class, negated).to_bits())
+        }
+        (UnaryOp::BitNot, &Type::Integer(integer), Value::Integer(value)) => {
+            let ones = vec![u64::MAX; integer.bits.div_ceil(64) as usize];
+            integer_unary(
+                IntegerOp::Xor,
+                integer,
+                value,
+                &Limbs::new(integer.bits, &ones),
+            )
         }
         _ => unreachable!("check gives `{op:?}` an operand of type {operand_type:?}"),
     }
 }
 
+/// `left operation right` on integers of the type `integer`, which cannot
+/// trap.
+fn integer_unary(operation: IntegerOp, integer: Integer, left: &Limbs, right: &Limbs) -> Value {
+    let register = |limbs| RegisterValue::of_limbs(integer.bits, Cow::Borrowed(limbs));
+    let value = operations::integer(operation, integer.bits, &register(left), &register(right));
+    integer_value(
+        integer.bits,
+        &value.expect("only a division or a shift traps"),
+    )
+}
+
+/// The integer of `bits` bits `register` holds.
+fn integer_value(bits: u32, register: &RegisterValue) -> Value {
+    Value::Integer(register.limbs(bits).into_owned())
+}
+
 /// The count of a shift of a `shifted` value by `count`, of the type
-/// `count_type`: below the shifted type's width, or out of range.
-fn shift_count(shifted: Integer, count_type: Integer, count: &Limbs) -> Result<u32, String> {
-    bigint::to_u64(count_type.bits, count_type.signed, count)
-        .filter(|&count| count < u64::from(shifted.bits))
-        .map(|count| count as u32)
-        .ok_or_else(|| shift_count_message(shifted.bits))
+/// `count_type`, at the shifted type's width: as lowering reads it, a count
+/// out of range, negative ones included, stays out of range.
+fn shift_count(shifted: Integer, count_type: Integer, count: &Limbs) -> Limbs {
+    let width = u64::from(shifted.bits);
+    let count =
+        bigint::to_u64(count_type.bits, false, count).map_or(width, |count| count.min(width));
+    Limbs::new(shifted.bits, &[count])
 }
 
 /// What a program is told when `op` traps whatever its left operand, of the type `left_type`, is,
@@ -123,74 +184,4 @@ pub fn known_trap(
     }
     let zero = Value::Integer(Limbs::new(integer.bits, &[]));
     binary(op, left_type, &zero, right_type, right).err()
-}
-
-fn integer_binary(
-    op: BinaryOp,
-    integer: Integer,
-    left: &Limbs,
-    count_type: Integer,
-    right: &Limbs,
-) -> Result<Value, String> {
-    let Integer { signed, bits } = integer;
-    let division_by_zero = || DIVISION_BY_ZERO.to_string();
-    let compare = |accept: fn(Ordering) -> bool| {
-        Ok(Value::Bool(accept(bigint::compare(
-            bits, signed, left, right,
-        ))))
-    };
-    let result = match op {
-        BinaryOp::Add => bigint::add(bits, left, right),
-        BinaryOp::Subtract => bigint::subtract(bits, left, right),
-        BinaryOp::Multiply => bigint::multiply(bits, left, right),
-        BinaryOp::Divide => {
-            bigint::divide(bits, signed, left, right).ok_or_else(division_by_zero)?
-        }
-        BinaryOp::Remainder => {
-            bigint::remainder(bits, signed, left, right).ok_or_else(division_by_zero)?
-        }
-        BinaryOp::ShiftLeft | BinaryOp::ShiftRight => {
-            let count = shift_count(integer, count_type, right)?;
-            match op {
-                BinaryOp::ShiftLeft => bigint::shift_left(bits, left, count),
-                _ => bigint::shift_right(bits, signed, left, count),
-            }
-        }
-        BinaryOp::BitAnd => bigint::bit_and(bits, left, right),
-        BinaryOp::BitOr => bigint::bit_or(bits, left, right),
-        BinaryOp::BitXor => bigint::bit_xor(bits, left, right),
-        BinaryOp::EqualTo => return Ok(Value::Bool(left == right)),
-        BinaryOp::NotEqualTo => return Ok(Value::Bool(left != right)),
-        BinaryOp::LessThan => return compare(Ordering::is_lt),
-        BinaryOp::LessOrEqual => return compare(Ordering::is_le),
-        BinaryOp::GreaterThan => return compare(Ordering::is_gt),
-        BinaryOp::GreaterOrEqual => return compare(Ordering::is_ge),
-        BinaryOp::LogicalAnd | BinaryOp::LogicalOr => {
-            unreachable!("check gives `{op:?}` no integers")
-        }
-    };
-    Ok(Value::Integer(result))
-}
-
-/// `left op right` in the precision of `T` (`f32` or `f64`).
-fn float_binary<T>(op: BinaryOp, left: T, right: T) -> Value
-where
-    T: Copy + PartialOrd + Into<f64> + Add<Output = T> + Sub<Output = T>,
-    T: Mul<Output = T> + Div<Output = T> + Rem<Output = T>,
-{
-    let result = match op {
-        BinaryOp::Add => left + right,
-        BinaryOp::Subtract => left - right,
-        BinaryOp::Multiply => left * right,
-        BinaryOp::Divide => left / right,
-        BinaryOp::Remainder => left % right, // fmod, as LLVM's frem
-        BinaryOp::EqualTo => return Value::Bool(left == right),
-        BinaryOp::NotEqualTo => return Value::Bool(left != right),
-        BinaryOp::LessThan => return Value::Bool(left < right),
-        BinaryOp::LessOrEqual => return Value::Bool(left <= right),
-        BinaryOp::GreaterThan => return Value::Bool(left > right),
-        BinaryOp::GreaterOrEqual => return Value::Bool(left >= right),
-        _ => unreachable!("check gives `{op:?}` no float operands"),
-    };
-    Value::Float(result.into().to_bits())
 }

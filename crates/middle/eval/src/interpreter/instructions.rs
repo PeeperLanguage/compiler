@@ -1,23 +1,21 @@
 //! What each instruction does, but a call, which changes what runs next
-//! (`run_frames`). An integer of up to 128 bits is worked on in a `u128`
-//! cut to its class, a wider one with `bigint`; a float as its own
-//! precision, as LLVM's operations do.
+//! (`run_frames`). The operations themselves are `crate::operations`.
+
+use std::borrow::Cow;
 
 use arena::Id;
 use bigint::Limbs;
 use model::mir::Class;
-use model::mir::Comparison;
 use model::mir::Conversion;
-use model::mir::FloatOp;
 use model::mir::Instruction;
 use model::mir::InstructionKind;
-use model::mir::IntegerOp;
 use model::mir::Operand;
 use model::mir::Place;
 use model::mir::Root;
 use model::mir::Step;
-use runtime_abi::messages::DIVISION_BY_ZERO;
-use runtime_abi::messages::shift_count_message;
+
+use crate::operations;
+use crate::operations::RegisterValue;
 
 use super::ADDRESS_NOT_KNOWN;
 use super::Halt;
@@ -42,45 +40,33 @@ impl Interpreter<'_, '_> {
                         as it could read an address";
                     return Err(self.fail(message, self.span_of(id)));
                 }
-                if let Class::Wide(bits) = class {
-                    let (left, right) = (self.wide(left), self.wide(right));
-                    let value = wide_integer(operation, bits, left, right);
-                    let value = value.map_err(|message| self.fail(message, self.span_of(id)))?;
-                    self.of_limbs(at, class, value)
-                } else {
-                    let bits = self.class_bits(class);
-                    let (left, right) = (self.operand(left), self.operand(right));
-                    let value = integer(operation, bits, left, right);
-                    value.map_err(|message| self.fail(message, self.span_of(id)))?
-                }
+                let (left, right) = (self.register(class, left), self.register(class, right));
+                let value = operations::integer(operation, self.class_bits(class), &left, &right);
+                let value = value.map_err(|message| self.fail(message, self.span_of(id)))?;
+                self.hold(at, class, value)
             }
             &InstructionKind::Float {
                 operation,
                 class,
                 left,
                 right,
-            } => float(operation, class, self.operand(left), self.operand(right)),
+            } => operations::float(operation, class, self.operand(left), self.operand(right)),
             &InstructionKind::Compare {
                 comparison,
                 class,
                 left,
                 right,
             } => {
-                let compared = if let Class::Wide(bits) = class {
-                    let (left, right) = (self.wide(left), self.wide(right));
-                    wide_compare(comparison, bits, left, right)
-                } else {
-                    let (left, right) = (self.operand(left), self.operand(right));
-                    if class == Class::Pointer
-                        && self.memory.is_constant()
-                        && left != 0
-                        && right != 0
-                    {
-                        return Err(self.fail(ADDRESS_NOT_KNOWN, self.span_of(id)));
-                    }
-                    compare(comparison, class, self.class_bits(class), left, right)
-                };
-                u128::from(compared)
+                if class == Class::Pointer
+                    && self.memory.is_constant()
+                    && self.operand(left) != 0
+                    && self.operand(right) != 0
+                {
+                    return Err(self.fail(ADDRESS_NOT_KNOWN, self.span_of(id)));
+                }
+                let (left, right) = (self.register(class, left), self.register(class, right));
+                let bits = self.class_bits(class);
+                u128::from(operations::compare(comparison, class, bits, &left, &right))
             }
             &InstructionKind::Convert {
                 conversion,
@@ -98,7 +84,10 @@ impl Interpreter<'_, '_> {
                         as it could read an address";
                     return Err(self.fail(message, self.span_of(id)));
                 }
-                self.convert(at, conversion, from, to, value)
+                let (from_bits, to_bits) = (self.class_bits(from), self.class_bits(to));
+                let value = self.register(from, value);
+                let value = operations::convert(conversion, from, from_bits, to, to_bits, &value);
+                self.hold(at, to, value)
             }
             InstructionKind::Load { class, place } => {
                 let address = self.address(place, id)?;
@@ -150,50 +139,21 @@ impl Interpreter<'_, '_> {
         Ok(Some(value))
     }
 
-    /// The integer `operand` of the class `Wide`.
-    fn wide(&self, operand: Operand) -> &Limbs {
-        &self.wides[self.operand(operand) as usize]
+    /// What `operand`, of `class`, holds.
+    fn register(&self, class: Class, operand: Operand) -> RegisterValue<'_> {
+        match class {
+            Class::Wide(_) => {
+                RegisterValue::Wide(Cow::Borrowed(&self.wides[self.operand(operand) as usize]))
+            }
+            _ => RegisterValue::Narrow(self.operand(operand)),
+        }
     }
 
-    /// `value`, of the class `from`, as the class `to`, for the register at
-    /// `at`.
-    fn convert(
-        &mut self,
-        at: usize,
-        conversion: Conversion,
-        from: Class,
-        to: Class,
-        value: Operand,
-    ) -> u128 {
-        let (from_bits, to_bits) = (self.class_bits(from), self.class_bits(to));
-        let register = self.operand(value);
-        // A wide integer on either side goes through limbs.
-        let limbs = match from {
-            Class::Wide(_) => self.wides[register as usize].clone(),
-            _ => Limbs::new(from_bits, &[register as u64, (register >> 64) as u64]),
-        };
-        let is_wide = matches!(from, Class::Wide(_)) || matches!(to, Class::Wide(_));
-        match conversion {
-            Conversion::SignExtend | Conversion::ZeroExtend if is_wide => {
-                let signed = conversion == Conversion::SignExtend;
-                let extended = bigint::extend(from_bits, signed, &limbs, to_bits);
-                self.of_limbs(at, to, extended)
-            }
-            Conversion::Truncate if is_wide => {
-                self.of_limbs(at, to, Limbs::new(to_bits, limbs.as_slice()))
-            }
-            Conversion::SignedToFloat | Conversion::UnsignedToFloat if is_wide => {
-                let signed = conversion == Conversion::SignedToFloat;
-                float_bits(to, bigint::to_float(from_bits, signed, &limbs, to_bits))
-            }
-            // Saturated at the integer's own width, which may be below its
-            // class's.
-            Conversion::FloatToSigned { bits } | Conversion::FloatToUnsigned { bits } => {
-                let signed = matches!(conversion, Conversion::FloatToSigned { .. });
-                let integer = bigint::from_float(bits, signed, float_value(from, register));
-                self.of_limbs(at, to, bigint::extend(bits, signed, &integer, to_bits))
-            }
-            _ => convert(conversion, from, from_bits, to, to_bits, register),
+    /// The register at `at`, of `class`, holding `value`.
+    fn hold(&mut self, at: usize, class: Class, value: RegisterValue) -> u128 {
+        match value {
+            RegisterValue::Narrow(value) => value,
+            RegisterValue::Wide(limbs) => self.of_limbs(at, class, limbs.into_owned()),
         }
     }
 
@@ -207,7 +167,7 @@ impl Interpreter<'_, '_> {
             Root::At(operand) => self.operand(operand) as u64,
             Root::Result => self.registers[self.first_register] as u64,
         };
-        let wrap = mask(self.pointer_bits) as u64;
+        let wrap = operations::mask(self.pointer_bits) as u64;
         for &step in &place.steps {
             address = match step {
                 Step::Offset(bytes) => address.wrapping_add(bytes) & wrap,
@@ -264,218 +224,4 @@ impl Interpreter<'_, '_> {
         }
         Ok(())
     }
-}
-
-/// The bits of a `u128` an integer of `bits` bits uses.
-pub(super) fn mask(bits: u32) -> u128 {
-    match bits {
-        128.. => u128::MAX,
-        _ => (1 << bits) - 1,
-    }
-}
-
-/// `value`, of `bits` bits, read as signed.
-fn signed(bits: u32, value: u128) -> i128 {
-    let unused = 128 - bits;
-    ((value << unused) as i128) >> unused
-}
-
-/// `left operation right` on integers of `bits` bits, wrapping there; the
-/// lowest signed value over -1 wraps to itself. Lowering checks a divisor
-/// against zero and a shift count against the width, but bytes a raw
-/// pointer wrote are not checked, so those trap here, as the machine does.
-fn integer(operation: IntegerOp, bits: u32, left: u128, right: u128) -> Result<u128, String> {
-    let nonzero = || {
-        if right == 0 {
-            return Err(DIVISION_BY_ZERO.to_owned());
-        }
-        Ok(right)
-    };
-    let count = || {
-        if right >= u128::from(bits) {
-            return Err(shift_count_message(bits));
-        }
-        Ok(right as u32)
-    };
-    let value = match operation {
-        IntegerOp::Add => left.wrapping_add(right),
-        IntegerOp::Subtract => left.wrapping_sub(right),
-        IntegerOp::Multiply => left.wrapping_mul(right),
-        IntegerOp::SignedDivide => {
-            nonzero()?;
-            signed(bits, left).wrapping_div(signed(bits, right)) as u128
-        }
-        IntegerOp::UnsignedDivide => left / nonzero()?,
-        IntegerOp::SignedRemainder => {
-            nonzero()?;
-            signed(bits, left).wrapping_rem(signed(bits, right)) as u128
-        }
-        IntegerOp::UnsignedRemainder => left % nonzero()?,
-        IntegerOp::ShiftLeft => left << count()?,
-        IntegerOp::SignedShiftRight => (signed(bits, left) >> count()?) as u128,
-        IntegerOp::UnsignedShiftRight => left >> count()?,
-        IntegerOp::And => left & right,
-        IntegerOp::Or => left | right,
-        IntegerOp::Xor => left ^ right,
-    };
-    Ok(value & mask(bits))
-}
-
-/// `left operation right` on integers of `bits` bits, more than 128, which
-/// trap as `integer`'s do.
-fn wide_integer(
-    operation: IntegerOp,
-    bits: u32,
-    left: &Limbs,
-    right: &Limbs,
-) -> Result<Limbs, String> {
-    let count = || {
-        let count = bigint::to_u64(bits, false, right).filter(|&count| count < u64::from(bits));
-        count
-            .map(|count| count as u32)
-            .ok_or_else(|| shift_count_message(bits))
-    };
-    let divided = |quotient: Option<Limbs>| quotient.ok_or_else(|| DIVISION_BY_ZERO.to_owned());
-    Ok(match operation {
-        IntegerOp::Add => bigint::add(bits, left, right),
-        IntegerOp::Subtract => bigint::subtract(bits, left, right),
-        IntegerOp::Multiply => bigint::multiply(bits, left, right),
-        IntegerOp::SignedDivide => divided(bigint::divide(bits, true, left, right))?,
-        IntegerOp::UnsignedDivide => divided(bigint::divide(bits, false, left, right))?,
-        IntegerOp::SignedRemainder => divided(bigint::remainder(bits, true, left, right))?,
-        IntegerOp::UnsignedRemainder => divided(bigint::remainder(bits, false, left, right))?,
-        IntegerOp::ShiftLeft => bigint::shift_left(bits, left, count()?),
-        IntegerOp::SignedShiftRight => bigint::shift_right(bits, true, left, count()?),
-        IntegerOp::UnsignedShiftRight => bigint::shift_right(bits, false, left, count()?),
-        IntegerOp::And => bigint::bit_and(bits, left, right),
-        IntegerOp::Or => bigint::bit_or(bits, left, right),
-        IntegerOp::Xor => bigint::bit_xor(bits, left, right),
-    })
-}
-
-/// The float of `class` whose bits a register holds, as an `f64`, which
-/// holds an `f32` exactly.
-pub(super) fn float_value(class: Class, bits: u128) -> f64 {
-    match class {
-        Class::F32 => f64::from(f32::from_bits(bits as u32)),
-        _ => f64::from_bits(bits as u64),
-    }
-}
-
-/// The bits of `value` as a float of `class`, rounded to it.
-pub(super) fn float_bits(class: Class, value: f64) -> u128 {
-    match class {
-        Class::F32 => u128::from((value as f32).to_bits()),
-        _ => u128::from(value.to_bits()),
-    }
-}
-
-/// `left operation right` on floats of `class`, each in its own
-/// precision. Which NaN one gives is not specified, as in LLVM.
-fn float(operation: FloatOp, class: Class, left: u128, right: u128) -> u128 {
-    fn apply<
-        F: std::ops::Add<Output = F>
-            + std::ops::Sub<Output = F>
-            + std::ops::Mul<Output = F>
-            + std::ops::Div<Output = F>
-            + std::ops::Rem<Output = F>,
-    >(
-        operation: FloatOp,
-        left: F,
-        right: F,
-    ) -> F {
-        match operation {
-            FloatOp::Add => left + right,
-            FloatOp::Subtract => left - right,
-            FloatOp::Multiply => left * right,
-            FloatOp::Divide => left / right,
-            FloatOp::Remainder => left % right,
-        }
-    }
-    if class == Class::F32 {
-        let (left, right) = (f32::from_bits(left as u32), f32::from_bits(right as u32));
-        return u128::from(apply(operation, left, right).to_bits());
-    }
-    let (left, right) = (f64::from_bits(left as u64), f64::from_bits(right as u64));
-    u128::from(apply(operation, left, right).to_bits())
-}
-
-/// Whether `left` and `right`, registers of `class` of `bits` bits,
-/// compare as `comparison` says. A float's `Equal` and `NotEqual` are a
-/// float's: NaN equals nothing, and `-0.0` equals `0.0`.
-fn compare(comparison: Comparison, class: Class, bits: u32, left: u128, right: u128) -> bool {
-    if matches!(class, Class::F32 | Class::F64) {
-        let (left, right) = (float_value(class, left), float_value(class, right));
-        return match comparison {
-            Comparison::Equal => left == right,
-            Comparison::NotEqual => left != right,
-            Comparison::FloatLess => left < right,
-            Comparison::FloatLessOrEqual => left <= right,
-            _ => unreachable!("floats compare as floats"),
-        };
-    }
-    match comparison {
-        Comparison::Equal => left == right,
-        Comparison::NotEqual => left != right,
-        Comparison::SignedLess => signed(bits, left) < signed(bits, right),
-        Comparison::SignedLessOrEqual => signed(bits, left) <= signed(bits, right),
-        Comparison::UnsignedLess => left < right,
-        Comparison::UnsignedLessOrEqual => left <= right,
-        Comparison::FloatLess | Comparison::FloatLessOrEqual => {
-            unreachable!("only floats compare as floats")
-        }
-    }
-}
-
-/// Whether `left` and `right`, integers of `bits` bits, more than 128,
-/// compare as `comparison` says.
-fn wide_compare(comparison: Comparison, bits: u32, left: &Limbs, right: &Limbs) -> bool {
-    use std::cmp::Ordering;
-    let order = |signed| bigint::compare(bits, signed, left, right);
-    match comparison {
-        Comparison::Equal => left == right,
-        Comparison::NotEqual => left != right,
-        Comparison::SignedLess => order(true) == Ordering::Less,
-        Comparison::SignedLessOrEqual => order(true) != Ordering::Greater,
-        Comparison::UnsignedLess => order(false) == Ordering::Less,
-        Comparison::UnsignedLessOrEqual => order(false) != Ordering::Greater,
-        Comparison::FloatLess | Comparison::FloatLessOrEqual => {
-            unreachable!("only floats compare as floats")
-        }
-    }
-}
-
-/// `value`, a register of `from` of `from_bits` bits, as `to` of `to_bits`
-/// bits; neither is wide. A float goes to an integer toward zero, to the
-/// nearest end of its range when outside it, and NaN to 0, as Rust's `as`
-/// does at each width.
-fn convert(
-    conversion: Conversion,
-    from: Class,
-    from_bits: u32,
-    to: Class,
-    to_bits: u32,
-    value: u128,
-) -> u128 {
-    let float = || float_value(from, value);
-    let converted = match conversion {
-        Conversion::SignExtend => signed(from_bits, value) as u128,
-        Conversion::ZeroExtend | Conversion::Truncate | Conversion::PointerCast => value,
-        Conversion::SignedToFloat => {
-            let value = signed(from_bits, value);
-            match to {
-                Class::F32 => u128::from((value as f32).to_bits()),
-                _ => u128::from((value as f64).to_bits()),
-            }
-        }
-        Conversion::UnsignedToFloat => match to {
-            Class::F32 => u128::from((value as f32).to_bits()),
-            _ => u128::from((value as f64).to_bits()),
-        },
-        Conversion::FloatToSigned { .. } | Conversion::FloatToUnsigned { .. } => {
-            unreachable!("a float becomes an integer through limbs")
-        }
-        Conversion::FloatWiden | Conversion::FloatNarrow => float_bits(to, float()),
-    };
-    converted & mask(to_bits)
 }

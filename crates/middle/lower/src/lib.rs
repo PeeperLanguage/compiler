@@ -5,7 +5,6 @@
 //! it names one.
 
 mod aggregates;
-pub mod binary;
 mod c_abi;
 mod expression;
 mod print;

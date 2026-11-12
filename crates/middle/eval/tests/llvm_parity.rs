@@ -7,7 +7,7 @@
 //! lib.rs cover them. `MIN / -1` runs through the backend's guard.
 //!
 //! Each binary operator becomes the MIR operation lowering makes of it
-//! (`lower::binary::binary_operation`), written with the instruction
+//! (`model::mir::binary_operation`), written with the instruction
 //! the backend writes for that operation (`integer_instruction`,
 //! `comparison_instruction`, `signed_division`, `conversion_instruction`,
 //! `saturating_conversion`).
@@ -32,12 +32,12 @@ use llvm::body::integer_instruction;
 use llvm::body::saturating_conversion;
 use llvm::body::signed_division;
 use llvm::link::TOOLCHAIN_FOLDER;
-use lower::binary::BinaryOperation;
-use lower::binary::binary_operation;
 use model::constant::Value;
+use model::mir::BinaryOperation;
 use model::mir::Class;
 use model::mir::Conversion;
 use model::mir::IntegerOp;
+use model::mir::binary_operation;
 use model::operators::BinaryOp;
 use model::operators::UnaryOp;
 use model::semantic_types::Float;

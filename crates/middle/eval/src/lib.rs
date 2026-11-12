@@ -1,12 +1,12 @@
 //! What Peeper's operators mean on constant values (`operators`,
 //! `conversions`), and running a function at compile time (`interpreter`).
-//! Check folds with these functions and the interpreter runs with them, so
-//! the two cannot disagree; LLVM must compute the same results
-//! (tests/llvm_parity.rs). The integer arithmetic itself is the `bigint`
-//! crate's.
+//! Both compute with `operations`, so check's folding and the interpreter
+//! cannot disagree; LLVM must compute the same results
+//! (tests/llvm_parity.rs).
 
 pub mod conversions;
 pub mod interpreter;
+mod operations;
 pub mod operators;
 
 #[cfg(test)]

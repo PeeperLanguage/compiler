@@ -471,3 +471,26 @@
   never runs; `negative_comptime_calls` now also calls one from a
   function the constant runs (`const WRITES`), which catches it.
   `check mixed` unchanged (1,183-1,184 M). check.sh ok.
+- Untangle fix 7, one meaning for each operator (Fuad: "go with one
+  core"): the interpreter's register operations moved from
+  `interpreter/instructions.rs` to `eval::operations` (integer, float,
+  compare, convert, with `RegisterValue { Narrow(u128), Wide(Cow<Limbs>) }`
+  so one entry covers both widths). The interpreter calls them through
+  `register`/`hold`; its `convert` method's wide and float-to-integer
+  paths are now `operations::convert`. The constant folder
+  (`operators`, `conversions`) no longer has its own arithmetic: it takes
+  the MIR operation lowering emits (`binary_operation`, moved from
+  `lower/src/binary.rs` to `model::mir`, so eval drops its `lower`
+  dev-dependency) and runs it through `operations` at the type's own
+  width. Unary is lowering's forms: `0 - x`, `-0.0 - x` (the old sign
+  flip differed only in which NaN), `x xor ones`. A shift count is read
+  unsigned and kept out of range, as lowering's check does. So the
+  llvm_parity test, which runs the folder, now checks the interpreter's
+  arithmetic too, and eval/lib.rs's "cannot disagree" is true. Not done:
+  which `Conversion` an `as` is, and the unary forms, are still chosen in
+  both lowering and the folder (the meaning of each is one). Mutations
+  of the core (signed divide, signed less, float subtract, sign extend,
+  `swapped` ignored, shift count not clamped) each fail a folder test or
+  the interpreter's run fixtures. `check mixed` 1,176-1,179 M (was
+  1,183-1,184 M); `run -interpret loop_2000000` 16,465 M, was 16,413 M
+  (+0.3%, the register value built per operation). check.sh ok.

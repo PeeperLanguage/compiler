@@ -16,7 +16,6 @@ source.workspace = true
 
 [dev-dependencies]
 llvm.workspace = true
-lower.workspace = true
 
 [lints]
 workspace = true
