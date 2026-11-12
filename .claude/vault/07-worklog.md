@@ -411,3 +411,13 @@
   layout's size bands (alignment, not a class), `Class::bits` on Pointer,
   `class` vs `in_memory`, the call-site signature (it carries C variadic
   arguments the type does not), "void means none". check.sh ok.
+- Untangle fix 11, `flow` needs no semantic types:
+  `report_missing_return` asks the MIR whether the function gives a
+  result (`signature.result`, as LLVM's `FallOff` already does) instead of
+  comparing the result `TypeId` with `VOID`, and takes the result type's
+  name as `result_text`, a closure the checker passes, called only when
+  the error is reported. `flow` no longer imports `Types`, `TypeId` or
+  `DefId`. Same answer: `void` cannot be written as a type (a probe of
+  `type Nothing = void;` is refused, T0002), so no alias of it exists.
+  No message changes. Mutation: a fixed label fails
+  `negative_missing_return_causes`. check.sh ok.

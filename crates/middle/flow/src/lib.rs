@@ -49,10 +49,7 @@ use std::sync::Arc;
 
 use arena::Id;
 use diagnostics::Diagnostic;
-use model::DefId;
 use model::mir;
-use model::semantic_types::TypeId;
-use model::semantic_types::Types;
 use source::SourceFile;
 use source::Span;
 
@@ -62,8 +59,9 @@ pub mod variable_state;
 /// The most paths one missing-return error names.
 const SHOWN_CAUSES: usize = 3;
 
-/// Reports a function, written in `file` and giving a `result`, whose end
-/// can be reached without a `return`.
+/// Reports a function, written in `file` and giving a result, whose end
+/// can be reached without a `return`. `result_text` names the result's
+/// type, asked only for the error.
 ///
 /// Lowering ends such a function's last block with `FallOff` at its closing
 /// brace, so the question is whether that block can be reached. If it can,
@@ -71,15 +69,13 @@ const SHOWN_CAUSES: usize = 3;
 /// nested block, at most `SHOWN_CAUSES` of them. When the last block itself
 /// runs statements of the function body, only the end is named, since one
 /// `return` there fixes every path.
-pub fn report_missing_return<'n>(
+pub fn report_missing_return(
     body: &mir::Body,
     file: &Arc<SourceFile>,
-    types: &Types,
-    result: TypeId,
-    name_of: impl Fn(DefId) -> &'n str + Copy,
+    result_text: impl FnOnce() -> String,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
-    if result == TypeId::VOID {
+    if body.signature.result.is_none() {
         return; // such a function returns at its closing brace
     }
     let end = body
@@ -99,10 +95,7 @@ pub fn report_missing_return<'n>(
     let mut causes = missing_return_causes(body, end, &reachable);
     causes.sort_by_key(|&(span, _): &(Span, &str)| span.start);
     let hidden = causes.len().saturating_sub(SHOWN_CAUSES);
-    let end_label = format!(
-        "function ends without returning `{}`",
-        types.text(result, name_of)
-    );
+    let end_label = format!("function ends without returning `{}`", result_text());
     let mut error = Diagnostic::new(
         diagnostics::MISSING_RETURN,
         "not all control paths return a value",
