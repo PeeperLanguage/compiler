@@ -462,7 +462,6 @@ impl Lowering<'_> {
         }
     }
 
-    /// `value`, of the integer type `from`, as the integer type `to`.
     pub(super) fn convert_integer(
         &mut self,
         value: Operand,

@@ -561,7 +561,6 @@ impl Lowering<'_> {
         (integer, step_integer)
     }
 
-    /// `start <= end` for two registers of the type `integer`.
     fn compare_integers_le(
         &mut self,
         start: Operand,

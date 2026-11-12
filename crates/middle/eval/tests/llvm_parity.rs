@@ -4,7 +4,7 @@
 //! fold (volatile loads), and the bits must match; a NaN matches any NaN, as
 //! LLVM does not specify which NaN an operation gives. Cases the runtime traps
 //! on (division by zero, out-of-range shifts) are left out; the unit tests in
-//! lib.rs cover them. `MIN / -1` runs through the backend's guard.
+//! src/tests.rs cover them. `MIN / -1` runs through the backend's guard.
 //!
 //! Each binary operator becomes the MIR operation lowering makes of it
 //! (`model::mir::binary_operation`), written with the instruction
@@ -171,7 +171,7 @@ fn literal(limbs: &[u64]) -> String {
     text
 }
 
-/// One integer operation and the bits `ir` folded.
+/// One integer operation and the bits `eval` gives.
 struct Case {
     operation: Operation,
     expected: Vec<u64>,
@@ -479,7 +479,7 @@ define i32 @main() {{
         if expected != line && !(expected == "nan" && nan()) {
             mismatches += 1;
             if mismatches <= 5 {
-                eprintln!("case {k}: ir {expected}\n         llvm {line}");
+                eprintln!("case {k}: eval {expected}\n           llvm {line}");
             }
         }
     }
@@ -529,7 +529,7 @@ fn write_conversions(
         writeln!(calls, "  call void @{function}()").unwrap();
         let from_llvm = llvm_type(from);
         for to in &types {
-            // The conversion lowering makes (`lower`'s `lower_cast`).
+            // The conversion lowering makes (`lower`'s `lower_convert`).
             let cast = |conversion| conversion_instruction(conversion).to_string();
             let instruction = match (from, to) {
                 _ if from == to => continue,

@@ -215,7 +215,6 @@ impl<'f> Interpreter<'_, 'f> {
         (!negative).then_some(value as u64)
     }
 
-    /// The `i32` argument `index`.
     fn i32_argument(&self, arguments: &[Operand], index: usize) -> i32 {
         self.operand(arguments[index]) as u32 as i32
     }

@@ -65,7 +65,6 @@ impl Metadata {
         id
     }
 
-    /// Adds the node `node` and gives its number.
     pub(crate) fn add(&mut self, node: impl fmt::Display) -> usize {
         let id = self.reserve();
         self.define(id, node);
@@ -80,7 +79,6 @@ impl Metadata {
         id
     }
 
-    /// Writes the node `id` as `node`.
     pub(crate) fn define(&mut self, id: usize, node: impl fmt::Display) {
         _ = writeln!(self.text, "!{id} = {node}");
     }

@@ -222,7 +222,7 @@ enum Value {
     Memory(Place),
     /// Kept in memory at the place, read at the span out of a variable
     /// whose type moves: whoever takes the value marks it moved once its
-    /// bytes are read (`put`, a method's receiver, `print`).
+    /// bytes are read (`put`, a method's receiver, an expression statement).
     Moving(Place, Span),
     Nothing,
 }
@@ -334,7 +334,7 @@ impl Lowering<'_> {
         self.emit(kind, span)
     }
 
-    /// Adds `left comparison right` in `class`, an `I8`.
+    /// Adds `left comparison right` on operands of `class`; gives an `I8`.
     fn compare(
         &mut self,
         comparison: Comparison,
@@ -362,12 +362,10 @@ impl Lowering<'_> {
         self.emit(kind, span);
     }
 
-    /// Loads the register of `class` at `place`.
     fn load(&mut self, class: Class, place: Place, span: Span) -> Operand {
         self.emit(InstructionKind::Load { class, place }, span)
     }
 
-    /// Stores the register `value` of `class` at `place`.
     fn store(&mut self, class: Class, place: Place, value: Operand, span: Span) {
         let kind = InstructionKind::Store {
             class,
@@ -647,9 +645,8 @@ impl Lowering<'_> {
                 let to = match self.types[ty].pointee() {
                     // A struct with an error: this output is never linked.
                     Some(pointee) if matches!(self.types[pointee], Type::Named(_)) => None,
-                    // shortcut: clang runs out of stack on debug types tens
-                    // of thousands of nodes deep; past this depth a debugger
-                    // sees an untyped pointer, or a struct with no fields.
+                    // shortcut: past `DEEPEST_DEBUG_TYPE` a debugger sees an
+                    // untyped pointer, or a struct with no fields.
                     Some(_) if depth == DEEPEST_DEBUG_TYPE => None,
                     // Pointers break a flat array, so they nest as deep as
                     // the source does.

@@ -73,8 +73,6 @@ fn lowered_for(text: &str, target: &str) -> String {
     mir.text(&file, name_of)
 }
 
-// The block after a `return` is unreachable; it still ends the scopes.
-
 #[test]
 fn integers_are_registers_and_variables_are_slots() {
     let text = lowered("fn main() -> i32 { let a = 2; let b: i64 = a + 3; return a; }");

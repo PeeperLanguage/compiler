@@ -571,3 +571,33 @@
   (probe untangle/declare-clash); and the seven `pub` items in
   `llvm::body` (and `pub mod body`) exist only for eval's
   llvm_parity test.
+- Untangle comments pass (patch comments under
+  target/step12-probes/untangle), the comments the four reports listed,
+  found by their text at 784d4831 since the lines have moved:
+  - stale, fixed: llvm_parity named `lower_cast` (now `lower_convert`),
+    "ir" for eval and lib.rs for src/tests.rs; `Failure::NoMir` named
+    `run`, its caller is `run_function`'s; flow's doc said the checks
+    are called by `compile` (the checker's `lower_function` calls
+    them); the loan check's doc named only T0037, it reports T0036 and
+    T0016 too; `Holder` said one per instruction giving a pointer (only
+    a `Borrow`, `Load` or `Call`); `Value::Moving` named `print` among
+    its takers (an expression statement is the third); `compare` said
+    `class` is an `I8` (the result is); `Class`'s `Display` said LLVM
+    uses its names (not for floats); `DebugTypes` said one per language
+    type (`push` adds ones for none); an orphan test comment whose test
+    is gone.
+  - repeated, cut to one place: why only live holders are kept (module
+    doc; `held_at_starts` and the walk point to it); why debug types
+    stop at `DEEPEST_DEBUG_TYPE` (its doc; the shortcut names the limit).
+  - restating, removed: the docs of `load`, `store`, `convert_integer`,
+    `compare_integers_le`, `write_block`, `write_instruction`,
+    `Metadata::add`/`define`, `Module::file`/`text`, `holder_ids`,
+    `i32_argument`, `set_value`, `wants_ll`.
+  Kept, though listed: docs that say more than the signature
+  (`slice_words`' word order, `emit_scope_ends`' newest-first,
+  `global`'s read-only data, `read_word`, `live_set`, `parameter_loan`,
+  `join`, `is_empty`, the driver's "find the project"). Not a finding:
+  `ThirBuilder::reborrow` does exist. Already gone in earlier fixes:
+  the compile's "gives its MIR" comments, the `return`/`panic`/jump
+  "unreachable block" comments, the events comment in mir.rs, the
+  second "names are for editors". Comments only; check.sh ok.

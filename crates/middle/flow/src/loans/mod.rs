@@ -1,6 +1,8 @@
-//! The loan check (T0037): a place used in a way that a reference to it
-//! forbids while that reference is still in use, and a variable whose scope
-//! ends while a reference to it is still in use.
+//! The loan check: a place used in a way that a reference to it forbids
+//! while that reference is still in use, or a variable whose scope ends
+//! while a reference to it is still in use (T0037), and a returned
+//! reference to a local (T0036) or to a parameter its `in` does not name
+//! (T0016).
 //!
 //! A loan is one `Borrow`. A holder is a pointer that may hold loans: one of
 //! a slot's `holders` (a reference, slice or interface in a variable or
@@ -84,8 +86,8 @@ use crate::Bits;
 use crate::loans::two_phase::Reservation;
 
 /// A pointer that may hold loans: each slot's holders in slot order, then
-/// one for each instruction giving a pointer, then one for a result kept in
-/// memory. Only named by `Id<Holder>`.
+/// one for each `Borrow`, `Load` or `Call` giving a pointer, then one for a
+/// result kept in memory. Only named by `Id<Holder>`.
 enum Holder {}
 
 /// One `Borrow`, numbered from 0 in instruction order, then one parameter
@@ -153,7 +155,6 @@ pub fn report_loan_errors(
     loans.report(file, diagnostics);
 }
 
-/// The holders of `range` as ids.
 fn holder_ids(range: Range<usize>) -> impl Iterator<Item = Id<Holder>> {
     range.map(Id::from_index)
 }
@@ -255,8 +256,7 @@ impl<'b> Loans<'b> {
                     errors.push((body.instructions.span(id).start, error));
                 }
                 self.holders.step_held(&mut held, id);
-                // As at a block's end: a holder not live is never read again,
-                // so each check scans only the loans of holders in use.
+                // Only live holders are kept, as at a block's end.
                 held.pairs.retain(|pair| live.has(pair.0));
             }
         }

@@ -43,7 +43,7 @@
 //!   constant `DEBUG` is how code is switched on and off, and Go, Rust and Zig
 //!   do not warn there either (decided by the owner, 2026-10-17).
 //! - No building of the MIR: the `lower` crate does that, and these checks run
-//!   after it, called by `compile`.
+//!   after it, called by the checker's `lower_function`.
 
 use std::marker::PhantomData;
 

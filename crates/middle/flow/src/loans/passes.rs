@@ -277,8 +277,7 @@ impl<'b> Loans<'b> {
 
     /// The loans each holder may hold where each block starts, `None` for a
     /// block not reached, keeping only holders live at its predecessors'
-    /// `ends`: a step reads only holders it uses, and an error only live
-    /// ones, so a holder not live there is never read again. A parameter
+    /// `ends`, for the reason the module doc gives. A parameter
     /// passed in memory has no store: its holders hold its loan from the
     /// start.
     pub(super) fn held_at_starts(&self, ends: &[Option<Vec<Id<Holder>>>]) -> Vec<Option<Held>> {

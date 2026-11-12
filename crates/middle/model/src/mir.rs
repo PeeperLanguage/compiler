@@ -100,7 +100,8 @@ impl Class {
 }
 
 impl std::fmt::Display for Class {
-    /// The name the dump and the LLVM writer use: `i32`, `i200`, `f64`, `ptr`.
+    /// The name the dump uses: `i32`, `i200`, `f64`, `ptr`; LLVM's too, but
+    /// for floats (`llvm::body::llvm_type`).
     fn fmt(&self, out: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Class::I8 => out.write_str("i8"),
@@ -239,8 +240,9 @@ pub struct DebugMember {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct DebugTypeId(pub u32);
 
-/// The debug types of a program, one per language type that has a value
-/// (`of_type`). Lowering fills it; a backend reads each by id (`get`).
+/// The debug types of a program: one per language type that has a value
+/// (`of_type`), and those that stand for none (`push`). Lowering fills it;
+/// a backend reads each by id (`get`).
 #[derive(Clone, Default)]
 pub struct DebugTypes {
     /// Each type, at its `DebugTypeId`; `None` while it is being made

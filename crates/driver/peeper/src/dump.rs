@@ -51,7 +51,6 @@ impl<'p> Dumps<'p> {
         }
     }
 
-    /// Whether the LLVM text is asked for.
     pub fn wants_ll(&self) -> bool {
         self.kinds.iter().any(|kind| matches!(kind, Dump::Ll))
     }

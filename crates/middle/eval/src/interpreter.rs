@@ -98,7 +98,7 @@ pub enum Failure {
         span: Span,
     },
     /// It called `callee`, a function or one of its copies, for which
-    /// `mir_of` gave no MIR: the caller of `run` knows why.
+    /// `mir_of` gave no MIR: the caller of `run_function` knows why.
     NoMir {
         callee: FunctionCopy,
         function: DefId,
@@ -596,7 +596,6 @@ impl<'b, 'f> Interpreter<'b, 'f> {
         None
     }
 
-    /// Gives the instruction `id` of the running call its value.
     fn set_value(&mut self, id: Id<Instruction>, value: u128) {
         let at = self.first_value + id.index();
         self.registers[at] = value;

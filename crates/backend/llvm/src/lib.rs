@@ -103,7 +103,6 @@ impl<'p> Module<'p> {
         );
     }
 
-    /// The source file the module is read from.
     fn file(&self) -> &'p SourceFile {
         &self.program.modules[self.module.index()].ast.file
     }
@@ -113,7 +112,6 @@ impl<'p> Module<'p> {
         self.functions.is_empty()
     }
 
-    /// The module's LLVM text.
     pub fn text(&self) -> String {
         let path = &self.file().path;
         let mut out = String::new();

@@ -587,7 +587,6 @@ impl Writer<'_, '_, '_> {
         at
     }
 
-    /// Writes the block `block`.
     fn write_block(&mut self, out: &mut String, block: Id<Block>) {
         _ = writeln!(out, "bb{}:", block.index());
         let body = self.body;
@@ -647,7 +646,6 @@ impl Writer<'_, '_, '_> {
         _ = writeln!(out, "{location}");
     }
 
-    /// Writes the instruction `id`.
     fn write_instruction(&mut self, out: &mut String, id: Id<Instruction>) {
         let body = self.body;
         let Instruction { kind, debug_scope } = &body.instructions[id];
