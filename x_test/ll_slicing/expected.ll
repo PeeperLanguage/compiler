@@ -29,13 +29,13 @@ bb0.1.panic:
   unreachable
 }
 
-define void @"ll_slicing:main.spread"(ptr %a0, ptr %a1) !dbg !29 {
+define void @"ll_slicing:main.spread"(ptr %result, ptr %a0) !dbg !29 {
 entry:
-  call void @llvm.dbg.declare(metadata ptr %a1, metadata !30, metadata !DIExpression()), !dbg !31
+  call void @llvm.dbg.declare(metadata ptr %a0, metadata !30, metadata !DIExpression()), !dbg !31
   %s1 = alloca [8 x i8], align 8
   br label %bb0
 bb0:
-  %i0.a = getelementptr inbounds i8, ptr %a1, i64 8, !dbg !32
+  %i0.a = getelementptr inbounds i8, ptr %a0, i64 8, !dbg !32
   %i0 = load i64, ptr %i0.a, !dbg !32
   %i1 = zext i64 %i0 to i128, !dbg !32
   %i2.c = icmp ult i128 4, %i1, !dbg !32
@@ -56,8 +56,8 @@ bb1:
   %i11.c = icmp ult i64 %i10, %i8, !dbg !32
   br i1 %i11.c, label %bb2, label %bb3, !dbg !32
 bb2:
-  %i12.t = getelementptr inbounds [8 x i8], ptr %a0, i64 %i10, !dbg !32
-  %i12.f.1 = load ptr, ptr %a1, !dbg !32
+  %i12.t = getelementptr inbounds [8 x i8], ptr %result, i64 %i10, !dbg !32
+  %i12.f.1 = load ptr, ptr %a0, !dbg !32
   %i12.f = getelementptr inbounds [8 x i8], ptr %i12.f.1, i64 %i10, !dbg !32
   call void @llvm.memcpy.p0.p0.i64(ptr %i12.t, ptr %i12.f, i64 8, i1 false), !dbg !32
   %i13 = add i64 %i10, 1, !dbg !32

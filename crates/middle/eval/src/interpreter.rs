@@ -601,7 +601,11 @@ impl<'b, 'f> Interpreter<'b, 'f> {
                 let bits = u128::from(bits[0]) | u128::from(bits[1]) << 64;
                 bits & instructions::mask(self.class_bits(class))
             }
-            Operand::Parameter(index) => self.registers[self.first_register + index as usize],
+            Operand::Parameter(index) => {
+                // After the address of a result kept in memory (`Root::Result`).
+                let hidden = self.frame().body.signature.hidden_parameters() as usize;
+                self.registers[self.first_register + hidden + index as usize]
+            }
             Operand::Global(index) => u128::from(self.frame().layout.globals[index as usize]),
         }
     }

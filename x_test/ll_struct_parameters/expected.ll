@@ -1,15 +1,15 @@
 source_filename = "<fixture>/src/main.peep"
 
-define void @"ll_struct_parameters:main.swap"(ptr %a0, ptr %a1) !dbg !10 {
+define void @"ll_struct_parameters:main.swap"(ptr %result, ptr %a0) !dbg !10 {
 entry:
-  call void @llvm.dbg.declare(metadata ptr %a1, metadata !11, metadata !DIExpression()), !dbg !12
+  call void @llvm.dbg.declare(metadata ptr %a0, metadata !11, metadata !DIExpression()), !dbg !12
   br label %bb0
 bb0:
-  %i0.a = getelementptr inbounds i8, ptr %a1, i64 4, !dbg !13
+  %i0.a = getelementptr inbounds i8, ptr %a0, i64 4, !dbg !13
   %i0 = load i32, ptr %i0.a, !dbg !13
-  store i32 %i0, ptr %a0, !dbg !13
-  %i2 = load i32, ptr %a1, !dbg !14
-  %i3 = getelementptr inbounds i8, ptr %a0, i64 4, !dbg !14
+  store i32 %i0, ptr %result, !dbg !13
+  %i2 = load i32, ptr %a0, !dbg !14
+  %i3 = getelementptr inbounds i8, ptr %result, i64 4, !dbg !14
   store i32 %i2, ptr %i3, !dbg !14
   ret void, !dbg !15
 }

@@ -310,3 +310,16 @@
   debug info, the MIR dump. check.sh ok. Left for fix 4: the result kept
   in memory and a call's hidden first argument, constants' decode, panic
   messages, runtime callees' signatures, extern-ness.
+- Untangle fix 4, second part (Fuad: "go with Root::Result"): a result
+  kept in memory is the place `Root::Result`, not `Root::At(Parameter(0))`,
+  and `Operand::Parameter(i)` is always written parameter `i`. Gone: the
+  `hidden` shift in lowering's parameter stores, `parameter_in_memory`,
+  `class_of`, the loan check's parameter loans and its literal
+  `Root::At(Parameter(0))` match. Only the machine level counts the
+  hidden argument now: LLVM names it `%result` (written parameters keep
+  `%a0`..), the interpreter reads it at the frame's first register. A call
+  still passes the destination as its first argument (`call_arguments`).
+  Six dumps re-blessed: only `%a0` -> `%result`, `at arg0` -> `result`,
+  and the written parameters renumbered from 0. Mutation: the loan
+  check's `Root::Result` giving no holders, and the interpreter without
+  the shift, each fail the fixtures. check.sh ok.

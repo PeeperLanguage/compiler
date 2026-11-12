@@ -1,7 +1,7 @@
 fn make:
   bb0:
-    store i32 n.0, arg1
-    store i32 step.1, arg2
+    store i32 n.0, arg0
+    store i32 step.1, arg1
     %2 = load i32 n.0
     %3 = load i32 n.0
     %4 = add i32 %3, 6
@@ -37,7 +37,7 @@ fn make:
     %28 = ne i64 %27, 0
     %29 = or i8 %26, %28
     check %29, "array literal needs exactly 4 values"
-    store i32 at arg0[+0], 9
+    store i32 result[+0], 9
     store i32 .4, %2
     store i64 .5, 0
     jump bb4
@@ -47,7 +47,7 @@ fn make:
     branch %35, bb5, bb6
   bb5:
     %36 = load i32 .4
-    store i32 at arg0[+4, %34 * 4 of 3], %36
+    store i32 result[+4, %34 * 4 of 3], %36
     %38 = add i32 %36, %17
     store i32 .4, %38
     %40 = add i64 %34, 1
@@ -68,8 +68,8 @@ fn make:
     fall off at `}`
 fn join:
   bb0:
-    copy 8 at arg0[+0], pair.0
-    store i32 at arg0[+8], 7
+    copy 8 result[+0], pair.0
+    store i32 result[+8], 7
     dead pair.0
     return
   bb1:

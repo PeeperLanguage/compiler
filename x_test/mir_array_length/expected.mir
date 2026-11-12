@@ -1,8 +1,8 @@
 fn make:
   bb0:
-    store i32 at arg0[+0], 1
-    store i32 at arg0[+4], 2
-    store i32 at arg0[+8], 3
+    store i32 result[+0], 1
+    store i32 result[+4], 2
+    store i32 result[+8], 3
     return
   bb1:
     fall off at `}`

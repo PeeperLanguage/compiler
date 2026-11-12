@@ -117,7 +117,6 @@ impl Lowering<'_> {
                 }
                 thir::Stmt::Return(value) => {
                     let value = match value {
-                        // Written where the hidden first parameter points.
                         Some(value)
                             if matches!(
                                 self.mir.signature.result,
@@ -125,7 +124,7 @@ impl Lowering<'_> {
                             ) =>
                         {
                             let result = Place {
-                                root: Root::At(model::mir::Operand::Parameter(0)),
+                                root: Root::Result,
                                 steps: Box::default(),
                             };
                             self.lower_into(value, result)?;

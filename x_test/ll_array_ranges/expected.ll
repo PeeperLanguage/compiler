@@ -3,7 +3,7 @@ source_filename = "<fixture>/src/main.peep"
 @.str.0 = private unnamed_addr constant [1 x i8] c" "
 @.str.1 = private unnamed_addr constant [1 x i8] c"\0A"
 
-define void @"ll_array_ranges:main.known"(ptr %a0) !dbg !7 {
+define void @"ll_array_ranges:main.known"(ptr %result) !dbg !7 {
 entry:
   %s0 = alloca [24 x i8], align 4
   call void @llvm.dbg.declare(metadata ptr %s0, metadata !9, metadata !DIExpression()), !dbg !10
@@ -50,7 +50,7 @@ bb5:
   store i64 %i19, ptr %s4, !dbg !11
   br label %bb4
 bb6:
-  call void @llvm.memcpy.p0.p0.i64(ptr %a0, ptr %s0, i64 24, i1 false), !dbg !12
+  call void @llvm.memcpy.p0.p0.i64(ptr %result, ptr %s0, i64 24, i1 false), !dbg !12
   ret void, !dbg !13
 }
 

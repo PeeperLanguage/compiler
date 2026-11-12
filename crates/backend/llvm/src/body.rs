@@ -112,8 +112,15 @@ impl Module<'_> {
         // `writer` borrows the module.
         let mut out = std::mem::take(&mut writer.module.functions);
         let (result, parameters) = peeper_types(&body.signature);
-        let parameters = (parameters.iter().enumerate())
-            .map(|(index, ty)| fmt::from_fn(move |out| write!(out, "{ty} %a{index}")));
+        // A result kept in memory is written where the hidden first
+        // parameter points.
+        let hidden = body.signature.hidden_parameters() as usize;
+        let parameters = (parameters.iter().enumerate()).map(|(index, ty)| {
+            fmt::from_fn(move |out| match index.checked_sub(hidden) {
+                Some(written) => write!(out, "{ty} %a{written}"),
+                None => write!(out, "{ty} %result"),
+            })
+        });
         _ = write!(
             out,
             "define {result} {}({})",
@@ -500,6 +507,7 @@ impl Writer<'_, '_, '_> {
                     match place.root {
                         Root::Slot(slot) => out.write_str(&slot_name(self.body, slot)),
                         Root::At(at) => self.write_operand(out, at),
+                        Root::Result => out.write_str("%result"),
                     }
                 }
                 _ => write!(out, "%i{}", id.index()),
@@ -560,6 +568,7 @@ impl Writer<'_, '_, '_> {
         let mut at = match place.root {
             Root::Slot(slot) => slot_name(self.body, slot),
             Root::At(operand) => self.operand(operand).to_string(),
+            Root::Result => "%result".to_string(),
         };
         // Offsets in a row, with constant indexes, add up to one.
         let mut steps: Vec<Step> = Vec::with_capacity(place.steps.len());

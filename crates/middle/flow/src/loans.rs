@@ -503,6 +503,7 @@ impl<'b> Holders<'b> {
                 self.slot_holders(slot, &self.first_level(place.steps, width).span())
             }
             Root::At(pointer) => self.operand_holders(pointer),
+            Root::Result => 0..0, // the caller's memory, reached by no reference here
         }
     }
 
@@ -792,11 +793,8 @@ impl<'b> Holders<'b> {
                 place,
                 value,
             } => {
-                let hidden = self.body.signature.hidden_parameters();
                 let parameter = match *value {
-                    Operand::Parameter(index) if index >= hidden => {
-                        Some(self.parameter_loan((index - hidden) as usize))
-                    }
+                    Operand::Parameter(index) => Some(self.parameter_loan(index as usize)),
                     _ => None,
                 };
                 let width = class.bytes(self.pointer_bytes);
@@ -871,11 +869,7 @@ impl<'b> Holders<'b> {
     ) {
         let all = || self.loans_of(held, sources.iter().cloned().flatten());
         let targets = match place.root {
-            // The result kept in memory, written where the hidden first
-            // parameter points.
-            Root::At(Operand::Parameter(0)) if !self.result_holders().is_empty() => {
-                self.result_holders()
-            }
+            Root::Result => self.result_holders(),
             _ if place.is_behind_pointer() => return, // the checker lets no store here hold a loan
             _ => self.place_holders(place, Some(width)),
         };

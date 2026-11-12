@@ -202,6 +202,7 @@ impl Interpreter<'_, '_> {
         let mut address = match place.root {
             Root::Slot(slot) => self.slot_address(slot, id)?,
             Root::At(operand) => self.operand(operand) as u64,
+            Root::Result => self.registers[self.first_register] as u64,
         };
         let wrap = mask(self.pointer_bits) as u64;
         for &step in &place.steps {

@@ -13,8 +13,8 @@ fn cube:
     fall off at `}`
 fn text:
   bb0:
-    store ptr at arg0, global 0
-    store i64 at arg0[+8], 5
+    store ptr result, global 0
+    store i64 result[+8], 5
     return
   bb1:
     fall off at `}`

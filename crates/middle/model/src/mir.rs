@@ -112,8 +112,7 @@ pub struct Body {
     pub instructions: Arena<Instruction>, // with the code each comes from
     pub slots: Arena<Slot>,               // with each name, or the code a temporary holds
     /// How the function takes its parameters and gives its result. A result
-    /// kept in memory is written where `Operand::Parameter(0)` points, a
-    /// hidden first parameter; the written ones follow it.
+    /// kept in memory is written to `Root::Result`.
     pub signature: Signature,
     /// How a loan message names what the function returns: "a reference
     /// into", "a slice of", "an interface holding"; `None` when its result
@@ -301,9 +300,8 @@ pub struct Signature {
     /// ones of a variadic call too, and the result, as clang does on the
     /// target. `None` in Peeper's own convention.
     pub c: Option<CSignature>,
-    /// The positions of the written parameters a returned pointer may
-    /// point into, for the loan check: a hidden first parameter
-    /// (`hidden_parameters`) is not counted.
+    /// The positions of the parameters a returned pointer may point into,
+    /// for the loan check.
     pub origins: Box<[u32]>,
 }
 
@@ -373,8 +371,9 @@ impl std::fmt::Display for CPassing {
 }
 
 impl Signature {
-    /// How many hidden parameters come before the written ones: one, the
-    /// address a result kept in memory is written to.
+    /// How many hidden arguments a call passes before the written ones:
+    /// one, the address of a result kept in memory, which the called body
+    /// names `Root::Result`.
     pub fn hidden_parameters(&self) -> u32 {
         u32::from(matches!(self.result, Some(Passing::Memory { .. })))
     }
@@ -411,7 +410,7 @@ pub enum Operand {
     /// `bits` read as the class: an integer's low bits, a float's bits. A
     /// wide integer's constant is read-only data, loaded (`Global`).
     Constant { class: Class, bits: [u64; 2] },
-    /// The function's parameter at this index, as passed in.
+    /// The function's written parameter at this index, as passed in.
     Parameter(u32),
     /// The address of one of the body's `globals`.
     Global(u32),
@@ -483,7 +482,7 @@ impl PlaceRef<'_> {
 
     /// Whether it is memory a pointer leads to, not a slot's own.
     pub fn is_behind_pointer(self) -> bool {
-        matches!(self.root, Root::At(_)) || self.steps.contains(&Step::Through)
+        matches!(self.root, Root::At(_) | Root::Result) || self.steps.contains(&Step::Through)
     }
 
     /// The values finding it reads: the address it starts at, and each
@@ -491,7 +490,7 @@ impl PlaceRef<'_> {
     pub fn operands(self) -> impl Iterator<Item = Operand> {
         let root = match self.root {
             Root::At(address) => Some(address),
-            Root::Slot(_) => None,
+            Root::Slot(_) | Root::Result => None,
         };
         let indexes = self.steps.iter().filter_map(|step| match *step {
             Step::Index { index, .. } => Some(index),
@@ -507,6 +506,9 @@ pub enum Root {
     Slot(Id<Slot>),
     /// The memory at the address the operand gives.
     At(Operand),
+    /// The memory the caller keeps the function's result in, when it is
+    /// passed in memory (`Passing::Memory`).
+    Result,
 }
 
 /// One step of a `Place`.
@@ -914,7 +916,7 @@ impl Body {
     pub fn parameter_in_memory(&self, slot: Id<Slot>) -> Option<u32> {
         let index = slot.index();
         match self.signature.parameters.get(index)? {
-            Passing::Memory { .. } => Some(index as u32 + self.signature.hidden_parameters()),
+            Passing::Memory { .. } => Some(index as u32),
             Passing::Register { .. } => None,
         }
     }
@@ -933,16 +935,10 @@ impl Body {
                 kind => kind.own_class(),
             },
             Operand::Constant { class, .. } => Some(class),
-            Operand::Parameter(index) => {
-                let hidden = self.signature.hidden_parameters();
-                if index < hidden {
-                    return Some(Class::Pointer);
-                }
-                match self.signature.parameters[(index - hidden) as usize] {
-                    Passing::Register { class, .. } => Some(class),
-                    Passing::Memory { .. } => Some(Class::Pointer),
-                }
-            }
+            Operand::Parameter(index) => match self.signature.parameters[index as usize] {
+                Passing::Register { class, .. } => Some(class),
+                Passing::Memory { .. } => Some(Class::Pointer),
+            },
             Operand::Global(_) => Some(Class::Pointer),
         }
     }
@@ -1245,6 +1241,7 @@ impl Printer<'_> {
                 self.out.push_str("at ");
                 self.write_operand(&address);
             }
+            Root::Result => self.out.push_str("result"),
         }
         if place.steps.is_empty() {
             return;

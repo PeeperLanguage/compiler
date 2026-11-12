@@ -168,17 +168,15 @@ pub fn lower(
     let function_block = Id::from_index(0);
     let span = body.blocks.span(function_block);
     lowering.block = lowering.new_block(span);
-    // A result kept in memory is written where a hidden first parameter
-    // points, so the written parameters come after it. One passed in memory
-    // is the caller's copy already (`Body::parameter_in_memory`).
-    let hidden = lowering.mir.signature.hidden_parameters();
+    // A parameter passed in memory is the caller's copy already
+    // (`Body::parameter_in_memory`).
     for index in 0..parameters.len() {
         let slot = Id::from_index(index);
         if let Passing::Register { class, .. } = lowering.mir.signature.parameters[index] {
             let kind = InstructionKind::Store {
                 class,
                 place: Place::whole(slot),
-                value: Operand::Parameter(index as u32 + hidden),
+                value: Operand::Parameter(index as u32),
             };
             lowering.emit(kind, lowering.mir.slots.span(slot));
         }
