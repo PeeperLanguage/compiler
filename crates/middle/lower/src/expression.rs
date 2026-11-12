@@ -354,12 +354,11 @@ impl Lowering<'_> {
             } => {
                 let value = self.lower_expr(index)?.register();
                 let message = array_index_message(length);
-                let op = BinaryOp::GreaterOrEqual;
                 let index_type = self.types.real(self.thir.exprs[index].ty);
                 let checked = self.checked_usize(
                     value,
                     index_type,
-                    op,
+                    Comparison::UnsignedLessOrEqual,
                     Length::Known(length),
                     &message,
                     span,
@@ -375,12 +374,11 @@ impl Lowering<'_> {
                 };
                 let length = self.second_word(slice);
                 let read = self.load(self.usize, length, span);
-                let op = BinaryOp::GreaterOrEqual;
                 let index_type = self.types.real(self.thir.exprs[index].ty);
                 let checked = self.checked_usize(
                     value,
                     index_type,
-                    op,
+                    Comparison::UnsignedLessOrEqual,
                     Length::Read(read),
                     SLICE_INDEX_MESSAGE,
                     span,
@@ -414,15 +412,17 @@ impl Lowering<'_> {
     }
 
     /// `value`, an integer of the type `ty`, as a `usize`, after stopping
-    /// the program with `message` when it is negative or `op` `length`,
-    /// checked at `span`. One no wider than a `usize` is converted first, a
-    /// negative one, extended, above any length; a wider one is compared in
-    /// its own type before it is cut to one.
+    /// the program with `message` when it is negative or `length` compares
+    /// with it as `outside` says (`UnsignedLessOrEqual` for an index,
+    /// `UnsignedLess` for an end that may be the length), checked at
+    /// `span`. One no wider than a `usize` is converted first, a negative
+    /// one, extended, above any length; a wider one is compared in its own
+    /// type before it is cut to one.
     pub(super) fn checked_usize(
         &mut self,
         value: Operand,
         ty: TypeId,
-        op: BinaryOp,
+        outside: Comparison,
         length: Length,
         message: &str,
         span: Span,
@@ -453,23 +453,7 @@ impl Lowering<'_> {
         };
         // The comparison is unsigned: a negative value, extended, is above
         // any length, and a wide signed one was refused above.
-        let failed = match op {
-            BinaryOp::GreaterOrEqual => self.compare(
-                Comparison::UnsignedLessOrEqual,
-                compared_class,
-                limit,
-                compared,
-                span,
-            ),
-            BinaryOp::GreaterThan => self.compare(
-                Comparison::UnsignedLess,
-                compared_class,
-                limit,
-                compared,
-                span,
-            ),
-            _ => unreachable!("a position is checked against a length with `>=` or `>`"),
-        };
+        let failed = self.compare(outside, compared_class, limit, compared, span);
         self.emit_check(failed, message, span);
         if wide {
             self.convert_integer(value, integer, size, span)
@@ -910,18 +894,17 @@ impl Lowering<'_> {
         };
         // Each argument is passed as it is when lowered, before the next
         // one runs: a value in memory is copied then.
-        let mut target = match callee {
-            Callee::Function(function) => Some(MirCallee::Function(function)),
-            Callee::Method(_) => None, // read from the receiver, the first argument
-        };
-        for argument in self.thir.children.lists.items(arguments) {
-            let argument_type = self.types.real(self.thir.exprs[argument].ty);
-            // The interface value's address is the receiver, and its table
-            // holds the method at `slot`.
-            if let (None, Callee::Method(slot)) = (target, callee) {
+        let mut arguments = self.thir.children.lists.items(arguments);
+        let callee = match callee {
+            Callee::Function(function) => MirCallee::Function(function),
+            // The receiver, the first argument, is an interface value: its
+            // address is passed, and its table holds the method at `slot`.
+            Callee::Method(slot) => {
+                let receiver = arguments.next().expect("a method call has its receiver");
+                let receiver_type = self.types.real(self.thir.exprs[receiver].ty);
                 // An owned interface taken by value moves once its words
                 // are read.
-                let (view, moved_at) = match self.lower_expr(argument)? {
+                let (view, moved_at) = match self.lower_expr(receiver)? {
                     Value::Moving(place, read) => (place, Some(read)),
                     value => (value.memory(), None),
                 };
@@ -929,24 +912,23 @@ impl Lowering<'_> {
                 let table_place = self.second_word(view.clone());
                 let table = self.load(Class::Pointer, table_place, span);
                 if let Some(read) = moved_at {
-                    self.mark_moved(view, argument_type, read);
+                    self.mark_moved(view, receiver_type, read);
                 }
                 let method_place = Place {
                     root: Root::At(table),
                     steps: Box::new([Step::Offset(u64::from(slot) * self.pointer_bytes)]),
                 };
-                target = Some(MirCallee::Pointer(self.load(
-                    Class::Pointer,
-                    method_place,
-                    span,
-                )));
+                let method = self.load(Class::Pointer, method_place, span);
                 passed.push(address);
                 parameters.push(Passing::Register {
                     class: Class::Pointer,
                     signed: false,
                 });
-                continue;
+                MirCallee::Pointer(method)
             }
+        };
+        for argument in arguments {
+            let argument_type = self.types.real(self.thir.exprs[argument].ty);
             // An argument to a parameter whose type has an error, reported
             // where it was written, which may be another module.
             if argument_type == TypeId::INVALID {
@@ -968,7 +950,6 @@ impl Lowering<'_> {
                 }
             }
         }
-        let callee = target.expect("a method call has its receiver");
         let c_function = c_symbol.is_some();
         let c = c_symbol.map(|symbol| {
             c_signature(

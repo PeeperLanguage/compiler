@@ -139,10 +139,10 @@ impl Lowering<'_> {
                         None => None,
                     };
                     self.emit_scope_ends(0, span); // out of the function
-                    self.finish(Terminator::Return { value, span });
-                    // What follows a `return` is unreachable; it still gets a block.
-                    self.block = self.new_block(span);
-                    self.declared.truncate(temporaries); // ended above
+                    self.finish_and_leave(Terminator::Return { value, span }, span);
+                    // Its value's temporaries were ended above; a jump or a
+                    // panic has none.
+                    self.declared.truncate(temporaries);
                 }
                 thir::Stmt::Panic(message) => {
                     let thir::ExprKind::Constant(model::constant::Value::Bytes(text)) =
@@ -152,8 +152,7 @@ impl Lowering<'_> {
                     };
                     // No `Dead`s: a panic ends the program without unwinding.
                     let message = text.clone();
-                    self.finish(Terminator::Panic { message, span });
-                    self.block = self.new_block(span); // unreachable, as after a `return`
+                    self.finish_and_leave(Terminator::Panic { message, span }, span);
                 }
                 thir::Stmt::If {
                     condition,
@@ -230,9 +229,7 @@ impl Lowering<'_> {
                         _ => next,
                     };
                     self.emit_scope_ends(declared, span);
-                    self.finish(Terminator::Jump(target));
-                    // What follows a jump is unreachable; it still gets a block.
-                    self.block = self.new_block(span);
+                    self.finish_and_leave(Terminator::Jump(target), span);
                 }
             }
             self.close_scopes(temporaries, span);

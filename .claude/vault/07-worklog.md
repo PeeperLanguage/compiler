@@ -508,3 +508,38 @@
   recording the wrong way, `require_main` ignored and `record_facts`
   ignored each fail compile tests. No hot path changed, so no
   measurement.
+- Untangle fix 9, lowering's own copies, in seven steps (patches
+  fix9a..g under target/step12-probes/untangle):
+  - surplus: `through_slice` (a `.then(Step::Through)` wrapper, also used
+    for an interface's struct), `field_offset` and `read_for_print` (one
+    caller each) and `runtime_call`'s unused result are gone; the dead
+    `| Type::Str` borrow arm too (`borrows()` is `None` for `&str`).
+    `types[types.real(x)]` is `types[x]`: indexing looks through aliases.
+    The slice debug type uses `add` like the others (reserve and define
+    with nothing recursive between); no dump changes, as the writer
+    numbers metadata itself.
+  - two words: four hand-written `.then(Step::Offset(pointer_bytes))`
+    use `second_word`; an interface's two stores are `interface_words`,
+    beside `slice_words`.
+  - constants and converts: a `usize` constant is
+    `Operand::integer(self.usize, n)` everywhere (its assert holds: the
+    checker refuses an array length past `usize`, probed on i686);
+    `integer_constant` takes an `Integer`, so zeros and the shift width
+    use it; all six hand-built `Convert`s go through `convert`.
+  - `RangeWalk` is a struct of five named fields, built by name, moved to
+    and from a range value by `range_field` name (`RangeWalk::fields`);
+    `range_integers` unpacks a range type at three sites.
+  - `lower_expr` builds the seven in-memory kinds through `lower_into`
+    (`in_temporary`), so each is built in one place.
+  - `copy_elements` and `fill_range` share `for_each_index`, which
+    replaces `counter_slot` and `step_counter`.
+  - special cases: `checked_usize` takes the `Comparison` (no `BinaryOp`
+    and no `unreachable!`); the method receiver is lowered before the
+    argument loop, not found by `target == None` in it; `return`, `panic`
+    and `break`/`continue` end with `finish_and_leave`. `return` alone
+    truncates `declared` because only it has an expression, whose
+    temporaries it ended; that is now said where it happens.
+  Not done: the slice debug type's `len` still makes its own `usize`
+  basic type per slice type, as the language `usize` is named `u64` in
+  debug info (asked). No MIR or LLVM dump changed. `check mixed`
+  1,172-1,175 M (was 1,176-1,179 M). 247 lines in, 345 out.

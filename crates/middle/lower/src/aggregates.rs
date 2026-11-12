@@ -15,7 +15,6 @@ use model::mir::Place;
 use model::mir::SLICE_WORDS;
 use model::mir::Step;
 use model::mir::Terminator;
-use model::operators::BinaryOp;
 use model::semantic_types::Integer;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
@@ -790,7 +789,7 @@ impl Lowering<'_> {
             |known: Option<u64>| known.is_none() || known_length.is_none() && known != Some(0);
         let start_operand = match start {
             Some(start) if checked(known_start) => {
-                self.lower_slice_end(start, BinaryOp::GreaterThan, length)?
+                self.lower_slice_end(start, Comparison::UnsignedLess, length)?
             }
             _ => Operand::integer(
                 self.usize,
@@ -800,12 +799,12 @@ impl Lowering<'_> {
         let end_operand = match (end, known_end) {
             (Some(end), known) if checked(known) => {
                 // A `..=` end is below the length, so one past it fits.
-                let op = if inclusive {
-                    BinaryOp::GreaterOrEqual
+                let outside = if inclusive {
+                    Comparison::UnsignedLessOrEqual
                 } else {
-                    BinaryOp::GreaterThan
+                    Comparison::UnsignedLess
                 };
-                let end = self.lower_slice_end(end, op, length)?;
+                let end = self.lower_slice_end(end, outside, length)?;
                 if inclusive {
                     let one = Operand::integer(self.usize, 1);
                     self.integer(IntegerOp::Add, self.usize, end, one, span)
@@ -865,12 +864,12 @@ impl Lowering<'_> {
     fn lower_slice_end(
         &mut self,
         end: Id<thir::Expr>,
-        op: BinaryOp,
+        outside: Comparison,
         length: Length,
     ) -> Option<Operand> {
         let span = self.thir.exprs.span(end);
         let ty = self.types.real(self.thir.exprs[end].ty);
         let value = self.lower_expr(end)?.register();
-        Some(self.checked_usize(value, ty, op, length, SLICE_BOUNDS_MESSAGE, span))
+        Some(self.checked_usize(value, ty, outside, length, SLICE_BOUNDS_MESSAGE, span))
     }
 }

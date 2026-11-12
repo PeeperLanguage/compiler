@@ -262,6 +262,14 @@ impl Lowering<'_> {
         self.mir.blocks.push(block, span)
     }
 
+    /// Ends the block being filled with `terminator`, which leaves it for
+    /// good (a `return`, a jump out, a panic): what follows, which nothing
+    /// reaches, still gets a block.
+    fn finish_and_leave(&mut self, terminator: Terminator, span: Span) {
+        self.finish(terminator);
+        self.block = self.new_block(span);
+    }
+
     /// Ends the block being filled with `terminator`.
     fn finish(&mut self, terminator: Terminator) {
         let instructions = self.mir.lists.add(&self.instructions);
