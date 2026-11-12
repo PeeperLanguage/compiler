@@ -6,6 +6,7 @@ mod builder;
 pub mod builtin;
 pub mod declaration;
 mod expression;
+pub mod fold;
 mod function;
 pub mod scope;
 mod statement;
@@ -21,15 +22,15 @@ use diagnostics::Diagnostic;
 use diagnostics::fix::Fix;
 use function::Built;
 use function::function_declaration;
+use lower::ProgramDebugTypes;
+use model::ConstArguments;
 use model::DefId;
 use model::FunctionCopy;
 use model::ModuleId;
 use model::ast;
-use model::constant::Constant;
 use model::machine::Machine;
-use model::mir::DebugTypes;
 use model::semantic_types::ConstArgument;
-use model::semantic_types::ConstArguments;
+use model::semantic_types::Constant;
 use model::semantic_types::ImplementationId;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
@@ -52,7 +53,7 @@ pub struct Checker<'p> {
     pub types: Types, // the program's types, built-in and declared
     /// The debug type of each type the program's lowered bodies name so far
     /// (`lower::lower`); only a backend reads them.
-    pub debug_types: DebugTypes,
+    pub debug_types: ProgramDebugTypes,
     /// The machine the program is for: the width of `isize` and `usize` is
     /// its `pointer_bits`, and a value may take its `largest_object` bytes.
     pub target: &'static Machine,
@@ -201,7 +202,7 @@ impl<'p> Checker<'p> {
             modules,
             module_checks,
             types: Types::new(target.pointer_bits),
-            debug_types: DebugTypes::default(),
+            debug_types: ProgramDebugTypes::default(),
             target,
             internals: CheckerInternals {
                 known_implementations: FxHashMap::default(),

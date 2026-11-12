@@ -2,7 +2,8 @@
 //! needs of one (the width of `usize`, how values are laid out) and what the
 //! backend needs (clang's name for it, its system).
 
-use crate::semantic_types::Integer;
+/// The widest integer: LLVM's limit.
+pub const MAX_INTEGER_BITS: u32 = 1 << 23;
 
 /// A machine a program is built for: one row of `MACHINES`.
 #[derive(PartialEq, Eq, Debug)]
@@ -164,7 +165,7 @@ impl Machine {
     pub fn widest_c_integer(&self) -> u32 {
         match self.c_abi {
             CAbi::Aapcs64 | CAbi::Darwin64 => 128,
-            CAbi::SystemV | CAbi::I386 | CAbi::Windows64 => Integer::MAX_BITS,
+            CAbi::SystemV | CAbi::I386 | CAbi::Windows64 => MAX_INTEGER_BITS,
         }
     }
 

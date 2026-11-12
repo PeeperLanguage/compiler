@@ -8,9 +8,9 @@ use std::path::PathBuf;
 
 use lsp_types::CodeAction;
 use model::ModuleId;
-use model::constant::Constant;
-use model::constant::value_text;
+use model::semantic_types::Constant;
 use model::semantic_types::Types;
+use model::semantic_types::value_text;
 use model::thir;
 use model::thir::FactKind;
 use model::thir::Local;

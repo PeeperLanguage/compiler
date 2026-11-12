@@ -11,10 +11,14 @@ use source::SourceFile;
 use source::Span;
 
 use crate::DefId;
+use crate::FunctionCopy;
 use crate::ModuleId;
 use crate::ast;
 use crate::ast::Ident;
 use crate::ast::Tree;
+use crate::constant::Value;
+use crate::semantic_types::ConstArgument;
+use crate::semantic_types::Constant;
 use crate::semantic_types::TypeId;
 use crate::semantic_types::Types;
 
@@ -116,6 +120,52 @@ pub fn is_extern(modules: &[Module], definition: DefId) -> bool {
 /// accepted, if it is a C function (`extern_symbol`).
 pub fn c_symbol(modules: &[Module], definition: DefId) -> Option<String> {
     extern_symbol(modules, definition).expect("the checker reported a malformed `extern`")
+}
+
+/// The name the linker knows the function `definition` by: its `#[extern]`
+/// name, else its module's path and its name (`myapp:util.Parse`).
+pub fn symbol(modules: &[Module], definition: DefId) -> String {
+    c_symbol(modules, definition).unwrap_or_else(|| {
+        let path = &modules[definition.module.index()].path;
+        let name = declared_path(modules, definition);
+        format!("{path}.{name}")
+    })
+}
+
+/// The name the linker knows the copy `copy` by: its function's `symbol`,
+/// with its `const` arguments, each type by its module's path and name
+/// (`myapp:main.New<myapp:main.Node>`), so two modules' types of one name
+/// make two names, and each float value by its bits, as two NaNs print
+/// alike.
+pub fn copy_symbol(modules: &[Module], types: &Types, copy: FunctionCopy) -> String {
+    let qualified = |definition: DefId| {
+        let path = &modules[definition.module.index()].path;
+        format!("{path}.{}", declared_text(modules, definition))
+    };
+    let name = symbol(modules, copy.definition);
+    let given = types.arguments(copy.arguments);
+    if given.is_empty() {
+        return name;
+    }
+    let text = |argument: &ConstArgument| match argument {
+        ConstArgument::Value(Constant {
+            value: Value::Float(bits),
+            ..
+        }) => format!("{bits:#x}"),
+        _ => types.argument_text(argument, qualified),
+    };
+    let texts: Vec<String> = given.iter().map(text).collect();
+    format!("{name}<{}>", texts.join(", "))
+}
+
+/// The copy `copy` as a program names it: its declared path, with its
+/// `const` arguments as Peeper text (`Stack.New<Node>`); what messages,
+/// dumps and a debugger show.
+pub fn copy_name(modules: &[Module], types: &Types, copy: FunctionCopy) -> String {
+    let declared = declared_path(modules, copy.definition);
+    types.copy_text(declared, copy.arguments, |definition| {
+        declared_text(modules, definition)
+    })
 }
 
 /// The names of the fields of the struct declaration `definition` of

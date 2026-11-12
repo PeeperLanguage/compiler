@@ -4,14 +4,16 @@
 use std::sync::Arc;
 
 use diagnostics::Diagnostic;
+use eval::interpreter::ADDRESS_NOT_KNOWN;
+use eval::interpreter::ConstantShape;
 use eval::interpreter::Failure;
+use model::ConstArguments;
 use model::DefId;
 use model::FunctionCopy;
 use model::ModuleId;
 use model::ast;
 use model::constant::Value;
 use model::mir;
-use model::semantic_types::ConstArguments;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
 use model::thir;
@@ -169,11 +171,7 @@ impl Checker<'_> {
             called_at,
             ..
         } = self.internals.function_copies[&copy];
-        let name = self.types.copy_text(
-            model::program::declared_path(modules, definition),
-            copy.arguments,
-            |definition| model::program::declared_text(modules, definition),
-        );
+        let name = model::program::copy_name(modules, &self.types, copy);
         let file = &modules[called_in.index()].ast.file;
         let into = &mut self.module_checks[into.index()].diagnostics;
         for diagnostic in found {
@@ -275,6 +273,29 @@ impl Checker<'_> {
             }
         }
         let ty = self.copy_type(function, span);
+        let Type::Function {
+            parameters, result, ..
+        } = &self.types[ty]
+        else {
+            unreachable!("a body is a function's")
+        };
+        let shape = |ty: TypeId| match &self.types[ty] {
+            Type::Bool => ConstantShape::Bool,
+            &Type::Integer(integer) => ConstantShape::Integer {
+                bits: integer.bits,
+                signed: integer.signed,
+            },
+            &Type::Float(float) => ConstantShape::Float(float.class()),
+            Type::RawPointer { .. } => ConstantShape::RawPointer,
+            Type::CString => ConstantShape::CString,
+            Type::Str => ConstantShape::Str,
+            other => ConstantShape::Refused(constant_refusal(other)),
+        };
+        let shaped_arguments: Vec<(&Value, ConstantShape)> = (arguments.iter())
+            .zip(parameters)
+            .map(|(argument, &ty)| (argument, shape(ty)))
+            .collect();
+        let result = shape(*result);
         let mir_of = |copy: FunctionCopy| match self.internals.built_bodies.get(&copy) {
             Some(Built::Kept(mir)) => mir.as_deref(),
             None | Some(Built::Reported) => None,
@@ -286,9 +307,8 @@ impl Checker<'_> {
                     match eval::interpreter::run_function(
                         function.definition,
                         body,
-                        arguments,
-                        ty,
-                        &self.types,
+                        &shaped_arguments,
+                        result,
                         self.target,
                         &mir_of,
                     ) {
@@ -348,5 +368,18 @@ pub(crate) fn function_declaration(
     match model::program::declaration(modules, definition) {
         ast::Decl::Function(function) => function,
         _ => unreachable!("`{definition:?}` is a function"),
+    }
+}
+
+/// Why a constant cannot hold a value of the type `ty`.
+pub(crate) fn constant_refusal(ty: &Type) -> &'static str {
+    match ty {
+        Type::Struct { .. } => "a constant cannot hold a struct yet",
+        Type::Array { .. } => "a constant cannot hold an array yet",
+        Type::Range { .. } => "a constant cannot hold a range yet",
+        _ if ty.borrows() == Some(true) => {
+            "a constant cannot hold a mutable reference, as all its uses would share one value"
+        }
+        _ => ADDRESS_NOT_KNOWN,
     }
 }

@@ -11,18 +11,12 @@
 use std::fmt::Write;
 
 use crate::FunctionCopy;
-use crate::operators::BinaryOp;
-use crate::semantic_types::Float;
-use crate::semantic_types::Integer;
-use crate::semantic_types::Type;
-use crate::semantic_types::TypeId;
 use arena::Arena;
 use arena::Id;
 use arena::List;
 use arena::Lists;
 use runtime_abi::symbols::Carrier;
 use runtime_abi::symbols::Runtime;
-use rustc_hash::FxHashMap;
 use source::SourceFile;
 use source::Span;
 
@@ -77,14 +71,6 @@ impl Class {
             33..=64 => Class::I64,
             65..=128 => Class::I128,
             _ => Class::Wide(bits),
-        }
-    }
-
-    /// The class of a float of the type `float`.
-    pub fn float(float: Float) -> Class {
-        match float {
-            Float::F32 => Class::F32,
-            Float::F64 => Class::F64,
         }
     }
 
@@ -243,15 +229,13 @@ pub struct DebugMember {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct DebugTypeId(u32);
 
-/// The debug types of a program: one per language type that has a value
-/// (`of_type`), and those that stand for none (`push`). Lowering fills it;
-/// a backend reads each by id (`get`).
+/// The debug types of a program, by id: lowering adds them, a backend
+/// reads each (`get`).
 #[derive(Clone, Default)]
 pub struct DebugTypes {
     /// Each type, at its `DebugTypeId`; `None` while it is being made
     /// (`reserve`), as a struct's members may name the struct.
     types: Vec<Option<DebugType>>,
-    of_type: FxHashMap<TypeId, DebugTypeId>,
 }
 
 impl DebugTypes {
@@ -262,38 +246,23 @@ impl DebugTypes {
     }
 
     /// Adds to `self`, a copy of `from` made earlier, the types `from` made
-    /// since. A copy is read by id only: it finds no type by language type.
+    /// since.
     pub fn copy_new(&mut self, from: &DebugTypes) {
         self.types
             .extend_from_slice(&from.types[self.types.len()..]);
     }
 
-    /// The debug type made for the language type `ty`, if one was.
-    pub fn of_type(&self, ty: TypeId) -> Option<DebugTypeId> {
-        self.of_type.get(&ty).copied()
-    }
-
-    /// Adds `debug_type` as the language type `ty`'s.
-    pub fn add(&mut self, ty: TypeId, debug_type: DebugType) -> DebugTypeId {
-        let id = self.reserve(ty);
-        self.define(id, debug_type);
-        id
-    }
-
-    /// Adds `debug_type`, which stands for no language type: a pointer a
-    /// composite's member is, a C `char`.
+    /// Adds `debug_type`, defined now.
     pub fn push(&mut self, debug_type: DebugType) -> DebugTypeId {
         self.types.push(Some(debug_type));
         DebugTypeId((self.types.len() - 1) as u32)
     }
 
-    /// A number for the language type `ty`'s debug type, to be defined
-    /// once its members are made (`define`).
-    pub fn reserve(&mut self, ty: TypeId) -> DebugTypeId {
+    /// A number for a debug type to be defined once its members are made
+    /// (`define`), as a struct's members may name the struct.
+    pub fn reserve(&mut self) -> DebugTypeId {
         self.types.push(None);
-        let id = DebugTypeId((self.types.len() - 1) as u32);
-        self.of_type.insert(ty, id);
-        id
+        DebugTypeId((self.types.len() - 1) as u32)
     }
 
     pub fn define(&mut self, id: DebugTypeId, debug_type: DebugType) {
@@ -654,66 +623,6 @@ impl Comparison {
     }
 }
 
-/// The MIR operation of a binary operator on two numbers.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum BinaryOperation {
-    Integer(IntegerOp),
-    Float(FloatOp),
-    /// A comparison; `swapped` when it compares the right side with the
-    /// left, as `>` and `>=` are `<` and `<=` the other way round.
-    Compare {
-        comparison: Comparison,
-        swapped: bool,
-    },
-}
-
-/// The MIR operation of `op` on two values of the number type `number`.
-pub fn binary_operation(op: BinaryOp, number: &Type) -> BinaryOperation {
-    let (float, signed) = match *number {
-        Type::Float(_) => (true, false),
-        Type::Integer(Integer { signed, .. }) => (false, signed),
-        _ => unreachable!("only numbers have arithmetic"),
-    };
-    let (less, less_or_equal) = if float {
-        (Comparison::FloatLess, Comparison::FloatLessOrEqual)
-    } else {
-        Comparison::integer_less(signed)
-    };
-    let compare = |comparison, swapped| BinaryOperation::Compare {
-        comparison,
-        swapped,
-    };
-    let integer = BinaryOperation::Integer;
-    let float_operation = BinaryOperation::Float;
-    match (op, float) {
-        (BinaryOp::EqualTo, _) => compare(Comparison::Equal, false),
-        (BinaryOp::NotEqualTo, _) => compare(Comparison::NotEqual, false),
-        (BinaryOp::LessThan, _) => compare(less, false),
-        (BinaryOp::LessOrEqual, _) => compare(less_or_equal, false),
-        (BinaryOp::GreaterThan, _) => compare(less, true),
-        (BinaryOp::GreaterOrEqual, _) => compare(less_or_equal, true),
-        (BinaryOp::Add, true) => float_operation(FloatOp::Add),
-        (BinaryOp::Subtract, true) => float_operation(FloatOp::Subtract),
-        (BinaryOp::Multiply, true) => float_operation(FloatOp::Multiply),
-        (BinaryOp::Divide, true) => float_operation(FloatOp::Divide),
-        (BinaryOp::Remainder, true) => float_operation(FloatOp::Remainder),
-        (BinaryOp::Add, false) => integer(IntegerOp::Add),
-        (BinaryOp::Subtract, false) => integer(IntegerOp::Subtract),
-        (BinaryOp::Multiply, false) => integer(IntegerOp::Multiply),
-        (BinaryOp::Divide, false) if signed => integer(IntegerOp::SignedDivide),
-        (BinaryOp::Divide, false) => integer(IntegerOp::UnsignedDivide),
-        (BinaryOp::Remainder, false) if signed => integer(IntegerOp::SignedRemainder),
-        (BinaryOp::Remainder, false) => integer(IntegerOp::UnsignedRemainder),
-        (BinaryOp::ShiftLeft, false) => integer(IntegerOp::ShiftLeft),
-        (BinaryOp::ShiftRight, false) if signed => integer(IntegerOp::SignedShiftRight),
-        (BinaryOp::ShiftRight, false) => integer(IntegerOp::UnsignedShiftRight),
-        (BinaryOp::BitAnd, false) => integer(IntegerOp::And),
-        (BinaryOp::BitOr, false) => integer(IntegerOp::Or),
-        (BinaryOp::BitXor, false) => integer(IntegerOp::Xor),
-        _ => unreachable!("the checker allows no other operator on numbers"),
-    }
-}
-
 /// How a `Convert` instruction reads a register as another class.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Conversion {
@@ -736,28 +645,6 @@ pub enum Conversion {
     /// of a value, and so to those of an address kept in memory, which a
     /// constant's run cannot know.
     PointerCast,
-}
-
-/// The conversion `value as to` makes of a value of the type `from`, as
-/// check allows it: between numbers, from a `bool` to an integer, and
-/// between raw pointers; integers at their own widths. Check drops an `as`
-/// to the same type.
-pub fn cast_conversion(from: &Type, to: &Type) -> Conversion {
-    match (from, to) {
-        (Type::Integer(from), Type::Integer(to)) if to.bits < from.bits => Conversion::Truncate,
-        (Type::Integer(from), Type::Integer(_)) if from.signed => Conversion::SignExtend,
-        (Type::Integer(_) | Type::Bool, Type::Integer(_)) => Conversion::ZeroExtend,
-        (Type::Integer(from), Type::Float(_)) if from.signed => Conversion::SignedToFloat,
-        (Type::Integer(_), Type::Float(_)) => Conversion::UnsignedToFloat,
-        (Type::Float(_), Type::Integer(to)) if to.signed => {
-            Conversion::FloatToSigned { bits: to.bits }
-        }
-        (Type::Float(_), Type::Integer(to)) => Conversion::FloatToUnsigned { bits: to.bits },
-        (Type::Float(Float::F32), Type::Float(Float::F64)) => Conversion::FloatWiden,
-        (Type::Float(Float::F64), Type::Float(Float::F32)) => Conversion::FloatNarrow,
-        (Type::RawPointer { .. }, Type::RawPointer { .. }) => Conversion::PointerCast,
-        _ => unreachable!("check converts no {from:?} to {to:?}"),
-    }
 }
 
 #[derive(Clone, Debug)]

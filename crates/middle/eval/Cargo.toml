@@ -1,6 +1,6 @@
 [package]
 name = "eval"
-description = "Evaluation: what operators mean on constant values, and running MIR at compile time"
+description = "Evaluation: running MIR at compile time, and what each MIR operation gives"
 version.workspace = true
 edition.workspace = true
 license-file.workspace = true
@@ -13,9 +13,6 @@ model.workspace = true
 runtime_abi.workspace = true
 rustc-hash.workspace = true
 source.workspace = true
-
-[dev-dependencies]
-llvm.workspace = true
 
 [lints]
 workspace = true

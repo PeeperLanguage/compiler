@@ -36,10 +36,11 @@ as few walks per body as possible; one owner per fact.
   installation's toolchain, never one on the PATH (2026-10-28).
 - Check builds THIR in one walk (names, types, constants together); no side
   tables over the AST. Scheduling is per declaration, on demand.
-- Constants fold in check; compile-time calls run on the MIR interpreter
-  (`eval`); both use `eval`'s operator functions, so they cannot disagree.
+- Constants fold in check (`check::fold`); compile-time calls run on the MIR
+  interpreter (`eval`); both compute with `eval::operations`, so they cannot
+  disagree.
 - Integer and float results must match LLVM bit for bit
-  (`crates/middle/eval/tests/llvm_parity.rs`).
+  (`crates/middle/check/tests/llvm_parity.rs`).
 - Loans: Rust-like, a borrow lasts to the last use of a reference holding it;
   two-phase `&mut` call arguments; per-field holders (2026-11-01).
 - Every declaration is checked, used or not, except the body of a function

@@ -22,7 +22,6 @@ use rustc_hash::FxHashMap;
 use crate::debug_info::Metadata;
 use crate::text::global;
 use crate::text::quoted;
-use crate::text::symbol;
 
 /// What a program is built for: debugging, with debug info, or release,
 /// without it.
@@ -90,7 +89,7 @@ impl<'p> Module<'p> {
     /// Adds the C `main` that starts the program at the function `main`:
     /// it gives `main`'s result as the exit code when `exit_code`, else 0.
     pub fn add_entry_point(&mut self, main: DefId, exit_code: bool) {
-        let main = global(&symbol(self.program, main));
+        let main = global(&model::program::symbol(&self.program.modules, main));
         let call = if exit_code {
             format!("  %code = call i32 {main}()\n  ret i32 %code")
         } else {

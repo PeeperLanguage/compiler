@@ -3,11 +3,10 @@
 
 use arena::Id;
 use diagnostics::Diagnostic;
-use eval::interpreter::constant_refusal;
 use model::ast;
 use model::ast::Ident;
-use model::constant::Constant;
 use model::layout::in_memory;
+use model::semantic_types::Constant;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
 use model::thir::ExprKind;
@@ -16,6 +15,7 @@ use model::thir::Stmt;
 use model::thir::Variable;
 
 use crate::builder::ThirBuilder;
+use crate::function::constant_refusal;
 
 impl ThirBuilder<'_, '_> {
     /// `let mut name: ty = value;`. The variable is declared after its value is

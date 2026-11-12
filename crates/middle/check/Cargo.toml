@@ -19,7 +19,9 @@ literal.workspace = true
 rustc-hash.workspace = true
 
 [dev-dependencies]
+llvm.workspace = true
 parser.workspace = true
+runtime_abi.workspace = true
 
 [lints]
 workspace = true

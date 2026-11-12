@@ -1,8 +1,8 @@
 //! Running a function's MIR (`model::mir`) with no backend: a
 //! constant's call (`run_function`), or a whole program (`program::run`).
 //! The run knows registers and bytes, never a type: only a constant's
-//! arguments and result are read through their types, where they cross
-//! into it. Each operation means what LLVM's does, as the program compiled
+//! arguments and result are read through their shapes (`ConstantShape`),
+//! which the caller gives, where they cross into it. Each operation means what LLVM's does, as the program compiled
 //! would compute it.
 //!
 //! Memory (`memory::Memory`) is bytes laid out as the MIR says, so
@@ -40,9 +40,6 @@ use model::mir::Signature;
 use model::mir::Slot;
 use model::mir::Terminator;
 use model::mir::constant_value;
-use model::semantic_types::Type;
-use model::semantic_types::TypeId;
-use model::semantic_types::Types;
 use rustc_hash::FxHashMap;
 use source::Span;
 
@@ -76,21 +73,26 @@ const REGISTER_LIMIT: usize = 1 << 20;
 const INVALID_ACCESS: &str = "this reads or writes memory the program does not own";
 
 /// Why a constant's run stops where it would read an address, not only use one.
-const ADDRESS_NOT_KNOWN: &str = "an address is known only when the program runs";
+pub const ADDRESS_NOT_KNOWN: &str = "an address is known only when the program runs";
 
 const OUT_OF_STACK: &str = "this ran out of stack";
 
-/// Why a constant cannot hold a value of the type `ty`.
-pub fn constant_refusal(ty: &Type) -> &'static str {
-    match ty {
-        Type::Struct { .. } => "a constant cannot hold a struct yet",
-        Type::Array { .. } => "a constant cannot hold an array yet",
-        Type::Range { .. } => "a constant cannot hold a range yet",
-        _ if ty.borrows() == Some(true) => {
-            "a constant cannot hold a mutable reference, as all its uses would share one value"
-        }
-        _ => ADDRESS_NOT_KNOWN,
-    }
+/// How a constant of a type sits in a register or in memory: what a run
+/// needs to know of an argument's or a result's type.
+#[derive(Clone, Copy, Debug)]
+pub enum ConstantShape {
+    Bool,
+    Integer {
+        bits: u32,
+        signed: bool,
+    },
+    Float(Class),
+    /// A raw pointer, whose only constant is `none`.
+    RawPointer,
+    CString,
+    Str,
+    /// No constant has this type, for the reason given.
+    Refused(&'static str),
 }
 
 /// Why a function could not run at compile time, at `span` in the body of
@@ -125,25 +127,18 @@ const FUNCTIONS_START: u64 = 1 << 31;
 /// How far apart two functions' addresses are.
 const FUNCTION_STRIDE: u64 = 16;
 
-/// What `function`, of the function type `ty` (of `types`) and whose MIR
-/// is `body`, returns for `arguments`, for `target`: `None` for a function
-/// without a result. A function it calls has the MIR `mir_of` gives, if
-/// any.
+/// What `function`, whose MIR is `body`, returns for `arguments`, each a
+/// value with the shape of its parameter's type, for `target`: `None` for a
+/// function without a result, which has the shape `result` otherwise. A
+/// function it calls has the MIR `mir_of` gives, if any.
 pub fn run_function<'b>(
     function: DefId,
     body: &'b Body,
-    arguments: &[Value],
-    ty: TypeId,
-    types: &Types,
+    arguments: &[(&Value, ConstantShape)],
+    result: ConstantShape,
     target: &Machine,
     mir_of: &dyn Fn(FunctionCopy) -> Option<&'b Body>,
 ) -> Result<Option<Value>, Failure> {
-    let Type::Function {
-        parameters, result, ..
-    } = &types[ty]
-    else {
-        unreachable!("a body is a function's")
-    };
     let mut run = Interpreter::new(target, mir_of, Memory::for_constant());
     let span = body.blocks.span(Id::from_index(0));
     let failed = |message: &str| Failure::Stopped {
@@ -163,8 +158,8 @@ pub fn run_function<'b>(
         _ => None,
     };
     let passings = body.signature.parameters.iter();
-    for ((argument, &passing), &parameter) in arguments.iter().zip(passings).zip(parameters) {
-        let register = run.register_of(argument, passing, &types[parameter]);
+    for (&(argument, shape), &passing) in arguments.iter().zip(passings) {
+        let register = run.register_of(argument, passing, shape);
         let register = register.ok_or_else(|| failed(OUT_OF_STACK))?;
         run.registers.push(register);
     }
@@ -177,7 +172,7 @@ pub fn run_function<'b>(
         (Some(value), None) => value,
         (None, None) => return Ok(None),
     };
-    run.constant_of(value, &types[*result])
+    run.constant_of(value, result)
         .map(Some)
         .map_err(|message| Failure::Stopped {
             message: message.to_owned(),
@@ -645,19 +640,24 @@ impl<'b, 'f> Interpreter<'b, 'f> {
         Ok(start)
     }
 
-    /// The register `value`, of the type `ty`, is, passed as `passing`:
+    /// The register `value`, of the shape `shape`, is, passed as `passing`:
     /// `None` when a value kept in memory finds no room.
-    fn register_of(&mut self, value: &Value, passing: Passing, ty: &Type) -> Option<u128> {
+    fn register_of(
+        &mut self,
+        value: &Value,
+        passing: Passing,
+        shape: ConstantShape,
+    ) -> Option<u128> {
         let pointer = self.target.pointer_bytes() as usize;
         Some(match (value, passing) {
             (Value::Bool(value), _) => u128::from(*value),
             // Extended to its class, as its type's values are kept.
             (Value::Integer(limbs), Passing::Register { class, .. }) => {
-                let &Type::Integer(integer) = ty else {
+                let ConstantShape::Integer { bits, signed } = shape else {
                     unreachable!("an integer constant has an integer type")
                 };
                 let to = class.bits();
-                let extended = bigint::extend(integer.bits, integer.signed, limbs, to);
+                let extended = bigint::extend(bits, signed, limbs, to);
                 // Its register is the next one pushed.
                 let value = RegisterValue::of_limbs(to, Cow::Owned(extended));
                 self.hold(self.registers.len(), value)
@@ -683,9 +683,9 @@ impl<'b, 'f> Interpreter<'b, 'f> {
         })
     }
 
-    /// The constant of the type `ty` the run gave in `value`: an address
+    /// The constant of the shape `shape` the run gave in `bits`: an address
     /// for a value kept in memory. `Err` says why it cannot be one.
-    fn constant_of(&self, bits: u128, ty: &Type) -> Result<Value, &'static str> {
+    fn constant_of(&self, bits: u128, shape: ConstantShape) -> Result<Value, &'static str> {
         let pointer = self.target.pointer_bytes();
         let word = |at: u64| -> Result<u64, &'static str> {
             let bytes = self.memory.bytes(at, pointer);
@@ -694,26 +694,27 @@ impl<'b, 'f> Interpreter<'b, 'f> {
             word[..pointer as usize].copy_from_slice(bytes);
             Ok(u64::from_le_bytes(word))
         };
-        Ok(match ty {
-            Type::Bool => Value::Bool(bits != 0),
-            Type::Integer(integer) => match Class::integer(integer.bits) {
+        Ok(match shape {
+            ConstantShape::Bool => Value::Bool(bits != 0),
+            ConstantShape::Integer { bits: width, .. } => match Class::integer(width) {
                 Class::Wide(_) => Value::Integer(self.wides[bits as usize].clone()),
-                _ => Value::Integer(RegisterValue::Narrow(bits).limbs(integer.bits).into_owned()),
+                _ => Value::Integer(RegisterValue::Narrow(bits).limbs(width).into_owned()),
             },
-            &Type::Float(float) => {
-                Value::Float(operations::float_value(Class::float(float), bits).to_bits())
+            ConstantShape::Float(class) => {
+                Value::Float(operations::float_value(class, bits).to_bits())
             }
-            Type::RawPointer { .. } if bits == 0 => Value::Null,
-            Type::CString => match self.memory.c_text(bits as u64) {
+            ConstantShape::RawPointer if bits == 0 => Value::Null,
+            ConstantShape::RawPointer => return Err(ADDRESS_NOT_KNOWN),
+            ConstantShape::CString => match self.memory.c_text(bits as u64) {
                 Some(text) => Value::Bytes(text.into()),
                 None => return Err(INVALID_ACCESS),
             },
-            Type::Str => {
+            ConstantShape::Str => {
                 let (address, length) = (word(bits as u64)?, word(bits as u64 + pointer)?);
                 let text = self.memory.bytes(address, length);
                 Value::Bytes(text.ok_or(INVALID_ACCESS)?.into())
             }
-            ty => return Err(constant_refusal(ty)),
+            ConstantShape::Refused(message) => return Err(message),
         })
     }
 }

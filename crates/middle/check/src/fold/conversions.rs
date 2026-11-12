@@ -4,11 +4,11 @@ use std::borrow::Cow;
 
 use model::constant::Value;
 use model::mir::Class;
-use model::mir::cast_conversion;
 use model::semantic_types::Type;
 
-use crate::operations;
-use crate::operations::RegisterValue;
+use eval::operations;
+use eval::operations::RegisterValue;
+use lower::arithmetic::cast_conversion;
 
 /// `value` of the type `from` as a value of the type `to`, which it converts
 /// to (`Types::conversion`), as LLVM converts it: a wider integer keeps the
@@ -29,10 +29,7 @@ pub fn convert(from: &Type, to: &Type, value: &Value) -> Value {
             let Type::Float(from) = *from else {
                 unreachable!("a float value has a float type")
             };
-            RegisterValue::Narrow(operations::float_bits(
-                Class::float(from),
-                f64::from_bits(bits),
-            ))
+            RegisterValue::Narrow(operations::float_bits(from.class(), f64::from_bits(bits)))
         }
         // The only constant pointer is `none`, null as every pointer type.
         Value::Null => return Value::Null,
@@ -60,7 +57,7 @@ pub fn convert(from: &Type, to: &Type, value: &Value) -> Value {
 fn number(ty: &Type) -> (Class, u32) {
     match *ty {
         Type::Integer(integer) => (Class::integer(integer.bits), integer.bits),
-        Type::Float(float) => (Class::float(float), Class::float(float).bits()),
+        Type::Float(float) => (float.class(), float.class().bits()),
         Type::Bool => (Class::I8, 1),
         _ => unreachable!("check converts {ty:?} only to and from a raw pointer"),
     }

@@ -1,8 +1,8 @@
 //! What each MIR operation gives on the values registers hold: the one
 //! meaning of Peeper's arithmetic, comparisons and conversions. The
 //! interpreter runs instructions with it (`interpreter`), and check folds
-//! constant operators with it (`operators`, `conversions`), at the type's
-//! own width; LLVM must compute the same (tests/llvm_parity.rs).
+//! constant operators with it (`check::fold`), at the type's own width;
+//! LLVM must compute the same (check's tests/llvm_parity.rs).
 //!
 //! An integer of up to 128 bits is worked on in a `u128` cut to `bits`, a
 //! wider one with `bigint`; a float in its own precision, as LLVM's
@@ -22,14 +22,14 @@ use runtime_abi::messages::shift_count_message;
 
 /// What a register holds: up to 128 bits (an integer, a float's bits or an
 /// address), or the limbs of an integer wider than that.
-pub(crate) enum RegisterValue<'l> {
+pub enum RegisterValue<'l> {
     Narrow(u128),
     Wide(Cow<'l, Limbs>),
 }
 
 impl<'l> RegisterValue<'l> {
     /// The register of `limbs`, an integer of `bits` bits.
-    pub(crate) fn of_limbs(bits: u32, limbs: Cow<'l, Limbs>) -> RegisterValue<'l> {
+    pub fn of_limbs(bits: u32, limbs: Cow<'l, Limbs>) -> RegisterValue<'l> {
         if bits > 128 {
             return RegisterValue::Wide(limbs);
         }
@@ -38,7 +38,7 @@ impl<'l> RegisterValue<'l> {
     }
 
     /// The integer of `bits` bits it holds, in limbs.
-    pub(crate) fn limbs(&self, bits: u32) -> Cow<'_, Limbs> {
+    pub fn limbs(&self, bits: u32) -> Cow<'_, Limbs> {
         match self {
             RegisterValue::Narrow(value) => {
                 Cow::Owned(Limbs::new(bits, &[*value as u64, (*value >> 64) as u64]))
@@ -48,7 +48,7 @@ impl<'l> RegisterValue<'l> {
     }
 
     /// The value of up to 128 bits it holds.
-    pub(crate) fn narrow(&self) -> u128 {
+    pub fn narrow(&self) -> u128 {
         match self {
             RegisterValue::Narrow(value) => *value,
             RegisterValue::Wide(_) => unreachable!("a wide value is an integer past 128 bits"),
@@ -59,7 +59,7 @@ impl<'l> RegisterValue<'l> {
 /// `left operation right` on integers of `bits` bits, wrapping there; the
 /// lowest signed value over -1 wraps to itself. `Err` when it traps: a
 /// divisor of zero, or a shift count not below `bits`.
-pub(crate) fn integer(
+pub fn integer(
     operation: IntegerOp,
     bits: u32,
     left: &RegisterValue,
@@ -77,7 +77,7 @@ pub(crate) fn integer(
 
 /// Whether `left` and `right`, of `class` and `bits` bits, compare as
 /// `comparison` says.
-pub(crate) fn compare(
+pub fn compare(
     comparison: Comparison,
     class: Class,
     bits: u32,
@@ -96,7 +96,7 @@ pub(crate) fn compare(
 /// float goes to an integer toward zero, to the nearest end of its range
 /// when outside it, and NaN to 0, as Rust's `as` does at each width; it is
 /// saturated at the integer's own width, which may be below its class's.
-pub(crate) fn convert(
+pub fn convert(
     conversion: Conversion,
     from: Class,
     from_bits: u32,
@@ -235,7 +235,7 @@ fn wide_integer(
 
 /// The float of `class` whose bits a register holds, as an `f64`, which
 /// holds an `f32` exactly.
-pub(crate) fn float_value(class: Class, bits: u128) -> f64 {
+pub fn float_value(class: Class, bits: u128) -> f64 {
     match class {
         Class::F32 => f64::from(f32::from_bits(bits as u32)),
         _ => f64::from_bits(bits as u64),
@@ -243,7 +243,7 @@ pub(crate) fn float_value(class: Class, bits: u128) -> f64 {
 }
 
 /// The bits of `value` as a float of `class`, rounded to it.
-pub(crate) fn float_bits(class: Class, value: f64) -> u128 {
+pub fn float_bits(class: Class, value: f64) -> u128 {
     match class {
         Class::F32 => u128::from((value as f32).to_bits()),
         _ => u128::from(value.to_bits()),
@@ -252,7 +252,7 @@ pub(crate) fn float_bits(class: Class, value: f64) -> u128 {
 
 /// `left operation right` on floats of `class`, each in its own
 /// precision. Which NaN one gives is not specified, as in LLVM.
-pub(crate) fn float(operation: FloatOp, class: Class, left: u128, right: u128) -> u128 {
+pub fn float(operation: FloatOp, class: Class, left: u128, right: u128) -> u128 {
     fn apply<
         F: std::ops::Add<Output = F>
             + std::ops::Sub<Output = F>

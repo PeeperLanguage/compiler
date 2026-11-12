@@ -58,7 +58,16 @@ fn program_ll(text: &str, target: &str) -> HashMap<String, String> {
                             checked.module,
                             checked.function,
                             checked.mir.unwrap(),
-                            checked.types,
+                            |copy| {
+                                model::program::copy_symbol(&program.modules, checked.types, copy)
+                            },
+                            || {
+                                model::program::copy_name(
+                                    &program.modules,
+                                    checked.types,
+                                    checked.function,
+                                )
+                            },
                             checked.debug_types,
                         );
                     }

@@ -5,6 +5,7 @@
 //! it names one.
 
 mod aggregates;
+pub mod arithmetic;
 mod c_abi;
 mod expression;
 mod print;
@@ -51,7 +52,16 @@ use model::semantic_types::TypeId;
 use model::semantic_types::Types;
 use model::semantic_types::range_fields;
 use model::thir;
+use rustc_hash::FxHashMap;
 use source::Span;
+
+/// The debug types made so far for the program's bodies, and the language
+/// type each was made for, so each is made once.
+#[derive(Default)]
+pub struct ProgramDebugTypes {
+    pub table: DebugTypes,
+    of_type: FxHashMap<TypeId, DebugTypeId>,
+}
 
 /// The MIR of the checked body `body` of a function of the type
 /// `function`, for `target`. `None` when checking it reported an error
@@ -63,7 +73,7 @@ pub fn lower(
     types: &Types,
     target: &'static Machine,
     modules: &[Module],
-    debug_types: &mut DebugTypes,
+    debug_types: &mut ProgramDebugTypes,
 ) -> Option<Body> {
     if body.has_errors {
         return None;
@@ -186,7 +196,7 @@ struct Lowering<'t> {
     types: &'t Types,
     target: &'static Machine,
     modules: &'t [Module],
-    debug_types: &'t mut DebugTypes,
+    debug_types: &'t mut ProgramDebugTypes,
     mir: Body,
     block: Id<Block>,              // the block being filled
     instructions: Vec<NonZeroU32>, // that block's instructions so far
@@ -516,7 +526,7 @@ impl Lowering<'_> {
         match self.types[ty] {
             Type::Bool => Some(Class::I8),
             Type::Integer(integer) => Some(Class::integer(integer.bits)),
-            Type::Float(float) => Some(Class::float(float)),
+            Type::Float(float) => Some(float.class()),
             Type::CString | Type::Reference { .. } | Type::RawPointer { .. } => {
                 Some(Class::Pointer)
             }
@@ -625,7 +635,7 @@ impl Lowering<'_> {
     /// result has.
     fn debug_type(&mut self, ty: TypeId, depth: u32) -> DebugTypeId {
         let ty = self.types.real(ty);
-        if let Some(id) = self.debug_types.of_type(ty) {
+        if let Some(&id) = self.debug_types.of_type.get(&ty) {
             return id;
         }
         let pointer_bits = self.target.pointer_bits;
@@ -649,6 +659,7 @@ impl Lowering<'_> {
             Type::CString => {
                 let char = self
                     .debug_types
+                    .table
                     .push(basic("char", 8, "DW_ATE_signed_char"));
                 DebugType::Pointer {
                     name: "cstr".into(),
@@ -688,9 +699,9 @@ impl Lowering<'_> {
                     name: "".into(),
                     to: base,
                 };
-                let pointer = self.debug_types.push(pointer);
+                let pointer = self.debug_types.table.push(pointer);
                 let usize = basic("usize", pointer_bits, "DW_ATE_unsigned");
-                let usize = self.debug_types.push(usize);
+                let usize = self.debug_types.table.push(usize);
                 let pointer_bytes = self.target.pointer_bytes();
                 let members = [
                     DebugMember {
@@ -717,7 +728,7 @@ impl Lowering<'_> {
                     name: "".into(),
                     to: None,
                 };
-                let pointer = self.debug_types.push(pointer);
+                let pointer = self.debug_types.table.push(pointer);
                 let pointer_bytes = self.target.pointer_bytes();
                 let members = [
                     DebugMember {
@@ -774,7 +785,9 @@ impl Lowering<'_> {
             }
             Type::Alias { .. } => unreachable!("indexing looks through aliases"),
         };
-        self.debug_types.add(ty, debug_type)
+        let id = self.debug_types.table.push(debug_type);
+        self.debug_types.of_type.insert(ty, id);
+        id
     }
 
     /// The debug type of the struct `name`, of type `ty`, with `fields`:
@@ -787,7 +800,8 @@ impl Lowering<'_> {
         fields: &[(String, TypeId)],
         depth: u32,
     ) -> DebugTypeId {
-        let composite = self.debug_types.reserve(ty);
+        let composite = self.debug_types.table.reserve();
+        self.debug_types.of_type.insert(ty, composite);
         let (size, _) = layout(self.types, ty, self.target);
         let mut members = Vec::with_capacity(fields.len());
         if depth < DEEPEST_DEBUG_TYPE {
@@ -807,7 +821,7 @@ impl Lowering<'_> {
             size,
             members: members.into(),
         };
-        self.debug_types.define(composite, debug_type);
+        self.debug_types.table.define(composite, debug_type);
         composite
     }
 

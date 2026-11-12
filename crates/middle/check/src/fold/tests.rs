@@ -9,10 +9,10 @@ use model::semantic_types::Type;
 use runtime_abi::messages::DIVISION_BY_ZERO;
 use runtime_abi::messages::shift_count_message;
 
-use crate::conversions::convert;
-use crate::operators::binary;
-use crate::operators::known_trap;
-use crate::operators::unary;
+use super::conversions::convert;
+use super::operators::binary;
+use super::operators::known_trap;
+use super::operators::unary;
 
 fn int(signed: bool, bits: u32) -> Type {
     Type::Integer(Integer { signed, bits })
@@ -194,6 +194,16 @@ fn floats_compute_in_their_own_precision() {
         unary(UnaryOp::Negate, &f32, &float(&f32, 0.0)),
         float(&f32, -0.0)
     );
+    // Negating flips the sign, a NaN's too, so `NAN` and `-NAN` are two
+    // values (x_test/run_const_parameters makes a copy for each).
+    for (ty, nan) in [(&f32, f64::from(f32::NAN)), (&f64, f64::NAN)] {
+        for nan in [nan, -nan] {
+            assert_eq!(
+                unary(UnaryOp::Negate, ty, &Value::Float(nan.to_bits())),
+                Value::Float((-nan).to_bits())
+            );
+        }
+    }
 }
 
 #[test]

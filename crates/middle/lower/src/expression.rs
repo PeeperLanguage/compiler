@@ -4,10 +4,10 @@
 use arena::Id;
 use bigint::Limbs;
 use model::Callee;
+use model::ConstArguments;
 use model::FunctionCopy;
 use model::constant::Value as Constant;
 use model::layout::layout;
-use model::mir::BinaryOperation;
 use model::mir::Callee as MirCallee;
 use model::mir::Class;
 use model::mir::Comparison;
@@ -24,11 +24,8 @@ use model::mir::Root;
 use model::mir::SLICE_WORDS;
 use model::mir::Signature;
 use model::mir::Step;
-use model::mir::binary_operation;
-use model::mir::cast_conversion;
 use model::operators::BinaryOp;
 use model::operators::UnaryOp;
-use model::semantic_types::ConstArguments;
 use model::semantic_types::Float;
 use model::semantic_types::ImplementationId;
 use model::semantic_types::Integer;
@@ -43,6 +40,9 @@ use source::Span;
 
 use crate::Lowering;
 use crate::Value;
+use crate::arithmetic::BinaryOperation;
+use crate::arithmetic::binary_operation;
+use crate::arithmetic::cast_conversion;
 use crate::c_abi::c_signature;
 use crate::slot_of;
 
@@ -676,7 +676,7 @@ impl Lowering<'_> {
                 self.arithmetic(IntegerOp::Subtract, integer, zero, operand, span)
             }
             (UnaryOp::Negate, &Type::Float(float)) => {
-                let class = Class::float(float);
+                let class = float.class();
                 // From -0.0, so that -(0.0) is -0.0 and -(-0.0) is 0.0.
                 let sign = if float == Float::F32 {
                     1 << 31

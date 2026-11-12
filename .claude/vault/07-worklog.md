@@ -796,3 +796,61 @@
   T0004). No other finding; the "gone"-after-return skip is the one special
   case, and its reason is in its comment. Note: `unset.len` of an unset
   array compiles on purpose (run_array_length "unset: 7").
+- Step 17 draft (2026-11-13, Fuad: "write the step 17 design page"):
+  docs/feature-front.md, not committed, waits for review. Measured on
+  745b61ce with target/step12-probes/front/*.py: ranges span 17 files in
+  5 crates; 68 functions match two or more features' types; 17 functions
+  match six or more kinds of one node enum; the parser is already
+  table-driven by token. Proposes: features meet only through core
+  concepts (number, elements, members, view, and the per-type facts);
+  the four middle leaks first (18a); node representation A (handle and
+  trait object) or B (generic core, features listed in a top crate), lean
+  B; six open questions.
+- Step 18a (2026-11-13, Fuad: "start the work"; not committed): nothing
+  after lowering names `semantic_types` or `thir` now. Five leaks moved:
+  (1) copy symbols and debugger names: `model::program::symbol`,
+  `copy_symbol`, `copy_name` (now also the one spelling of a copy's name for
+  check's messages and the dumps), called by the driver and passed to
+  `FunctionQueue::add` as closures; the queue holds no `Program`.
+  (2) the constant run's typing: eval's `ConstantShape` (Bool, Integer,
+  Float, RawPointer, CString, Str, Refused(reason)), built by
+  `Checker::evaluate_call`; `constant_refusal` moved to check/function.rs.
+  (3) the folder (`operators.rs`, `conversions.rs`, their tests,
+  tests/llvm_parity.rs) moved to `check::fold`; the arithmetic stays in
+  `eval::operations`, now public (owner 2026-10-26 "move them to eval"
+  still holds for it). (4) `binary_operation`, `cast_conversion`,
+  `BinaryOperation` moved to `lower::arithmetic`. (5) found while doing it:
+  `mir::DebugTypes` kept a map from `TypeId`; the map is now lowering's
+  (`lower::ProgramDebugTypes`), the MIR's table is read by id only.
+  `Class::float` became `Float::class` (front type knows its core class,
+  not the other way). check.sh gained "middle boundary" (a grep; planted
+  import made it fail). The "no feature crate names another" check waits
+  for the first feature crate (it cannot fail with none).
+  Found by the byte-identical gate: `-NAN` folded to `NAN`'s bits once the
+  folder called `eval::operations::float` across a crate (no inlining);
+  before, rustc inlined `-0.0 - x` and LLVM turned it into a sign flip, so
+  the folded value depended on the host compiler's optimizer.
+  run_const_parameters lost its second `Same` copy. Float `Negate` now
+  folds as a sign flip (unit test fails without it). Gate after the fix:
+  every fixture, native and i686, `check -dump` output, exit code, THIR,
+  MIR and debug LLVM IR byte-identical to 745b61ce (2,501 files,
+  target/step12-probes/front/leaks/compare.sh).
+  /simplify (four reviews): `copy_name` shared by check, the dumps and
+  debug info; the three helpers take `modules`; stale docs fixed; the
+  boundary grep narrowed to `model::thir` and marked a shortcut, as
+  `model` still carries the checker's types to eval, flow and llvm
+  (`FunctionCopy::arguments`, `machine.rs`, `constant.rs`) and llvm reads
+  the syntax tree through `Program`: the crate split (section 9) is the
+  real check. Left for Fuad: a MIR float negate so lowering, the
+  interpreter and the folder flip a NaN's sign alike.
+  Then (Fuad: "continue") the model core: `mir`, `machine`, `constant` and
+  the ids in `lib.rs` reached the checker's types, so `ConstArguments`
+  moved to `lib.rs`, `Integer::MAX_BITS` to `machine::MAX_INTEGER_BITS`,
+  `Constant` and `value_text` to `semantic_types`. The core files now name
+  no front module. "middle boundary" checks four things (core files,
+  `lib.rs` imports, flow and eval, llvm); each fails on a planted line.
+  Left: llvm reads the syntax tree through `Program` (file, declared name,
+  entry symbol), with the syntax tree's move (section 9).
+  `run_function` took `arguments` and `parameters` as two lists in step;
+  now one list of `(&Value, ConstantShape)` (Fuad: "do A"; RULES.md 5.1,
+  one record per thing).

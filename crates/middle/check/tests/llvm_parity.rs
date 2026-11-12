@@ -1,19 +1,20 @@
-//! `eval` must give the values LLVM computes at run time, for every
+//! Check's folder (`check::fold`, computing with `eval::operations`) must
+//! give the values LLVM computes at run time, for every
 //! integer width and both float precisions. This test runs thousands of
-//! operations both ways: `eval` computes them, `lli` runs them on values it cannot
+//! operations both ways: the folder computes them, `lli` runs them on values it cannot
 //! fold (volatile loads), and the bits must match; a NaN matches any NaN, as
 //! LLVM does not specify which NaN an operation gives. Cases the runtime traps
 //! on (division by zero, out-of-range shifts) are left out; the unit tests in
-//! src/tests.rs cover them. `MIN / -1` runs through the backend's guard.
+//! src/fold/tests.rs cover them. `MIN / -1` runs through the backend's guard.
 //!
 //! Each binary operator becomes the MIR operation lowering makes of it
-//! (`model::mir::binary_operation`), written with the instruction
+//! (`lower::arithmetic::binary_operation`), written with the instruction
 //! the backend writes for that operation (`integer_instruction`,
 //! `comparison_instruction`, `signed_division`, `conversion_instruction`,
 //! `saturating_conversion`).
 //!
 //! Runs the `lli` of build/toolchains/native, which scripts/setup.sh puts
-//! there: `cargo test -p eval -- --ignored`; scripts/check.sh runs it. The CI pack has it; an installed
+//! there: `cargo test -p check --test llvm_parity -- --ignored`; scripts/check.sh runs it. The CI pack has it; an installed
 //! LLVM that setup.sh links in must have it too.
 
 use std::fmt::Write;
@@ -21,9 +22,9 @@ use std::path::Path;
 use std::process::Command;
 
 use bigint::Limbs;
-use eval::conversions::convert;
-use eval::operators::binary;
-use eval::operators::unary;
+use check::fold::conversions::convert;
+use check::fold::operators::binary;
+use check::fold::operators::unary;
 use llvm::body::comparison_instruction;
 use llvm::body::constant_text;
 use llvm::body::conversion_instruction;
@@ -32,12 +33,12 @@ use llvm::body::integer_instruction;
 use llvm::body::saturating_conversion;
 use llvm::body::signed_division;
 use llvm::link::TOOLCHAIN_FOLDER;
+use lower::arithmetic::BinaryOperation;
+use lower::arithmetic::binary_operation;
+use lower::arithmetic::cast_conversion;
 use model::constant::Value;
-use model::mir::BinaryOperation;
 use model::mir::Class;
 use model::mir::IntegerOp;
-use model::mir::binary_operation;
-use model::mir::cast_conversion;
 use model::operators::BinaryOp;
 use model::operators::UnaryOp;
 use model::semantic_types::Float;
@@ -534,7 +535,7 @@ fn write_conversions(
                 (_, Type::Bool) | (Type::Bool, Type::Float(_)) => continue,
                 (&Type::Float(float), &Type::Integer(integer)) => {
                     let conversion = cast_conversion(from, to);
-                    let (intrinsic, _) = saturating_conversion(conversion, Class::float(float));
+                    let (intrinsic, _) = saturating_conversion(conversion, float.class());
                     if declared.insert(intrinsic.clone()) {
                         writeln!(
                             declarations,

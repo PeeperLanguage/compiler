@@ -2,28 +2,22 @@
 //! two numbers.
 
 use std::fmt;
+use std::fmt::Display;
 use std::fmt::Write as _;
 use std::ops::Index;
 
 use bigint::Limbs;
 use rustc_hash::FxHashMap;
 
+use crate::ConstArguments;
 use crate::DefId;
-use crate::constant::Constant;
-use crate::constant::value_text;
+use crate::constant::Value;
+use crate::constant::integer_text;
+use crate::machine::MAX_INTEGER_BITS;
+use crate::mir::Class;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct TypeId(u32);
-
-/// What a function's `const` parameters are given, in order, by their place
-/// in `Types`'s list of them (`Types::const_arguments`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct ConstArguments(u32);
-
-impl ConstArguments {
-    /// None: the arguments of a function without `const` parameters.
-    pub const NONE: ConstArguments = ConstArguments(0);
-}
 
 /// What one `const` parameter is given: a type for `const T: type`, else a
 /// value known when compiling.
@@ -67,9 +61,6 @@ impl fmt::Display for Integer {
 }
 
 impl Integer {
-    /// The widest integer: LLVM's limit.
-    pub const MAX_BITS: u32 = 1 << 23;
-
     /// Whether the number `magnitude` (64-bit limbs, lowest first), negated
     /// when `negative`, is a value of this type: `-128` fits `i8`, `128` does
     /// not.
@@ -168,6 +159,16 @@ pub struct ArrayInternals {
 pub enum Float {
     F32,
     F64,
+}
+
+impl Float {
+    /// The register class that holds a float of this type.
+    pub fn class(self) -> Class {
+        match self {
+            Float::F32 => Class::F32,
+            Float::F64 => Class::F64,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -496,7 +497,7 @@ pub fn builtin_names() -> impl Iterator<Item = &'static str> {
 
 /// The integer type `name` stands for when it is not in `NAMED`: `isize` and
 /// `usize` (as wide as a pointer, `pointer_bits`), or `iN` and `uN` for N
-/// from 1 to `Integer::MAX_BITS`, written without leading zeros.
+/// from 1 to `machine::MAX_INTEGER_BITS`, written without leading zeros.
 fn integer_named(name: &str, pointer_bits: u32) -> Option<Integer> {
     if let Some(&(_, signed)) = POINTER_SIZED.iter().find(|(text, _)| *text == name) {
         return Some(Integer {
@@ -513,7 +514,7 @@ fn integer_named(name: &str, pointer_bits: u32) -> Option<Integer> {
     if !digits || width.starts_with('0') {
         return None; // `u`, `i8x`, `u08`
     }
-    let bits = (width.parse().ok()).filter(|&bits| bits <= Integer::MAX_BITS)?;
+    let bits = (width.parse().ok()).filter(|&bits| bits <= MAX_INTEGER_BITS)?;
     Some(Integer { signed, bits })
 }
 
@@ -751,7 +752,7 @@ impl Types {
 
     /// The built-in type `name` stands for: one in `NAMED`, `isize` and `usize`
     /// (as wide as a pointer: the `usize` this table was made with), or `iN` and `uN` for N from 1 to
-    /// `Integer::MAX_BITS`, written without leading zeros. A number literal's
+    /// `machine::MAX_INTEGER_BITS`, written without leading zeros. A number literal's
     /// suffix (`5u24`) is one of these names too.
     pub fn builtin(&mut self, name: &str) -> Option<TypeId> {
         if let Some(&(_, id)) = NAMED.iter().find(|(text, _)| *text == name) {
@@ -1045,3 +1046,49 @@ impl Index<TypeId> for Types {
 
 #[cfg(test)]
 mod tests;
+
+/// A constant's type and value.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Constant {
+    pub ty: TypeId,
+    pub value: Value,
+}
+
+/// `value`, of the type `ty`, as Peeper text: an integer in decimal, read
+/// through its type's sign, when 128 bits hold it, else every limb in hex
+/// (`integer_text`); a float as the shortest text that reads back as it, in
+/// its own precision when it holds an `f32` exactly (a value that does not
+/// shows in full); a `&str` as a `"..."` literal, a `&cstr` as `c"..."`; `none` for the null
+/// address.
+pub fn value_text<'v>(value: &'v Value, ty: &'v Type) -> impl Display + 'v {
+    fmt::from_fn(move |out| match (value, ty) {
+        (Value::Bool(value), _) => write!(out, "{value}"),
+        (Value::Null, _) => out.write_str("none"),
+        (Value::Bytes(bytes), Type::Str) => write!(out, "\"{}\"", bytes.escape_ascii()),
+        (Value::Bytes(bytes), _) => write!(out, "c\"{}\"", bytes.escape_ascii()),
+        (Value::Float(bits), Type::Float(Float::F32))
+            if f64::from(f64::from_bits(*bits) as f32) == f64::from_bits(*bits) =>
+        {
+            write!(out, "{}", f64::from_bits(*bits) as f32)
+        }
+        (Value::Float(bits), _) => write!(out, "{}", f64::from_bits(*bits)),
+        (Value::Integer(limbs), Type::Integer(integer)) => {
+            let value = match integer.bits {
+                ..=128 => bigint::extend(integer.bits, integer.signed, limbs, 128),
+                _ => limbs.clone(),
+            };
+            let [low, high, rest @ ..] = value.as_slice() else {
+                unreachable!("an integer constant has at least two limbs")
+            };
+            let low = *low as u128 | (*high as u128) << 64;
+            if !rest.iter().all(|&limb| limb == 0) {
+                write!(out, "{}", integer_text(&value))
+            } else if integer.signed && integer.bits <= 128 {
+                write!(out, "{}", low as i128)
+            } else {
+                write!(out, "{low}")
+            }
+        }
+        (Value::Integer(_), _) => unreachable!("an integer constant has an integer type"),
+    })
+}

@@ -28,6 +28,18 @@ check "clippy" cargo clippy --workspace --all-targets -- -D warnings
 check "runtime format" rustfmt --edition 2024 --check runtime/peeper_rt.rs
 check "runtime clippy" clippy-driver --edition=2024 -Cpanic=abort --crate-type=staticlib \
     --emit=metadata --out-dir target/runtime-clippy -D warnings runtime/peeper_rt.rs
+# The phases after lowering read only the MIR of core concepts
+# (docs/feature-front.md section 8): `model`'s core files name no front
+# module, and eval, flow and llvm name only those and `program`.
+# shortcut: llvm still reads the syntax tree through `model::program`, and
+# this is a grep; replace both with the crate split of section 9, which Cargo
+# checks.
+front='semantic_types|thir|ast|program|layout|operators'
+check "middle boundary" bash -c "
+    ! grep -rnE 'crate::($front)' crates/middle/model/src/{mir,machine,constant}.rs &&
+    ! grep -nE '^use crate::' crates/middle/model/src/lib.rs &&
+    ! grep -rnE 'model::($front)' crates/middle/eval crates/middle/flow &&
+    ! grep -rnE 'model::(semantic_types|thir|ast|layout|operators)' crates/backend/llvm"
 check "tests" cargo test --workspace --no-fail-fast
 check "bundle" bash scripts/build.sh
 check "fixtures on the bundle" env PEEPER="$PWD/build/bin/peeper" \
@@ -35,7 +47,7 @@ check "fixtures on the bundle" env PEEPER="$PWD/build/bin/peeper" \
 if [ "$(uname -s)" = Linux ]; then
     # shortcut: run on Linux only, where its `lli` (calling printf from the
     # JIT) was tried; move it out of this block once CI shows it on the others.
-    check "llvm parity" cargo test -p eval --test llvm_parity -- --ignored
+    check "llvm parity" cargo test -p check --test llvm_parity -- --ignored
     check "browser build" cargo build -p browser --profile wasm --target wasm32-wasip1
     check "browser smoke" node crates/driver/browser/smoke.mjs \
         target/wasm32-wasip1/wasm/browser.wasm

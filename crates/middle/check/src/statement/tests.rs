@@ -1,7 +1,7 @@
+use model::ConstArguments;
 use model::DefId;
 use model::FunctionCopy;
 use model::ast;
-use model::semantic_types::ConstArguments;
 use model::thir::Body;
 use source::SourceFile;
 

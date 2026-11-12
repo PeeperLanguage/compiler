@@ -40,8 +40,10 @@ scheduled per declaration, on demand (Zig, Rust), not module by module.
 - **decided** LLVM IR is written as text and compiled by clang.
 - **decided** One `model` crate owns the program's data: the syntax tree, the
   THIR and MIR node types, the type model, definition ids, constant values
-  and operator kinds. What operators mean on constant values is `eval`'s
-  (owner, 2026-10-26: "move them to eval"). The crates that build them
+  and operator kinds. What each operation gives on constant values is
+  `eval`'s (`eval::operations`; owner, 2026-10-26: "move them to eval");
+  check's folder only reads a constant's type into it (`check::fold`), so
+  nothing after lowering reads the checker's types. The crates that build them
   (`parser`, `check`, `lower` and later `llvm`) hold only logic. THIR and
   MIR keep their own node types: a tree and a graph have different shapes.
   (Until 2026-10-17 this was an `ir` crate, with the tree in `ast` and THIR in
@@ -77,7 +79,7 @@ that is built once and kept.
 peeper ─► build ─► project ─► parser ─► model ─► arena
             │
             ├─► check ─► model, project, eval, lower, flow   AST -> THIR, signatures, folding; builds bodies
-            ├─► eval ──► model, runtime_abi   operators on constant values; the MIR interpreter
+            ├─► eval ──► model, runtime_abi   what each MIR operation gives; the MIR interpreter
             ├─► lower ─► model            THIR -> MIR; path checks
             └─► llvm ──► model, runtime_abi   MIR -> LLVM text; clang
 ```
@@ -89,10 +91,10 @@ enum variants, function types) are `model` data, written by check.
 | crate | owns |
 |---|---|
 | `model` | data only: `ast` (the syntax tree), `thir` (THIR nodes), `mir` (MIR graphs); `semantic_types` (`TypeId`, the type interner, the built-in types table); `constant` (constant values); `ModuleId`, `DefId`; `operators` (`BinaryOp`, `UnaryOp`); signatures |
-| `check` | the checker: scopes, name lookup, building THIR, writing signatures; the declaration tables (`Checker`) |
-| `eval` | what operators mean on constant values (`binary`, `unary`, `convert`, `known_trap`); the MIR interpreter (`interpreter::run_function` for a constant's call, `interpreter::program::run` for a whole program) |
+| `check` | the checker: scopes, name lookup, building THIR, writing signatures; the declaration tables (`Checker`); folding operators and `as` on constants (`fold`: `binary`, `unary`, `convert`, `known_trap`) |
+| `eval` | what each MIR operation gives on register values (`operations`), which folding computes with; the MIR interpreter (`interpreter::run_function` for a constant's call, `interpreter::program::run` for a whole program) |
 | `runtime_abi` | what a running program does as seen from outside, shared by `llvm` and `eval`: streams and the exit code, runtime function names, panic messages, number text. The two `runtime/` files the runtime library needs too are read from there by `#[path]`, as that library is built with no crates |
-| `lower` | lowering from THIR; path checks |
+| `lower` | lowering from THIR; the MIR operation of each operator and `as` (`arithmetic`) |
 | `llvm` | LLVM text for a module; running clang and the linker |
 | `compile` | a compile: walks the modules in order, reuses unchanged ones, lowers each body (the `build` of `overall-design.md`, renamed) |
 
@@ -219,7 +221,7 @@ computed differed (issues #154, #155, PR #158). The rules that prevent them:
    width; the Go guard wrote the width as a constant of the count's type, so a
    `u2` count compared against 8 cut to 0.
 5. **Constants are written from the same bits** (`iN u0x...`), and
-   `crates/middle/eval/tests/llvm_parity.rs` runs every operator on widths 1
+   `crates/middle/check/tests/llvm_parity.rs` runs every operator on widths 1
    to 1000 in `lli` and in `model` and requires equal bits.
 
 Floats (`f32`, `f64`) follow the same idea:
@@ -872,7 +874,7 @@ entry and no `main`, and `build`, `run` and `-interpret` refuse it;
   even; a float becomes an integer cut toward zero, saturated at the ends
   of its range, NaN as 0 (Rust's rule, as LLVM's plain `fptosi` gives
   poison there). Folding and LLVM agree for every width
-  (`crates/middle/eval/tests/llvm_parity.rs`): `llvm` writes LLVM's own
+  (`crates/middle/check/tests/llvm_parity.rs`): `llvm` writes LLVM's own
   `sitofp`/`uitofp` and `llvm.fpto{s,u}i.sat`, which need LLVM 23 or newer
   above 128 bits (LLVM 22 crashes on the one and gives a wrong finite float
   for the other, llvm/llvm-project#189054), so the bundled toolchain is LLVM

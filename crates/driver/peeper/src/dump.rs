@@ -66,9 +66,7 @@ impl<'p> Dumps<'p> {
     ) {
         let modules = &self.program.modules;
         let name = |definition: DefId| model::program::declared_path(modules, definition);
-        let declared = |definition| model::program::declared_text(modules, definition);
-        let copy_name =
-            |copy: FunctionCopy| types.copy_text(name(copy.definition), copy.arguments, declared);
+        let copy_name = |copy| model::program::copy_name(modules, types, copy);
         let module = function.definition.module.index();
         let file = &modules[module].ast.file;
         let texts = &mut self.texts[module];

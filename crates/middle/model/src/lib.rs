@@ -14,8 +14,6 @@ pub mod program;
 pub mod semantic_types;
 pub mod thir;
 
-use crate::semantic_types::ConstArguments;
-
 /// A module of the program, by its place in the program's order. Tables of
 /// per-module results are vectors indexed by it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -42,6 +40,16 @@ impl ModuleId {
 pub struct DefId {
     pub module: ModuleId,
     pub index: u32,
+}
+
+/// What a function's `const` parameters are given, in order, by their place
+/// in `Types`'s list of them (`Types::const_arguments`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct ConstArguments(pub(crate) u32);
+
+impl ConstArguments {
+    /// None: the arguments of a function without `const` parameters.
+    pub const NONE: ConstArguments = ConstArguments(0);
 }
 
 /// A function as a call names it: its declaration, and what its `const`

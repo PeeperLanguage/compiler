@@ -12,29 +12,26 @@ use model::ModuleId;
 use model::machine::Machine;
 use model::mir;
 use model::mir::DebugTypes;
-use model::semantic_types::Types;
 use rustc_hash::FxHashMap;
 
 use crate::BuildMode;
 use crate::Module;
 use crate::body::Defined;
-use crate::text::copy_symbol;
 
 /// One module's functions, with the symbol of each function they define or
 /// name and, in a debug build, the debug types they name.
 struct Batch {
     module: ModuleId,
     functions: Vec<Defined>,
-    /// Made here, not by a worker: a copy's symbol names its `const`
-    /// arguments, which only the program's types tell.
+    /// Made on the compile's thread, not by a worker: a copy's symbol names
+    /// its `const` arguments, which only the program's types tell.
     symbols: FxHashMap<FunctionCopy, String>,
     debug_types: DebugTypes,
 }
 
 /// Where a compile puts each function it checked, to be written in its
 /// module's LLVM text.
-pub struct FunctionQueue<'p> {
-    program: &'p model::program::Program,
+pub struct FunctionQueue {
     mode: BuildMode,
     /// The module whose functions are coming, `None` before the first, and
     /// those so far, with the symbols they need (`Batch`).
@@ -48,10 +45,11 @@ pub struct FunctionQueue<'p> {
     debug_types: DebugTypes,
 }
 
-impl FunctionQueue<'_> {
+impl FunctionQueue {
     /// Adds the function `copy`, whose MIR is `body`, to the LLVM module of
     /// `module`, the module whose compile built it: its own, or the first
-    /// to call a copy of another module's function. `types` and
+    /// to call a copy of another module's function. `symbol_of` names a
+    /// copy for the linker, and `shown_name` names this one for a debugger;
     /// `debug_types` are the program's so far. A program's functions come
     /// module by module, so a function of another module sends the one
     /// before to a worker.
@@ -60,7 +58,8 @@ impl FunctionQueue<'_> {
         module: ModuleId,
         copy: FunctionCopy,
         body: mir::Body,
-        types: &Types,
+        symbol_of: impl Fn(FunctionCopy) -> String,
+        shown_name: impl FnOnce() -> String,
         debug_types: &DebugTypes,
     ) {
         if self.module != Some(module) {
@@ -71,22 +70,16 @@ impl FunctionQueue<'_> {
             );
             self.module = Some(module);
         }
-        let program = self.program;
         let symbols = &mut self.symbols;
         let mut name = |copy: FunctionCopy| {
-            symbols
-                .entry(copy)
-                .or_insert_with(|| copy_symbol(program, types, copy));
+            symbols.entry(copy).or_insert_with(|| symbol_of(copy));
         };
         name(copy);
         body.named_functions().for_each(name);
         let shown_name = match self.mode {
             BuildMode::Debug => {
                 self.debug_types.copy_new(debug_types);
-                let modules = &program.modules;
-                let declared = model::program::declared_path(modules, copy.definition);
-                let name_of = |definition| model::program::declared_text(modules, definition);
-                types.copy_text(declared, copy.arguments, name_of)
+                shown_name()
             }
             BuildMode::Release => String::new(),
         };
@@ -122,7 +115,7 @@ pub fn write_modules<'p, T>(
     program: &'p model::program::Program,
     target: &'static Machine,
     mode: BuildMode,
-    compile: impl FnOnce(&mut FunctionQueue<'p>) -> T,
+    compile: impl FnOnce(&mut FunctionQueue) -> T,
 ) -> (Vec<Module<'p>>, T) {
     let (sender, receiver) = mpsc::channel::<Batch>();
     let receiver = Mutex::new(receiver);
@@ -149,7 +142,6 @@ pub fn write_modules<'p, T>(
             })
             .collect(); // every worker starts before any is waited for
         let mut queue = FunctionQueue {
-            program,
             mode,
             module: None,
             functions: Vec::new(),

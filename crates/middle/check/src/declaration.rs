@@ -4,15 +4,15 @@
 
 use arena::Id;
 use diagnostics::Diagnostic;
+use model::ConstArguments;
 use model::DefId;
 use model::ast;
-use model::constant::Constant;
 use model::layout::layout;
 use model::layout::struct_layout;
 use model::program::EXTERN_ATTRIBUTE;
 use model::semantic_types;
 use model::semantic_types::ConstArgument;
-use model::semantic_types::ConstArguments;
+use model::semantic_types::Constant;
 use model::semantic_types::ImplementationId;
 use model::semantic_types::Integer;
 use model::semantic_types::Type;

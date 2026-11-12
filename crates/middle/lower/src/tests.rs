@@ -4,6 +4,7 @@
 use std::sync::Arc;
 
 use check::Checker;
+use model::ConstArguments;
 use model::DefId;
 use model::FunctionCopy;
 use model::ModuleId;
@@ -12,7 +13,6 @@ use model::machine::Machine;
 use model::mir;
 use model::mir::DebugType;
 use model::mir::DebugTypes;
-use model::semantic_types::ConstArguments;
 use model::thir;
 use runtime_abi::symbols::Runtime;
 use source::SourceFile;
@@ -62,7 +62,7 @@ fn lower_main(text: &str, target: &str) -> (String, mir::Body, DebugTypes) {
         .map(|diagnostic| diagnostic.message.clone())
         .collect();
     assert!(reported.is_empty(), "{reported:?}");
-    let mut debug_types = DebugTypes::default();
+    let mut debug_types = super::ProgramDebugTypes::default();
     let mir = super::lower(
         &body,
         ty,
@@ -74,7 +74,7 @@ fn lower_main(text: &str, target: &str) -> (String, mir::Body, DebugTypes) {
     .expect("the body lowers");
     let name_of =
         |function: FunctionCopy| model::program::declared_path(&modules, function.definition);
-    (mir.text(&file, name_of), mir, debug_types)
+    (mir.text(&file, name_of), mir, debug_types.table)
 }
 
 #[test]

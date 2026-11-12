@@ -21,15 +21,15 @@ use diagnostics::Diagnostic;
 use eval::interpreter::Failure;
 use eval::interpreter::program::Stream;
 use eval::interpreter::program::Written;
+use model::ConstArguments;
 use model::DefId;
 use model::FunctionCopy;
 use model::ModuleId;
 use model::ast;
-use model::constant::Constant;
 use model::machine::Machine;
 use model::mir;
 use model::mir::DebugTypes;
-use model::semantic_types::ConstArguments;
+use model::semantic_types::Constant;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
 use model::semantic_types::Types;
@@ -472,7 +472,7 @@ fn build_function(
         facts: &facts,
         mir,
         types: &checker.types,
-        debug_types: &checker.debug_types,
+        debug_types: &checker.debug_types.table,
     }));
 }
 

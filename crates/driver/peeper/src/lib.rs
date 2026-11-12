@@ -50,7 +50,14 @@ pub fn write_program<'p>(
                     return; // it has errors
                 };
                 each_function(function, thir, &body, types);
-                queue.add(module, function, body, types, debug_types);
+                queue.add(
+                    module,
+                    function,
+                    body,
+                    |copy| model::program::copy_symbol(&program.modules, types, copy),
+                    || model::program::copy_name(&program.modules, types, function),
+                    debug_types,
+                );
             },
         )
     });

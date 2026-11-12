@@ -156,7 +156,7 @@ impl ThirBuilder<'_, '_> {
         let result = checked.ty;
         let kind = match checked.kind {
             ExprKind::Constant(constant) => {
-                ExprKind::Constant(eval::operators::unary(op, &ty, &constant))
+                ExprKind::Constant(crate::fold::operators::unary(op, &ty, &constant))
             }
             kind => ExprKind::Unary {
                 op,
@@ -297,7 +297,8 @@ impl ThirBuilder<'_, '_> {
             return Expr::INVALID;
         }
         if let ExprKind::Constant(value) = &right.kind
-            && let Some(message) = eval::operators::known_trap(op, &left_type, &right_type, value)
+            && let Some(message) =
+                crate::fold::operators::known_trap(op, &left_type, &right_type, value)
         {
             self.checker
                 .error(diagnostics::INVALID_OPERATION, message, right_span);
@@ -313,9 +314,14 @@ impl ThirBuilder<'_, '_> {
             && let (ExprKind::Constant(left_value), ExprKind::Constant(right_value)) =
                 (&left.kind, &right.kind)
         {
-            let folded =
-                eval::operators::binary(op, &left_type, left_value, &right_type, right_value)
-                    .expect("known traps were reported before folding");
+            let folded = crate::fold::operators::binary(
+                op,
+                &left_type,
+                left_value,
+                &right_type,
+                right_value,
+            )
+            .expect("known traps were reported before folding");
             return Expr {
                 ty,
                 kind: ExprKind::Constant(folded),

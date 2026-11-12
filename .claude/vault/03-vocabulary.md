@@ -15,10 +15,10 @@ The codebase's fixed terms: use these words, with these meanings.
 | frontend | `token`, `lexer`, `parser` | tokens, lexing, parsing (tree in `model::ast`) |
 | frontend | `project` | loading, import resolution, module graph, `peeper.toml` (`name`, `build = "program"` or `"lib"`) |
 | middle | `model` | data only: `ast`, `thir`, `mir`, `semantic_types`, `constant`, `machine`, ids, operators |
-| middle | `check` | `Checker`: scopes, names, types, THIR, signatures, folding; builds bodies |
+| middle | `check` | `Checker`: scopes, names, types, THIR, signatures, folding (`fold`); builds bodies |
 | middle | `lower` | THIR to MIR |
 | middle | `flow` | path checks over MIR |
-| middle | `eval` | operators on constants; the MIR interpreter |
+| middle | `eval` | what each MIR operation gives (`operations`); the MIR interpreter |
 | backend | `llvm` | MIR to LLVM text; clang and the linker; the runtime build |
 | driver | `compile` | one compile: module walk, reuse, `Output` |
 | driver | `peeper`, `lsp`, `browser` | command line, language server, web build |

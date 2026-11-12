@@ -16,18 +16,17 @@ use std::borrow::Cow;
 
 use bigint::Limbs;
 use model::constant::Value;
-use model::mir::BinaryOperation;
 use model::mir::Class;
-use model::mir::FloatOp;
 use model::mir::IntegerOp;
-use model::mir::binary_operation;
 use model::operators::BinaryOp;
 use model::operators::UnaryOp;
 use model::semantic_types::Integer;
 use model::semantic_types::Type;
 
-use crate::operations;
-use crate::operations::RegisterValue;
+use eval::operations;
+use eval::operations::RegisterValue;
+use lower::arithmetic::BinaryOperation;
+use lower::arithmetic::binary_operation;
 
 /// `left op right`. Both operands have one type, except that a shift count
 /// has its own integer type (`value << count`). Check only gives an operator
@@ -62,7 +61,7 @@ pub fn binary(
             (class, integer.bits, register(left), register(right))
         }
         (&Type::Float(float), &Value::Float(left), _, &Value::Float(right)) => {
-            let class = Class::float(float);
+            let class = float.class();
             let register =
                 |bits| RegisterValue::Narrow(operations::float_bits(class, f64::from_bits(bits)));
             (class, class.bits(), register(left), register(right))
@@ -107,7 +106,8 @@ pub fn binary(
 }
 
 /// `op value`, where the operand has the type `operand_type`; what
-/// lowering's instructions for it compute.
+/// lowering's instructions for it compute, except that a NaN's sign is
+/// flipped too (a float's `Negate`).
 pub fn unary(op: UnaryOp, operand_type: &Type, value: &Value) -> Value {
     match (op, operand_type, value) {
         (UnaryOp::LogicalNot, Type::Bool, Value::Bool(value)) => Value::Bool(!value),
@@ -115,14 +115,11 @@ pub fn unary(op: UnaryOp, operand_type: &Type, value: &Value) -> Value {
             let zero = Limbs::new(integer.bits, &[]);
             integer_unary(IntegerOp::Subtract, integer, &zero, value)
         }
-        // From -0.0, so that -(0.0) is -0.0 and -(-0.0) is 0.0.
-        (UnaryOp::Negate, &Type::Float(float), &Value::Float(bits)) => {
-            let class = Class::float(float);
-            let zero = operations::float_bits(class, -0.0);
-            let value = operations::float_bits(class, f64::from_bits(bits));
-            let negated = operations::float(FloatOp::Subtract, class, zero, value);
-            Value::Float(operations::float_value(class, negated).to_bits())
-        }
+        // The sign flipped, a NaN's too, as LLVM's `fneg`: `-NAN` is
+        // another value than `NAN`. Computing `-0.0 - x` would leave a
+        // NaN's sign to the host's arithmetic. A constant `f32` is kept in
+        // an `f64`, whose sign is its sign.
+        (UnaryOp::Negate, Type::Float(_), &Value::Float(bits)) => Value::Float(bits ^ (1 << 63)),
         (UnaryOp::BitNot, &Type::Integer(integer), Value::Integer(value)) => {
             let ones = vec![u64::MAX; integer.bits.div_ceil(64) as usize];
             integer_unary(
