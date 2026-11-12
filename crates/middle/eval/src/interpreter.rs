@@ -200,7 +200,7 @@ struct Interpreter<'b, 'f> {
     mir_of: &'f dyn Fn(FunctionCopy) -> Option<&'b Body>,
     steps: u64, // run so far, by every call; past the limit the run stops, so it cannot wrap
     step_limit: u32,
-    host: Option<Host<'f>>, // a whole program's; a constant's call has none
+    host: Option<Host>, // a whole program's; a constant's call has none
     memory: Memory,
     /// Each function called so far: its body and layout, or `None` when
     /// `mir_of` gives it no body; asked once each.
@@ -226,7 +226,7 @@ impl<'b, 'f> Interpreter<'b, 'f> {
         target: &Machine,
         mir_of: &'f dyn Fn(FunctionCopy) -> Option<&'b Body>,
         step_limit: u32,
-        host: Option<Host<'f>>,
+        host: Option<Host>,
     ) -> Self {
         Interpreter {
             pointer_bits: target.pointer_bits,

@@ -42,12 +42,6 @@ const OUTPUT_LIMIT: u64 = 1 << 20;
 /// streams cannot give a page a million of them to show.
 const PIECE_LIMIT: usize = 10_000;
 
-/// What a run asks of the program around its MIR, which `eval` cannot see.
-pub struct ProgramFacts<'f> {
-    /// The name in `#[extern("name")]` on a function.
-    pub extern_symbol: &'f dyn Fn(DefId) -> Option<String>,
-}
-
 /// Which of its outputs a program wrote to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Stream {
@@ -69,16 +63,15 @@ pub struct Outcome {
 }
 
 /// Runs the program that starts at `main`, whose MIR is `body`, for
-/// `target`. A function it calls has the MIR `mir_of` gives, or is outside
-/// the program, where `facts` says what it is.
+/// `target`. A function it calls has the MIR `mir_of` gives, or is a C
+/// function outside the program, named by its call's C signature.
 pub fn run<'b>(
     main: DefId,
     body: &'b Body,
     target: &Machine,
     mir_of: &dyn Fn(FunctionCopy) -> Option<&'b Body>,
-    facts: &ProgramFacts<'_>,
 ) -> Outcome {
-    let host = Host::new(facts);
+    let host = Host::new();
     let mut run = Interpreter::new(target, mir_of, STEP_LIMIT, Some(host));
     let ending = match run.run_from(main, body) {
         Ok((Some(code), _)) => Ok(code as u32 as i32),
@@ -93,8 +86,7 @@ pub fn run<'b>(
 }
 
 /// What a whole program's run has that a constant's call does not.
-pub(super) struct Host<'f> {
-    facts: &'f ProgramFacts<'f>,
+pub(super) struct Host {
     pub(super) output: Vec<Written>,
     printed: u64, // bytes in `output`, kept as output can have a piece per print
     /// What `print` has written and not flushed, kept as the runtime keeps
@@ -102,10 +94,9 @@ pub(super) struct Host<'f> {
     kept: Vec<u8>,
 }
 
-impl<'f> Host<'f> {
-    pub(super) fn new(facts: &'f ProgramFacts<'f>) -> Host<'f> {
+impl Host {
+    pub(super) fn new() -> Host {
         Host {
-            facts,
             output: Vec::new(),
             printed: 0,
             kept: Vec::new(),
@@ -115,7 +106,7 @@ impl<'f> Host<'f> {
 
 impl<'f> Interpreter<'_, 'f> {
     /// The run's host, which only a program's run asks for.
-    fn host(&mut self) -> &mut Host<'f> {
+    fn host(&mut self) -> &mut Host {
         self.host.as_mut().expect("a program's run has a host")
     }
 
@@ -264,7 +255,8 @@ impl<'f> Interpreter<'_, 'f> {
         signature: u32,
         arguments: &[Operand],
     ) -> Result<(), Failure> {
-        let Some(symbol) = (self.host().facts.extern_symbol)(callee.definition) else {
+        let c = &self.frame().body.signatures[signature as usize].c;
+        let Some(symbol) = c.as_ref().map(|c| c.symbol.clone()) else {
             return Err(Failure::NoMir {
                 callee,
                 function: self.frame().function,
@@ -275,7 +267,7 @@ impl<'f> Interpreter<'_, 'f> {
         // A size past every block's: one that is negative, or too large.
         let any_size = |run: &Self, index| size(run, index).unwrap_or(u64::MAX);
         let address = |run: &Self, index: usize| run.operand(arguments[index]) as u64;
-        let result = match (symbol.as_str(), arguments.len()) {
+        let result = match (&*symbol, arguments.len()) {
             (ALLOC | "malloc", 1) => Some(self.allocated(any_size(self, 0), id)?),
             ("calloc", 2) => {
                 let (count, each) = (any_size(self, 0), any_size(self, 1));

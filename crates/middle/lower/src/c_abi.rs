@@ -19,6 +19,7 @@ use model::semantic_types::Types;
 pub(super) fn c_signature(
     types: &Types,
     target: &Machine,
+    symbol: String,
     result: TypeId,
     parameters: impl Iterator<Item = TypeId>,
 ) -> CSignature {
@@ -55,6 +56,7 @@ pub(super) fn c_signature(
         }
     });
     CSignature {
+        symbol: symbol.into(),
         parameters: parameters.collect(),
         result,
     }

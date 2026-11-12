@@ -310,6 +310,8 @@ pub struct Signature {
 /// How C passes the values of one call.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CSignature {
+    /// The C function's name (`#[extern("name")]`).
+    pub symbol: Box<str>,
     pub parameters: Box<[CPassing]>,
     pub result: Option<CPassing>,
 }

@@ -380,3 +380,15 @@
   `runtime_abi`. No dump changes. Mutation: the interpreter printing a
   pointer off by one fails the browser run tests; `of_runtime` giving
   `usize` as `i32` fails the 64-bit LLVM dumps. check.sh ok.
+- Untangle fix 4, last part: a C call's C signature names the C function,
+  `CSignature::symbol`, which lowering already looked up to decide the
+  call is a C call. The interpreter reads it there instead of asking the
+  driver through `ProgramFacts` (deleted: the struct, `Host`'s field and
+  lifetime, `program::run`'s parameter, the closure in `compile`); LLVM's
+  `write_c_call` reads it there instead of its symbol map, and no longer
+  needs the `Callee::Function` pattern or a too-many-arguments allowance.
+  Left: `llvm/text.rs::symbol` still names an `extern` function by its C
+  name for the symbol map, which only tables read; no `extern` function
+  can be in a table today (a probe of `#[extern] fn P::size(self)` is
+  refused), so it is naming, not a second decision. Mutation: a wrong C
+  name fails the browser run tests. check.sh ok.

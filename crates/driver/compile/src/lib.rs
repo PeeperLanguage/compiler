@@ -19,7 +19,6 @@ use check::Checker;
 use check::State;
 use diagnostics::Diagnostic;
 use eval::interpreter::Failure;
-use eval::interpreter::program::ProgramFacts;
 use eval::interpreter::program::Stream;
 use eval::interpreter::program::Written;
 use model::DefId;
@@ -172,21 +171,14 @@ pub fn interpret(
     let Some((main, _)) = results.entry_point() else {
         return (results, None);
     };
-    let extern_symbol = |function| model::program::c_symbol(modules, function);
-    let facts = ProgramFacts {
-        extern_symbol: &extern_symbol,
-    };
     let main_function = FunctionCopy {
         definition: main,
         arguments: ConstArguments::NONE,
     };
-    let outcome = eval::interpreter::program::run(
-        main,
-        &bodies[&main_function],
-        target,
-        &|function| bodies.get(&function),
-        &facts,
-    );
+    let outcome =
+        eval::interpreter::program::run(main, &bodies[&main_function], target, &|function| {
+            bodies.get(&function)
+        });
     let mut output = outcome.output;
     let exit_code = match outcome.ending {
         Ok(code) => code as u8,

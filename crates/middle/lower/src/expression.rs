@@ -951,11 +951,11 @@ impl Lowering<'_> {
         };
         let mut passed = Vec::with_capacity(arguments.len());
         let mut parameters = Vec::with_capacity(arguments.len());
-        let c_function = match callee {
+        let c_symbol = match callee {
             Callee::Function(function) => {
-                model::program::c_symbol(self.modules, function.definition).is_some()
+                model::program::c_symbol(self.modules, function.definition)
             }
-            Callee::Method(_) => false,
+            Callee::Method(_) => None,
         };
         let mut argument_types = Vec::new();
         let result = self.result_passing(ty);
@@ -1027,8 +1027,16 @@ impl Lowering<'_> {
             }
         }
         let callee = target.expect("a method call has its receiver");
-        let c = c_function
-            .then(|| c_signature(self.types, self.target, ty, argument_types.into_iter()));
+        let c_function = c_symbol.is_some();
+        let c = c_symbol.map(|symbol| {
+            c_signature(
+                self.types,
+                self.target,
+                symbol,
+                ty,
+                argument_types.into_iter(),
+            )
+        });
         self.mir.signatures.push(Signature {
             parameters: parameters.into(),
             result,

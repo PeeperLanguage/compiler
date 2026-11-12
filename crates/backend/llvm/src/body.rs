@@ -848,9 +848,8 @@ impl Writer<'_, '_, '_> {
             } => {
                 let signature = &body.signatures[*signature as usize];
                 // The checker gives a C function no result in memory.
-                if let (Some(c), &Callee::Function(function)) = (&signature.c, callee) {
-                    let symbol = &self.symbols[&function];
-                    self.write_c_call(out, &name, symbol, signature, c, arguments, &location);
+                if let Some(c) = &signature.c {
+                    self.write_c_call(out, &name, signature, c, arguments, &location);
                 } else {
                     // A result kept in memory is written where the hidden
                     // first argument points.
@@ -940,16 +939,14 @@ impl Writer<'_, '_, '_> {
         );
     }
 
-    /// Writes the call, as `name`, of the C function `symbol` with
+    /// Writes the call, as `name`, of the C function `c` names with
     /// `arguments`, each passed as `c` says, after noting its declaration.
     /// A value C takes or gives in memory or in pieces is the register's,
     /// resized to that memory as `signature` says it is signed.
-    #[allow(clippy::too_many_arguments)] // each is part of the one call
     fn write_c_call(
         &mut self,
         out: &mut String,
         name: &str,
-        symbol: &str,
         signature: &Signature,
         c: &CSignature,
         arguments: &[Operand],
@@ -1044,6 +1041,7 @@ impl Writer<'_, '_, '_> {
             }
             Some(CPassing::Vector { count, bits }) => format!("<{count} x i{bits}>"),
         };
+        let symbol = &*c.symbol;
         let callee = global(symbol);
         self.module.declare(symbol, || {
             format!("declare {result} {callee}({})\n\n", declared.join(", "))
