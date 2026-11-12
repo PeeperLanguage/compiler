@@ -43,8 +43,7 @@ fn compile_growth_kb(text: String) -> u64 {
         &program,
         target,
         compile::Results::default(),
-        false,
-        false,
+        compile::Options::default(),
         |_| {},
     );
     assert_eq!(results.diagnostics().count(), 0);

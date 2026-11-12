@@ -108,8 +108,7 @@ fn check(files: HashMap<String, String>) -> Value {
         &program,
         target,
         compile::Results::default(),
-        false,
-        false,
+        compile::Options::default(),
         |_| {},
     );
     diagnostics_json(&program, &results)

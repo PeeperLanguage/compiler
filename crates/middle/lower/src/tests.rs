@@ -52,7 +52,7 @@ fn lowered_for(text: &str, target: &str) -> String {
     };
     let ty = checker.copy_type(main, name);
     let mut body = thir::Body::default();
-    assert!(checker.check_body(main, name, &mut body, false));
+    assert!(checker.check_body(main, name, &mut body, true));
     let reported: Vec<String> = (checker.module_checks.iter())
         .flat_map(|module| &module.diagnostics)
         .map(|diagnostic| diagnostic.message.clone())
@@ -398,7 +398,7 @@ fn every_fixture_lowers() {
         let mut body = thir::Body::default();
         let mut lower_function = |checker: &mut Checker, function: FunctionCopy, span| {
             let ty = checker.copy_type(function, span);
-            if !checker.check_body(function, span, &mut body, false) {
+            if !checker.check_body(function, span, &mut body, true) {
                 return;
             }
             let lowered_body = super::lower(

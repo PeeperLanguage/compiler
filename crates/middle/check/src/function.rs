@@ -35,7 +35,8 @@ pub(crate) enum Built {
 
 impl Checker<'_> {
     /// Builds the body of the function `copy`, asked for at `used_at`, into
-    /// `thir`, only to run it at compile time when `to_run`: checks it
+    /// `thir`, recording its facts when `records_facts` (not when it is
+    /// built only to run at compile time, `evaluate_call`): checks it
     /// (`check_body`), lowers it to MIR and runs the path checks. `None` when
     /// it has no body or its signature had an error; else its MIR, `None`
     /// when it had an error, naming the program's debug types
@@ -47,7 +48,7 @@ impl Checker<'_> {
         copy: FunctionCopy,
         used_at: Span,
         thir: &mut thir::Body,
-        to_run: bool,
+        records_facts: bool,
     ) -> Option<Option<mir::Body>> {
         let module = copy.definition.module.index();
         let ty = self.copy_type(copy, used_at);
@@ -57,7 +58,7 @@ impl Checker<'_> {
             self.internals.built_bodies.insert(copy, Built::Reported);
         }
         let reported = self.module_checks[module].diagnostics.len();
-        let checked = self.check_body(copy, used_at, thir, to_run);
+        let checked = self.check_body(copy, used_at, thir, records_facts);
         let mir = checked.then(|| self.lower_function(copy.definition, ty, thir));
         let found = &mut self.module_checks[module].diagnostics;
         let failed = found[reported..].iter().any(Diagnostic::is_error);
@@ -256,7 +257,7 @@ impl Checker<'_> {
                     continue;
                 }
                 let mut thir = thir::Body::default();
-                let body = self.build_function(next, span, &mut thir, true).flatten();
+                let body = self.build_function(next, span, &mut thir, false).flatten();
                 self.internals
                     .built_bodies
                     .insert(next, Built::Kept(body.map(Box::new)));

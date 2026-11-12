@@ -36,8 +36,8 @@ use crate::scope::report_redeclared;
 
 impl Checker<'_> {
     /// Puts in `body` the THIR of the body of the function `copy`,
-    /// asked for at `used_at` and built only to run at compile time when
-    /// `to_run` (`Checking`), with `has_errors` set when checking it reported
+    /// asked for at `used_at`, recording its facts when `records_facts`
+    /// (`Checking`), with `has_errors` set when checking it reported
     /// an error; what `body` held is dropped, its memory kept. False, with
     /// `body` untouched, for a function without a body or whose signature had
     /// an error.
@@ -46,7 +46,7 @@ impl Checker<'_> {
         copy: FunctionCopy,
         used_at: Span,
         body: &mut Body,
-        to_run: bool,
+        records_facts: bool,
     ) -> bool {
         let FunctionCopy {
             definition,
@@ -71,7 +71,7 @@ impl Checker<'_> {
             definition,
             arguments,
             used_at,
-            records_facts: !to_run,
+            records_facts,
         };
         self.checking_in(checking, |checker| {
             body.clear();

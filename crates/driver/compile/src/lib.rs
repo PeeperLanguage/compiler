@@ -161,13 +161,22 @@ pub fn interpret(
 ) -> (Results, Option<Interpreted>) {
     let modules = program.modules.as_slice();
     let mut bodies = HashMap::new();
-    let results = run(program, target, Results::default(), true, false, |output| {
-        if let Output::Function(checked) = output
-            && let Some(body) = checked.mir
-        {
-            bodies.insert(checked.function, body);
-        }
-    });
+    let results = run(
+        program,
+        target,
+        Results::default(),
+        Options {
+            require_main: true,
+            ..Options::default()
+        },
+        |output| {
+            if let Output::Function(checked) = output
+                && let Some(body) = checked.mir
+            {
+                bodies.insert(checked.function, body);
+            }
+        },
+    );
     let Some((main, _)) = results.entry_point() else {
         return (results, None);
     };
@@ -201,35 +210,44 @@ pub fn interpret(
     (results, Some(interpreted))
 }
 
+/// What a compile does beyond checking and lowering (`run`).
+#[derive(Default)]
+pub struct Options {
+    /// A program with an entry file and no other error must declare there
+    /// a `main` it can start at (`Results::entry_point`): it is to be built
+    /// or run.
+    pub require_main: bool,
+    /// What checking finds about the text (`thir::Fact`) is recorded and
+    /// handed on, for an editor (`Output::Facts`).
+    pub record_facts: bool,
+}
+
 /// Checks every declaration of `program`, lowers each function to MIR and
 /// gives what it found. A module of `previous` (a compile of the same program
 /// for the same `target`, or `Results::default()`) whose text and
 /// whose imports' interfaces are unchanged keeps its diagnostics, and its
 /// bodies are not checked again. What it checks goes to `use_output` in
 /// declaration order, module by module: each function with a body as soon as
-/// it is built, with the facts found so far when `record_facts`, then
+/// it is built, with the facts found so far when `options.record_facts`, then
 /// dropped except its MIR, which is `use_output`'s: nothing here holds every
 /// function's bodies at once. Each module constant goes once checked, with
 /// its type and value, and last the module's remaining facts, none unless
-/// `record_facts`. Integers as wide as a pointer (`isize`, `usize`) have
-/// `target`'s `pointer_bits` bits. With `require_main`, a program with an
-/// entry file and no other error must declare there a `main` it can start
-/// at (`entry_point`). A program loading found an error in
+/// `options.record_facts`. Integers as wide as a pointer (`isize`, `usize`) have
+/// `target`'s `pointer_bits` bits. A program loading found an error in
 /// (`Program::checkable`) is not checked: its errors would follow from
 /// those, so it finds nothing.
 pub fn run(
     program: &model::program::Program,
     target: &'static Machine,
     previous: Results,
-    require_main: bool,
-    record_facts: bool,
+    options: Options,
     mut use_output: impl FnMut(Output),
 ) -> Results {
     if !program.checkable {
         return Results::default();
     }
     let modules = program.modules.as_slice();
-    let mut checker = Checker::new(modules, target, record_facts);
+    let mut checker = Checker::new(modules, target, options.record_facts);
     let mut results: Vec<ModuleResults> = modules
         .iter()
         .map(|module| ModuleResults::new(module.ast.file.clone()))
@@ -310,7 +328,7 @@ pub fn run(
     let mut entry_point = None;
     // A syntax error the parser read past is the loader's, and leaves a
     // whole tree, so the loader's errors count too.
-    if let Some(entry) = program.entry.filter(|_| require_main)
+    if let Some(entry) = program.entry.filter(|_| options.require_main)
         && !program.diagnostics.iter().any(Diagnostic::is_error)
         && !results
             .iter()
@@ -443,7 +461,7 @@ fn build_function(
     let span = model::program::declared_name(checker.modules, function.definition)
         .0
         .span;
-    let Some(mir) = checker.build_function(function, span, thir, false) else {
+    let Some(mir) = checker.build_function(function, span, thir, true) else {
         return;
     };
     let facts = std::mem::take(&mut checker.module_checks[module.index()].facts);

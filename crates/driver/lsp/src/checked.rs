@@ -82,7 +82,16 @@ impl Checked {
         // shortcut: the editor checks for the host, so a `usize` constant that
         // fits it but not a `-target i686-linux` build is reported only by that
         // build; check for a project's target when a project can name one.
-        self.results = compile::run(program, host(), previous, false, true, cache_facts);
+        self.results = compile::run(
+            program,
+            host(),
+            previous,
+            compile::Options {
+                record_facts: true,
+                ..compile::Options::default()
+            },
+            cache_facts,
+        );
         let reused: HashSet<&Path> = self
             .results
             .reused()

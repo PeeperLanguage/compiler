@@ -29,8 +29,10 @@ pub fn write_program<'p>(
             program,
             target,
             compile::Results::default(),
-            require_main,
-            false, // names are for editors
+            compile::Options {
+                require_main,
+                ..compile::Options::default()
+            },
             |output| {
                 let compile::Output::Function(checked) = output else {
                     return; // constants and names are for editors

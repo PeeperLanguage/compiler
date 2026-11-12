@@ -51,8 +51,7 @@ fn program_ll(text: &str, target: &str) -> HashMap<String, String> {
                 &program,
                 target,
                 compile::Results::default(),
-                false,
-                false,
+                compile::Options::default(),
                 |output| {
                     if let compile::Output::Function(checked) = output {
                         queue.add(

@@ -3,6 +3,7 @@ use std::path::PathBuf;
 
 use super::CheckedFunction;
 use super::ModuleResults;
+use super::Options;
 use super::Output;
 use super::Results;
 use super::run;
@@ -59,8 +60,7 @@ fn diagnostics(modules: &[(&str, &str)]) -> Vec<(&'static str, String, String)> 
         &load(modules),
         x86_64(),
         Results::default(),
-        false,
-        false,
+        Options::default(),
         |_| {},
     );
     found
@@ -375,8 +375,7 @@ fn slice_ends_fit_the_target_usize() {
         &program,
         Machine::named("i686-linux").unwrap(),
         Results::default(),
-        false,
-        false,
+        Options::default(),
         |_| {},
     );
     let messages: Vec<&str> = (found.diagnostics())
@@ -395,7 +394,16 @@ fn slice_ends_fit_the_target_usize() {
 fn the_entry_module_needs_a_main_to_start() {
     let entry_point = |text: &str| {
         let program = load(&[("app:main", text)]);
-        let found = run(&program, x86_64(), Results::default(), true, false, |_| {});
+        let found = run(
+            &program,
+            x86_64(),
+            Results::default(),
+            Options {
+                require_main: true,
+                ..Options::default()
+            },
+            |_| {},
+        );
         let codes: Vec<&str> = found.diagnostics().map(|d| d.code.id).collect();
         (found.entry_point().map(|(_, exit_code)| exit_code), codes)
     };
@@ -423,7 +431,16 @@ fn the_entry_module_needs_a_main_to_start() {
 fn a_loading_error_leaves_no_entry_point() {
     let program = load(&[("app:main", "fn main() {\n    let x: i32 = 1\n}")]);
     assert!(program.diagnostics.iter().any(Diagnostic::is_error));
-    let found = run(&program, x86_64(), Results::default(), true, false, |_| {});
+    let found = run(
+        &program,
+        x86_64(),
+        Results::default(),
+        Options {
+            require_main: true,
+            ..Options::default()
+        },
+        |_| {},
+    );
     assert_eq!(found.diagnostics().count(), 0, "the checker found nothing");
     assert!(found.entry_point().is_none());
 }
@@ -458,8 +475,7 @@ fn each_way_out_of_a_block_ends_its_variables_newest_first() {
         &program,
         x86_64(),
         Results::default(),
-        false,
-        false,
+        Options::default(),
         |output| {
             if let Output::Function(checked) = output {
                 let file = &program.modules[checked.function.definition.module.index()]
@@ -508,8 +524,7 @@ fn a_function_whose_path_checks_fail_gives_no_mir() {
         &program,
         x86_64(),
         Results::default(),
-        false,
-        false,
+        Options::default(),
         |output| {
             if let Output::Function(checked) = output {
                 lowered.push(checked.mir.is_some());
@@ -536,7 +551,13 @@ fn a_cycle_is_reported_once_with_its_path() {
             fn Point::E() -> i32 { return E; }
             fn main() { let x = A + B + E; }",
     )]);
-    let found = run(&program, x86_64(), Results::default(), false, false, |_| {});
+    let found = run(
+        &program,
+        x86_64(),
+        Results::default(),
+        Options::default(),
+        |_| {},
+    );
     let errors: Vec<(String, Vec<(String, String)>)> = found
         .diagnostics()
         .map(|diagnostic| {
@@ -609,8 +630,7 @@ fn module_constants_cannot_be_assigned() {
         &load(&modules),
         x86_64(),
         Results::default(),
-        false,
-        false,
+        Options::default(),
         |_| {},
     );
     let declared: Vec<(&str, &str)> = found
@@ -710,8 +730,7 @@ fn an_invalid_declaration_lowers_nothing_using_it() {
         &program,
         x86_64(),
         Results::default(),
-        false,
-        false,
+        Options::default(),
         |output| {
             if let Output::Function(CheckedFunction { mir: Some(_), .. }) = output {
                 lowered += 1;
@@ -729,7 +748,7 @@ fn an_invalid_declaration_lowers_nothing_using_it() {
 fn recompile(modules: &[(&str, &str)], previous: Results) -> (Results, Vec<String>) {
     let loaded = load(modules);
     let mut checked: Vec<String> = Vec::new();
-    let results = run(&loaded, x86_64(), previous, false, false, |output| {
+    let results = run(&loaded, x86_64(), previous, Options::default(), |output| {
         let Output::Function(CheckedFunction { module, .. }) = output else {
             return;
         };
@@ -998,8 +1017,10 @@ fn a_function_run_at_compile_time_records_its_facts_once() {
         &program,
         x86_64(),
         Results::default(),
-        false,
-        true,
+        Options {
+            record_facts: true,
+            ..Options::default()
+        },
         |output| {
             let (owner, facts) = match output {
                 Output::Function(CheckedFunction {
@@ -1052,8 +1073,7 @@ fn array_lengths_fit_the_target_usize() {
             &program,
             target,
             Results::default(),
-            false,
-            false,
+            Options::default(),
             |_| {},
         ))
     };
@@ -1079,8 +1099,7 @@ fn values_fit_the_target() {
             &program,
             target,
             Results::default(),
-            false,
-            false,
+            Options::default(),
             |_| {},
         ))
     };
@@ -1108,8 +1127,7 @@ fn extern_integers_are_ones_c_has() {
             &program,
             target,
             Results::default(),
-            false,
-            false,
+            Options::default(),
             |_| {},
         ))
     };
@@ -1178,7 +1196,13 @@ fn copies_report_once_to_the_calling_module() {
             fn main() { list::Twice(i32, 1); list::Twice(bool, true); list::Twice(i64, 2); }",
         ),
     ]);
-    let results = run(&program, x86_64(), Results::default(), false, false, |_| {});
+    let results = run(
+        &program,
+        x86_64(),
+        Results::default(),
+        Options::default(),
+        |_| {},
+    );
     let found = |module: &ModuleResults| -> Vec<(String, Vec<String>)> {
         let labels = |diagnostic: &Diagnostic| {
             let label = |label: &diagnostics::Label| {
@@ -1250,8 +1274,10 @@ fn a_function_with_const_parameters_records_its_signature_once() {
         &program,
         x86_64(),
         Results::default(),
-        false,
-        true,
+        Options {
+            record_facts: true,
+            ..Options::default()
+        },
         |output| {
             let facts = match output {
                 Output::Function(CheckedFunction { facts, .. }) | Output::Facts { facts, .. } => {

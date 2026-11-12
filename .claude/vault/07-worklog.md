@@ -494,3 +494,17 @@
   the interpreter's run fixtures. `check mixed` 1,176-1,179 M (was
   1,183-1,184 M); `run -interpret loop_2000000` 16,465 M, was 16,413 M
   (+0.3%, the register value built per operation). check.sh ok.
+- Untangle fix 8, `compile::run`'s switches have names: `require_main`
+  and `record_facts`, two bare bools in a row at 23 calls (five driver
+  calls, eighteen in tests), become `compile::Options { require_main,
+  record_facts }` with `Default`; a caller names only the one it turns on
+  (`Options { record_facts: true, ..Options::default() }` in the
+  language server), and the two `// names are for editors` comments go.
+  `previous` stays an argument: it is a value, not a switch. In the
+  checker, `build_function` and `check_body` took `to_run` and used it
+  only as `records_facts: !to_run`; the parameter is now `records_facts`
+  (the compile passes `true`, `evaluate_call` `false`; four test calls
+  flipped with it). Mutations: the compile's build or the run's build
+  recording the wrong way, `require_main` ignored and `record_facts`
+  ignored each fail compile tests. No hot path changed, so no
+  measurement.

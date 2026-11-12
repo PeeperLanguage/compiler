@@ -268,8 +268,7 @@ fn compile<'p>(
             program,
             target,
             compile::Results::default(),
-            false,
-            false, // names are for editors
+            compile::Options::default(),
             |output| {
                 if let compile::Output::Function(checked) = output
                     && let Some(mir) = &checked.mir

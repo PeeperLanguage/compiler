@@ -33,7 +33,7 @@ fn bodies(text: &str) -> (Vec<String>, Vec<Reported>) {
                 },
                 function.name.span,
                 &mut body,
-                false,
+                true,
             );
             if checked && !body.has_errors {
                 bodies.push(body);
@@ -409,7 +409,7 @@ fn notes(text: &str) -> Vec<(String, Option<String>)> {
             },
             function.name.span,
             &mut Body::default(),
-            false,
+            true,
         );
         let note = |diagnostic: &diagnostics::Diagnostic| {
             let first = diagnostic.notes.first();
