@@ -60,7 +60,7 @@ fn program_ll(text: &str, target: &str) -> HashMap<String, String> {
                 target,
                 compile::Results::default(),
                 compile::Options::default(),
-                |output| {
+                &mut |output| {
                     if let compile::Output::Function(checked) = output {
                         queue.add(
                             checked.module,

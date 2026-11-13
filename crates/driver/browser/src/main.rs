@@ -113,7 +113,7 @@ fn check(files: HashMap<String, String>) -> Value {
         target,
         compile::Results::default(),
         compile::Options::default(),
-        |_| {},
+        &mut |_| {},
     );
     diagnostics_json(&program, &results)
 }

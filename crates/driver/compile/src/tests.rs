@@ -62,7 +62,7 @@ fn diagnostics(modules: &[(&str, &str)]) -> Vec<(&'static str, String, String)> 
         x86_64(),
         Results::default(),
         Options::default(),
-        |_| {},
+        &mut |_| {},
     );
     found
         .diagnostics()
@@ -377,7 +377,7 @@ fn slice_ends_fit_the_target_usize() {
         Machine::named("i686-linux").unwrap(),
         Results::default(),
         Options::default(),
-        |_| {},
+        &mut |_| {},
     );
     let messages: Vec<&str> = (found.diagnostics())
         .map(|diagnostic| diagnostic.message.as_str())
@@ -403,7 +403,7 @@ fn the_entry_module_needs_a_main_to_start() {
                 require_main: true,
                 ..Options::default()
             },
-            |_| {},
+            &mut |_| {},
         );
         let codes: Vec<&str> = found.diagnostics().map(|d| d.code.id).collect();
         (found.entry_point().map(|(_, exit_code)| exit_code), codes)
@@ -440,7 +440,7 @@ fn a_loading_error_leaves_no_entry_point() {
             require_main: true,
             ..Options::default()
         },
-        |_| {},
+        &mut |_| {},
     );
     assert_eq!(found.diagnostics().count(), 0, "the checker found nothing");
     assert!(found.entry_point().is_none());
@@ -464,7 +464,7 @@ fn a_function_whose_path_checks_fail_gives_no_mir() {
         x86_64(),
         Results::default(),
         Options::default(),
-        |output| {
+        &mut |output| {
             if let Output::Function(checked) = output {
                 lowered.push(checked.mir.is_some());
             }
@@ -495,7 +495,7 @@ fn a_cycle_is_reported_once_with_its_path() {
         x86_64(),
         Results::default(),
         Options::default(),
-        |_| {},
+        &mut |_| {},
     );
     let errors: Vec<(String, Vec<(String, String)>)> = found
         .diagnostics()
@@ -570,7 +570,7 @@ fn module_constants_cannot_be_assigned() {
         x86_64(),
         Results::default(),
         Options::default(),
-        |_| {},
+        &mut |_| {},
     );
     let declared: Vec<(&str, &str)> = found
         .diagnostics()
@@ -670,7 +670,7 @@ fn an_invalid_declaration_lowers_nothing_using_it() {
         x86_64(),
         Results::default(),
         Options::default(),
-        |output| {
+        &mut |output| {
             if let Output::Function(CheckedFunction { mir: Some(_), .. }) = output {
                 lowered += 1;
             }
@@ -687,15 +687,21 @@ fn an_invalid_declaration_lowers_nothing_using_it() {
 fn recompile(modules: &[(&str, &str)], previous: Results) -> (Results, Vec<String>) {
     let loaded = load(modules);
     let mut checked: Vec<String> = Vec::new();
-    let results = run(&loaded, x86_64(), previous, Options::default(), |output| {
-        let Output::Function(CheckedFunction { module, .. }) = output else {
-            return;
-        };
-        let path = &loaded.modules[module.index()].path;
-        if !checked.contains(path) {
-            checked.push(path.clone());
-        }
-    });
+    let results = run(
+        &loaded,
+        x86_64(),
+        previous,
+        Options::default(),
+        &mut |output| {
+            let Output::Function(CheckedFunction { module, .. }) = output else {
+                return;
+            };
+            let path = &loaded.modules[module.index()].path;
+            if !checked.contains(path) {
+                checked.push(path.clone());
+            }
+        },
+    );
     (results, checked)
 }
 
@@ -714,7 +720,7 @@ fn messages_on(program: &model::program::Program<Peeper>, target: &str) -> Vec<S
         target,
         Results::default(),
         Options::default(),
-        |_| {},
+        &mut |_| {},
     );
     messages(&found)
 }
@@ -974,7 +980,7 @@ fn a_function_run_at_compile_time_records_its_facts_once() {
             record_facts: true,
             ..Options::default()
         },
-        |output| {
+        &mut |output| {
             let (owner, facts) = match output {
                 Output::Function(CheckedFunction {
                     function, facts, ..
@@ -1127,7 +1133,7 @@ fn copies_report_once_to_the_calling_module() {
         x86_64(),
         Results::default(),
         Options::default(),
-        |_| {},
+        &mut |_| {},
     );
     let found = |module: &ModuleResults| -> Vec<(String, Vec<String>)> {
         let labels = |diagnostic: &Diagnostic| {
@@ -1204,7 +1210,7 @@ fn a_function_with_const_parameters_records_its_signature_once() {
             record_facts: true,
             ..Options::default()
         },
-        |output| {
+        &mut |output| {
             let facts = match output {
                 Output::Function(CheckedFunction { facts, .. }) | Output::Facts { facts, .. } => {
                     facts
@@ -1356,7 +1362,7 @@ fn a_move_that_never_runs_is_not_named() {
         x86_64(),
         Results::default(),
         Options::default(),
-        |_| {},
+        &mut |_| {},
     );
     let moved: Vec<&Diagnostic> = found
         .diagnostics()
@@ -1402,7 +1408,7 @@ fn only_a_move_from_a_loop_pass_says_so() {
         x86_64(),
         Results::default(),
         Options::default(),
-        |_| {},
+        &mut |_| {},
     );
     let loop_notes: Vec<(&str, bool)> = found
         .diagnostics()

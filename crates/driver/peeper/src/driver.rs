@@ -270,7 +270,7 @@ fn compile<'p>(
             target,
             compile::Results::default(),
             compile::Options::default(),
-            |output| {
+            &mut |output| {
                 if let compile::Output::Function(checked) = output
                     && let Some(mir) = &checked.mir
                 {

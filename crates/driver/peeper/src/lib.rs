@@ -38,7 +38,7 @@ pub fn write_program<'p>(
                     require_main,
                     ..compile::Options::default()
                 },
-                |output| {
+                &mut |output| {
                     let compile::Output::Function(checked) = output else {
                         return; // constants and names are for editors
                     };

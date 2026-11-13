@@ -40,7 +40,7 @@ impl Checked {
     pub(crate) fn recompile(&mut self, program: &model::program::Program<Peeper>) {
         let mut found: HashMap<ModuleId, Vec<CachedFact>> = HashMap::new();
         let previous = std::mem::take(&mut self.results);
-        let cache_facts = |output: compile::Output| match output {
+        let mut cache_facts = |output: compile::Output| match output {
             compile::Output::Function(compile::CheckedFunction {
                 module,
                 thir,
@@ -91,7 +91,7 @@ impl Checked {
                 record_facts: true,
                 ..compile::Options::default()
             },
-            cache_facts,
+            &mut cache_facts,
         );
         let reused: HashSet<&Path> = self
             .results

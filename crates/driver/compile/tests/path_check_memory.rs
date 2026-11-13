@@ -44,7 +44,7 @@ fn compile_growth_kb(text: String) -> u64 {
         target,
         compile::Results::default(),
         compile::Options::default(),
-        |_| {},
+        &mut |_| {},
     );
     assert_eq!(results.diagnostics().count(), 0);
     status_kb("VmHWM:") - before

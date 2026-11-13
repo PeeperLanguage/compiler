@@ -171,7 +171,7 @@ pub fn interpret(
             require_main: true,
             ..Options::default()
         },
-        |output| {
+        &mut |output| {
             if let Output::Function(checked) = output
                 && let Some(body) = checked.mir
             {
@@ -237,13 +237,15 @@ pub struct Options {
 /// `options.record_facts`. Integers as wide as a pointer (`isize`, `usize`) have
 /// `target`'s `pointer_bits` bits. A program loading found an error in
 /// (`Program::checkable`) is not checked: its errors would follow from
-/// those, so it finds nothing.
+/// those, so it finds nothing. `use_output` is a `dyn`, so that this and
+/// the checking and lowering it runs are built once, here, not again in each
+/// crate that calls it with a closure of its own.
 pub fn run(
     program: &model::program::Program<Peeper>,
     target: &'static Machine,
     previous: Results,
     options: Options,
-    mut use_output: impl FnMut(Output),
+    use_output: &mut dyn FnMut(Output),
 ) -> Results {
     if !program.checkable {
         return Results::default();
@@ -315,7 +317,7 @@ pub fn run(
             };
             continue;
         }
-        compile_module(&mut checker, id, &mut thir, &mut use_output);
+        compile_module(&mut checker, id, &mut thir, use_output);
         let interface = interface(&checker, id, &results);
         let found = &mut results[index];
         found.interface = interface;
@@ -408,7 +410,7 @@ fn compile_module(
     checker: &mut Checker<Peeper>,
     module: ModuleId,
     thir: &mut thir::Body,
-    use_output: &mut impl FnMut(Output),
+    use_output: &mut dyn FnMut(Output),
 ) {
     let tree = &checker.modules[module.index()].ast;
     for (index, declaration) in tree.declarations().enumerate() {
@@ -461,7 +463,7 @@ fn build_function(
     module: ModuleId,
     function: FunctionCopy,
     thir: &mut thir::Body,
-    use_output: &mut impl FnMut(Output),
+    use_output: &mut dyn FnMut(Output),
 ) {
     let span = model::program::declared_name(checker.modules, function.definition)
         .0
