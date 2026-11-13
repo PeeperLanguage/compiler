@@ -19,24 +19,22 @@ use model::thir::Expr;
 use model::thir::ExprKind;
 use source::Span;
 use syntax::ast;
+use syntax::ast::Language;
 use syntax::operators::Precedence;
 
+use crate::Checked;
 use crate::builder::ThirBuilder;
 
-impl ThirBuilder<'_, '_> {
+impl<L: Checked> ThirBuilder<'_, '_, L> {
     /// `expression` (`check_expr`), added to the body.
-    pub(crate) fn add_expr(
-        &mut self,
-        expression: Id<ast::Expr>,
-        expected: Option<TypeId>,
-    ) -> Id<Expr> {
+    pub fn add_expr(&mut self, expression: Id<ast::Expr<L>>, expected: Option<TypeId>) -> Id<Expr> {
         let checked = self.check_expr(expression, expected);
         self.body
             .add(checked, self.checker.module().ast.exprs.span(expression))
     }
 
     /// `expression` (`check_required`), added to the body.
-    pub(crate) fn add_required(&mut self, expression: Id<ast::Expr>, ty: TypeId) -> Id<Expr> {
+    pub fn add_required(&mut self, expression: Id<ast::Expr<L>>, ty: TypeId) -> Id<Expr> {
         let checked = self.check_required(expression, ty);
         self.body
             .add(checked, self.checker.module().ast.exprs.span(expression))
@@ -49,7 +47,7 @@ impl ThirBuilder<'_, '_> {
     fn coerce(
         &mut self,
         expr: Expr,
-        expression: Id<ast::Expr>,
+        expression: Id<ast::Expr<L>>,
         to: TypeId,
     ) -> Result<Expr, Diagnostic> {
         if expr.ty == TypeId::INVALID || to == TypeId::INVALID {
@@ -91,7 +89,7 @@ impl ThirBuilder<'_, '_> {
     fn help_cast(
         &self,
         mismatch: Diagnostic,
-        expression: Id<ast::Expr>,
+        expression: Id<ast::Expr<L>>,
         found: TypeId,
         to: TypeId,
     ) -> Diagnostic {
@@ -208,7 +206,7 @@ impl ThirBuilder<'_, '_> {
 
     /// The THIR of `expression`, as a value of the type `ty`, or that
     /// converts to it without `as` (`coerce`); a mismatch is reported.
-    pub(crate) fn check_required(&mut self, expression: Id<ast::Expr>, ty: TypeId) -> Expr {
+    pub(crate) fn check_required(&mut self, expression: Id<ast::Expr<L>>, ty: TypeId) -> Expr {
         let checked = self.check_expr(expression, Some(ty));
         self.require(checked, expression, ty)
     }
@@ -219,7 +217,7 @@ impl ThirBuilder<'_, '_> {
     /// another type.
     pub(crate) fn check_expr(
         &mut self,
-        expression: Id<ast::Expr>,
+        expression: Id<ast::Expr<L>>,
         expected: Option<TypeId>,
     ) -> Expr {
         // A long chain of operators, calls or parentheses is a deep recursion.
@@ -227,6 +225,7 @@ impl ThirBuilder<'_, '_> {
             let tree = &self.checker.module().ast;
             let span = tree.exprs.span(expression);
             match tree.exprs[expression] {
+                ast::Expr::Feature(feature) => L::check_expr(self, feature, span, expected),
                 ast::Expr::Name => {
                     let symbol = self.resolve(span);
                     self.check_symbol_value(symbol, span)
@@ -267,9 +266,6 @@ impl ThirBuilder<'_, '_> {
                     self.check_symbol_value(symbol, span)
                 }
                 ast::Expr::Call { callee, arguments } => self.check_call(callee, arguments, span),
-                ast::Expr::StructLiteral { ty, fields } => {
-                    self.check_struct_literal(ty, fields, span, expected)
-                }
                 ast::Expr::Selector { value, field } => self.check_field(value, field),
                 ast::Expr::ArrayLiteral { ty, entries } => {
                     self.check_array_literal(ty, entries, span)
@@ -308,7 +304,7 @@ impl ThirBuilder<'_, '_> {
     fn check_reference(
         &mut self,
         mutable: bool,
-        value: Id<ast::Expr>,
+        value: Id<ast::Expr<L>>,
         span: Span,
         expected: Option<TypeId>,
     ) -> Expr {
@@ -356,7 +352,12 @@ impl ThirBuilder<'_, '_> {
     /// `checked`, from `expression`, as a value of the type `ty` (`coerce`);
     /// a mismatch is reported, with a guess that adds `as` when only `as`
     /// converts it.
-    pub(crate) fn require(&mut self, checked: Expr, expression: Id<ast::Expr>, ty: TypeId) -> Expr {
+    pub(crate) fn require(
+        &mut self,
+        checked: Expr,
+        expression: Id<ast::Expr<L>>,
+        ty: TypeId,
+    ) -> Expr {
         let found = checked.ty;
         self.coerce(checked, expression, ty)
             .unwrap_or_else(|mismatch| {
@@ -376,7 +377,7 @@ impl ThirBuilder<'_, '_> {
         code: Code,
         message: String,
         span: Span,
-        operand: Id<ast::Expr>,
+        operand: Id<ast::Expr<L>>,
         found: TypeId,
         accepts: impl Fn(TypeId) -> bool,
     ) -> Diagnostic {
@@ -398,7 +399,7 @@ impl ThirBuilder<'_, '_> {
     /// the operand's last part: `&n.*` reads `n`, so `&n` needs `(&n).*`.
     fn append_fixes(
         &self,
-        operand: Id<ast::Expr>,
+        operand: Id<ast::Expr<L>>,
         suffix: &str,
         precedence: Precedence,
     ) -> Vec<Fix> {
@@ -421,7 +422,10 @@ impl ThirBuilder<'_, '_> {
 }
 
 /// The text of `expression` if it is a number literal without a suffix.
-pub(crate) fn unsuffixed_literal(tree: &ast::Tree, expression: Id<ast::Expr>) -> Option<&str> {
+pub(crate) fn unsuffixed_literal<L: Language>(
+    tree: &ast::Tree<L>,
+    expression: Id<ast::Expr<L>>,
+) -> Option<&str> {
     let text = tree.file.slice(tree.exprs.span(expression));
     let number = matches!(tree.exprs[expression], ast::Expr::Number);
     (number && literal::numeric::split(text).suffix.is_empty()).then_some(text)

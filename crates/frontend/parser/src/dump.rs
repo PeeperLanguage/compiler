@@ -13,8 +13,6 @@ use syntax::ast::Attribute;
 use syntax::ast::Block;
 use syntax::ast::Decl;
 use syntax::ast::Expr;
-use syntax::ast::Field;
-use syntax::ast::FieldValue;
 use syntax::ast::Ident;
 use syntax::ast::Import;
 use syntax::ast::Length;
@@ -27,9 +25,12 @@ use syntax::ast::Stmt;
 use syntax::ast::Tree;
 use syntax::ast::Type;
 use syntax::ast::Variant;
+
 use token::TokenKind;
 
-pub(crate) fn dump(tree: &Tree, spans: bool) -> String {
+use crate::tests::Bare;
+
+pub(crate) fn dump(tree: &Tree<Bare>, spans: bool) -> String {
     let mut d = Dumper {
         tree,
         spans,
@@ -46,24 +47,22 @@ pub(crate) fn dump(tree: &Tree, spans: bool) -> String {
 #[derive(Clone, Copy)]
 enum Item {
     Import(Import),
-    Metadata(Metadata),
-    Attribute(Id<Attribute>),
-    Decl(Id<Decl>),
-    Param(Id<Param>),
-    Type(Id<Type>),
-    Field(Id<Field>),
-    Variant(Id<Variant>),
-    Block(Id<Block>),
-    Stmt(Id<Stmt>),
-    MatchArm(Id<MatchArm>),
-    Pattern(Id<Pattern>),
-    Expr(Id<Expr>),
-    FieldValue(Id<FieldValue>),
+    Metadata(Metadata<Bare>),
+    Attribute(Id<Attribute<Bare>>),
+    Decl(Id<Decl<Bare>>),
+    Param(Id<Param<Bare>>),
+    Type(Id<Type<Bare>>),
+    Variant(Id<Variant<Bare>>),
+    Block(Id<Block<Bare>>),
+    Stmt(Id<Stmt<Bare>>),
+    MatchArm(Id<MatchArm<Bare>>),
+    Pattern(Id<Pattern<Bare>>),
+    Expr(Id<Expr<Bare>>),
     Leaf(&'static str, Span),
 }
 
 struct Dumper<'t> {
-    tree: &'t Tree,
+    tree: &'t Tree<Bare>,
     spans: bool,
     out: String,
 }
@@ -113,7 +112,7 @@ impl<'t> Dumper<'t> {
         }
     }
 
-    fn metadata(&self, metadata: Metadata) -> Option<Item> {
+    fn metadata(&self, metadata: Metadata<Bare>) -> Option<Item> {
         (metadata.doc_comment.is_some() || !metadata.attributes.is_empty())
             .then_some(Item::Metadata(metadata))
     }
@@ -192,7 +191,6 @@ impl<'t> Dumper<'t> {
                     Decl::Type(d) | Decl::Alias(d) => {
                         let kind = match (t.decls[id], t.types[d.ty]) {
                             (Decl::Alias(_), _) => "type alias declaration",
-                            (_, Type::Struct(_)) => "struct declaration",
                             (_, Type::Enum(_)) => "enum declaration",
                             (_, Type::Interface(_)) => "interface declaration",
                             _ => {
@@ -223,15 +221,6 @@ impl<'t> Dumper<'t> {
                     mutable(p.mutable),
                     t.children.params.span(id),
                     nested,
-                )
-            }
-            Item::Field(id) => {
-                let f = t.children.fields[id];
-                (
-                    "field",
-                    None,
-                    t.children.fields.span(id),
-                    vec![declared(f.name), Item::Type(f.ty)],
                 )
             }
             Item::Variant(id) => {
@@ -271,22 +260,13 @@ impl<'t> Dumper<'t> {
                 Expr::Block(block) => return self.item(Item::Block(block), depth),
                 _ => self.expr(id),
             },
-            Item::FieldValue(id) => {
-                let f = t.children.field_values[id];
-                (
-                    "field value",
-                    None,
-                    t.children.field_values.span(id),
-                    vec![Item::Leaf("field name", f.name.span), Item::Expr(f.value)],
-                )
-            }
         };
         self.write(kind, op, span, &nested, depth);
     }
 
     /// A signature's parts, with the function's `name`, if any, in source
     /// order.
-    fn signature(&self, name: Option<Ident>, signature: Signature) -> Vec<Item> {
+    fn signature(&self, name: Option<Ident>, signature: Signature<Bare>) -> Vec<Item> {
         let mut nested: Vec<Item> = name.map(declared).into_iter().collect();
         nested.extend(self.names("declared name", signature.type_parameters));
         let parameters = self.tree.children.lists.items(signature.parameters);
@@ -296,11 +276,15 @@ impl<'t> Dumper<'t> {
         nested
     }
 
-    fn type_node(&self, id: Id<Type>) -> (&'static str, Option<&'static str>, Span, Vec<Item>) {
+    fn type_node(
+        &self,
+        id: Id<Type<Bare>>,
+    ) -> (&'static str, Option<&'static str>, Span, Vec<Item>) {
         let t = self.tree;
         let span = t.types.span(id);
-        let one = |ty: Id<Type>| vec![Item::Type(ty)];
+        let one = |ty: Id<Type<Bare>>| vec![Item::Type(ty)];
         let (kind, op, nested) = match t.types[id] {
+            Type::Feature(feature) => match feature {},
             Type::Name => ("type name", None, vec![]),
             Type::Path(segments) => (
                 "path",
@@ -335,11 +319,6 @@ impl<'t> Dumper<'t> {
                 element,
             } => ("slice type", mutable(m), one(element)),
             Type::Function(signature) => ("function type", None, self.signature(None, signature)),
-            Type::Struct(fields) => (
-                "struct type",
-                None,
-                t.children.lists.items(fields).map(Item::Field).collect(),
-            ),
             Type::Enum(variants) => (
                 "enum type",
                 None,
@@ -359,7 +338,7 @@ impl<'t> Dumper<'t> {
         (kind, op, span, nested)
     }
 
-    fn stmt(&self, id: Id<Stmt>) -> (&'static str, Option<&'static str>, Span, Vec<Item>) {
+    fn stmt(&self, id: Id<Stmt<Bare>>) -> (&'static str, Option<&'static str>, Span, Vec<Item>) {
         let t = self.tree;
         let (kind, op, nested) = match t.stmts[id] {
             Stmt::Let {
@@ -431,7 +410,10 @@ impl<'t> Dumper<'t> {
         (kind, op, t.stmts.span(id), nested)
     }
 
-    fn pattern(&self, id: Id<Pattern>) -> (&'static str, Option<&'static str>, Span, Vec<Item>) {
+    fn pattern(
+        &self,
+        id: Id<Pattern<Bare>>,
+    ) -> (&'static str, Option<&'static str>, Span, Vec<Item>) {
         let t = self.tree;
         let (kind, nested) = match t.patterns[id] {
             Pattern::Wildcard => ("wildcard pattern", vec![]),
@@ -457,11 +439,12 @@ impl<'t> Dumper<'t> {
         (kind, None, t.patterns.span(id), nested)
     }
 
-    fn expr(&self, id: Id<Expr>) -> (&'static str, Option<&'static str>, Span, Vec<Item>) {
+    fn expr(&self, id: Id<Expr<Bare>>) -> (&'static str, Option<&'static str>, Span, Vec<Item>) {
         let t = self.tree;
-        let one = |e: Id<Expr>| vec![Item::Expr(e)];
-        let two = |a: Id<Expr>, b: Item| vec![Item::Expr(a), b];
+        let one = |e: Id<Expr<Bare>>| vec![Item::Expr(e)];
+        let two = |a: Id<Expr<Bare>>, b: Item| vec![Item::Expr(a), b];
         let (kind, op, nested) = match t.exprs[id] {
+            Expr::Feature(feature) => match feature {},
             Expr::Name => ("name reference", None, vec![]),
             Expr::Number => ("number literal", None, vec![]),
             Expr::String { c_string } => (
@@ -528,11 +511,6 @@ impl<'t> Dumper<'t> {
                     .map(Item::Expr)
                     .collect(),
             ),
-            Expr::StructLiteral { ty, fields } => {
-                let mut nested: Vec<Item> = ty.map(Item::Type).into_iter().collect();
-                nested.extend(t.children.lists.items(fields).map(Item::FieldValue));
-                ("struct literal", None, nested)
-            }
             Expr::VariantLiteral { case, payload } => (
                 "variant literal",
                 None,

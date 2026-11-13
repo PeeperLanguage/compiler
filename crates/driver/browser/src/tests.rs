@@ -1,4 +1,5 @@
 use super::*;
+use compile::language::Peeper;
 
 /// The project named playground of the files `entries`, each a path in `src`
 /// and its text.
@@ -13,7 +14,7 @@ fn files(entries: &[(&str, &str)]) -> HashMap<String, String> {
 const MANIFEST: &str = manifest::FILE_NAME;
 
 /// What `files` load to, when their peeper.toml gives a project.
-fn loaded(files: HashMap<String, String>) -> model::program::Program {
+fn loaded(files: HashMap<String, String>) -> model::program::Program<Peeper> {
     let project = project_of(&files).expect("the files are a project");
     load(&project, files)
 }

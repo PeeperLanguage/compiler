@@ -188,8 +188,13 @@ and has one job:
   `expr.rs`.
 - **Recursive descent for everything else**: statements (`stmt.rs`), types
   (`types.rs`), declarations (`decl.rs`), patterns. The keyword that begins
-  a statement or declaration picks its rule from a table too (`STATEMENTS`,
-  `DECLARATIONS`), the same way.
+  a statement or declaration picks its rule from a table too, the same way,
+  and so does a keyword that begins a type (`struct { ... }`).
+- The tables are one `Rules` value per language, built by `const` code:
+  `Rules::core()` adds the core's rows, and the top crate
+  (`driver/compile`) adds each feature's (`structs::parse::rows`). A feature's
+  rule lives in its crate (`crates/features/`), and calls the parser's
+  public reading methods.
 - Rules in a table are plain functions taking `p: &mut Parser`; shared helpers
   stay methods.
 - `lib.rs` holds only what all rules share: the token cursor, errors and

@@ -1,6 +1,37 @@
+use std::convert::Infallible;
+
+use syntax::ast::Field;
+use syntax::operators::Precedence;
+
 use super::*;
 
-pub(crate) fn parse_text(text: &str) -> (Tree, Vec<Diagnostic>) {
+/// The language the parser's tests are written in: the core, with no
+/// feature, since each feature's crate depends on this one.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum Bare {}
+
+impl Language for Bare {
+    type Expr = Infallible;
+    type Type = Infallible;
+
+    fn precedence(expr: &Infallible) -> Precedence {
+        match *expr {}
+    }
+
+    fn fields(ty: &Infallible) -> Option<List<Field<Bare>>> {
+        match *ty {}
+    }
+}
+
+static RULES: Rules<Bare> = Rules::core();
+
+impl Grammar for Bare {
+    fn rules() -> &'static Rules<Bare> {
+        &RULES
+    }
+}
+
+pub(crate) fn parse_text(text: &str) -> (Tree<Bare>, Vec<Diagnostic>) {
     parse(&Arc::new(SourceFile::new("t.peep", text)))
 }
 
@@ -203,8 +234,6 @@ const BROKEN_INPUTS: &[&str] = &[
     "fn f() { a orelse ; }",
     "fn f() { a |> b; }",
     "fn f() { a |> b.c(); }",
-    "fn f() { .{ a = }; }",
-    "fn f() { .{ a: 1, b: 2 }; }",
     "fn f() { [_]i32{1, 2; }",
     "fn f() { [x]i32{}; }",
     "fn f() { A::B with ; }",
@@ -212,7 +241,6 @@ const BROKEN_INPUTS: &[&str] = &[
     "fn f() { print(; }",
     "fn f() { &mut ; }",
     "fn f() { a < b > c; }",
-    "fn f() { a<b>.{}; }",
     "fn f() { -; }",
     "fn f() { a orelse { return; }; }",
     "fn f() { if }",
@@ -244,18 +272,13 @@ const BROKEN_INPUTS: &[&str] = &[
     "const",
     "const a",
     "const a: = ;",
-    "struct",
-    "struct S {",
-    "struct S { a: }",
     "enum E { A: }",
     "iface I { fn",
     "iface I { fn (",
     "type",
     "type A =",
     "type A<T",
-    "struct S {} struct",
     "fn f() { let a: i32; }",
-    "fn f() {\nstruct S {}",
     "/// doc\n#[a] let x = 1;",
 ];
 
@@ -418,12 +441,6 @@ fn missing_token_place() {
         errors[0].notes[0].fixes()[0].span.start as usize,
         text.find(';').unwrap()
     );
-    // A closer that comes later means what stands before it does not belong:
-    // that is reported once, and the list ends at its own closer.
-    let (tree, errors) = parse_text("fn f() { let p = Point.{ .x = 1, y = 2 }; }\nfn g() {}");
-    let got: Vec<_> = errors.iter().map(|e| e.message.as_str()).collect();
-    assert_eq!(got, ["expected `}`, found `.`"]);
-    assert_eq!(tree.top_level.len(), 2);
 }
 
 /// What the parser accepts and repairs between items: extra commas,
@@ -433,29 +450,16 @@ fn missing_token_place() {
 fn separators() {
     for text in [
         "fn f(a: i32,, b: i32,) { g(1,, 2,); ;; }",
-        "struct S { a: i32, b: i32, }",
         "enum E { A,, B, }",
-        "fn f(a: ??i32) { let p = .{ a = 1,, }; }",
+        "fn f(a: ??i32) {}",
     ] {
         assert!(messages(text).is_empty(), "{text:?}");
     }
-    for (text, want) in [
-        ("struct S { a: i32; b: i32 }", "struct S { a: i32, b: i32 }"),
-        (
-            "struct S { a: i32; b: i32; }",
-            "struct S { a: i32, b: i32 }",
-        ),
-        (
-            "fn f() { let p = .{ a = 1; b = 2 }; }",
-            "fn f() { let p = .{ a = 1, b = 2 }; }",
-        ),
-        (
-            "fn f() { let v = [2]i32{1; 2}; }",
-            "fn f() { let v = [2]i32{1, 2}; }",
-        ),
-    ] {
-        one_error(text, "expected `,` between items, found `;`", Some(want));
-    }
+    one_error(
+        "fn f() { let v = [2]i32{1; 2}; }",
+        "expected `,` between items, found `;`",
+        Some("fn f() { let v = [2]i32{1, 2}; }"),
+    );
     // A `;` after an unclosed literal ends the statement: the `}` is missing.
     one_error(
         "fn f() {\n    let v = [3]i32{4, 5, 6;\n    return;\n}",

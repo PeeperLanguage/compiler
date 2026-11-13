@@ -9,6 +9,8 @@
 //! diagnostics are kept between compiles; ids, types, THIR and MIR are
 //! rebuilt, since their numbering shifts.
 
+pub mod language;
+
 use std::collections::HashMap;
 use std::hash::DefaultHasher;
 use std::hash::Hash;
@@ -38,6 +40,8 @@ use runtime_abi::messages::panic_text;
 use source::SourceFile;
 use source::Span;
 use syntax::ast;
+
+use crate::language::Peeper;
 
 /// What a compile found, kept for the next compile of the same program.
 #[derive(Default)]
@@ -156,7 +160,7 @@ pub struct Interpreted {
 /// it did. A program that cannot be checked has only loading's errors, and
 /// does not start.
 pub fn interpret(
-    program: &model::program::Program,
+    program: &model::program::Program<Peeper>,
     target: &'static Machine,
 ) -> (Results, Option<Interpreted>) {
     let modules = program.modules.as_slice();
@@ -237,7 +241,7 @@ pub struct Options {
 /// (`Program::checkable`) is not checked: its errors would follow from
 /// those, so it finds nothing.
 pub fn run(
-    program: &model::program::Program,
+    program: &model::program::Program<Peeper>,
     target: &'static Machine,
     previous: Results,
     options: Options,
@@ -348,7 +352,10 @@ pub fn run(
 
 /// The `main` of the module `entry` and whether it returns the exit code, or
 /// the error that it has none a program can start at.
-fn find_entry_point(checker: &mut Checker, entry: ModuleId) -> Result<(DefId, bool), Diagnostic> {
+fn find_entry_point(
+    checker: &mut Checker<Peeper>,
+    entry: ModuleId,
+) -> Result<(DefId, bool), Diagnostic> {
     let module = &checker.modules[entry.index()];
     let tree = &module.ast;
     let main = tree
@@ -400,7 +407,7 @@ fn find_entry_point(checker: &mut Checker, entry: ModuleId) -> Result<(DefId, bo
 /// or not, and gives each, with its MIR and the facts found so far for a
 /// function, then the module's remaining facts, to `use_output`.
 fn compile_module(
-    checker: &mut Checker,
+    checker: &mut Checker<Peeper>,
     module: ModuleId,
     thir: &mut thir::Body,
     use_output: &mut impl FnMut(Output),
@@ -452,7 +459,7 @@ fn compile_module(
 /// and the facts found so far to `use_output`; nothing when it has no body
 /// or its signature has an error.
 fn build_function(
-    checker: &mut Checker,
+    checker: &mut Checker<Peeper>,
     module: ModuleId,
     function: FunctionCopy,
     thir: &mut thir::Body,
@@ -479,7 +486,7 @@ fn build_function(
 /// Feeds `ty` to `hasher` by what it is, not by its id, which differs between
 /// compiles: a named type by its module's path and its name. What it holds
 /// is in the interface of the module declaring it (`interface`).
-fn hash_type(checker: &Checker, id: TypeId, hasher: &mut DefaultHasher) {
+fn hash_type(checker: &Checker<Peeper>, id: TypeId, hasher: &mut DefaultHasher) {
     let ty = &checker.types[id];
     std::mem::discriminant(ty).hash(hasher);
     match ty {
@@ -545,7 +552,7 @@ fn hash_type(checker: &Checker, id: TypeId, hasher: &mut DefaultHasher) {
 /// change reaches every module that can see it through a type, and each
 /// declaration's kind, name, and type, value or struct fields. Its bodies are
 /// not part of it.
-fn interface(checker: &Checker, module: ModuleId, done: &[ModuleResults]) -> u64 {
+fn interface(checker: &Checker<Peeper>, module: ModuleId, done: &[ModuleResults]) -> u64 {
     let modules = checker.modules;
     let checked = &checker.module_checks[module.index()];
     let (declared_types, constants) = (&checked.declared_types, &checked.constants);

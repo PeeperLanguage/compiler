@@ -236,10 +236,6 @@ const Answer: i32 = 42;
 const Untyped = 1;
 #[extern("rt_exit")]
 fn exit(code: i32);
-struct Pair<T> {
-    first: T,
-    second: struct { flag: bool },
-};
 enum Status { Ready, Waiting: Pair<i32>, }
 iface Summer {
     fn sum(&self) -> i32,
@@ -268,19 +264,6 @@ fn Pair::new() {}
     parameter
       declared name code
       type name i32
-  struct declaration
-    declared name Pair
-    declared name T
-    struct type
-      field
-        declared name first
-        type name T
-      field
-        declared name second
-        struct type
-          field
-            declared name flag
-            type name bool
   enum declaration
     declared name Status
     enum type
@@ -351,7 +334,6 @@ fn declaration_errors() {
         ),
         ("fn (p: Point) f() {}", "expected `identifier`, found `(`"),
         ("type A i32;", "expected `=`, found `identifier`"),
-        ("struct S { a i32 }", "expected `:`, found `identifier`"),
         ("enum E { A B }", "expected `,`"),
     ] {
         one_error(text, message, None);

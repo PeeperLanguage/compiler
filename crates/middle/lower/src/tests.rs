@@ -4,6 +4,7 @@
 use std::sync::Arc;
 
 use check::Checker;
+use compile::language::Peeper;
 use model::ConstArguments;
 use model::DefId;
 use model::FunctionCopy;
@@ -27,7 +28,7 @@ fn lowered(text: &str) -> String {
 /// MIR and the debug types lowering made.
 fn lower_main(text: &str, target: &str) -> (String, mir::Body, DebugTypes) {
     let file = Arc::new(SourceFile::new("main.peep", text));
-    let (ast, parse) = parser::parse(&file);
+    let (ast, parse) = parser::parse::<Peeper>(&file);
     assert!(parse.is_empty(), "{parse:?}");
     let modules = [model::program::Module {
         path: "app:main".to_string(),

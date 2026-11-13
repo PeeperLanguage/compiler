@@ -15,5 +15,8 @@ syntax.workspace = true
 parser.workspace = true
 toml_edit.workspace = true
 
+[dev-dependencies]
+compile.workspace = true
+
 [lints]
 workspace = true

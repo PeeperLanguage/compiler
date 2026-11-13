@@ -2,7 +2,7 @@
 //! the value of each constant, built into THIR in one walk per body
 //! (docs/ir-design.md). It starts with each module's scope.
 
-mod builder;
+pub mod builder;
 pub mod builtin;
 pub mod declaration;
 mod expression;
@@ -17,6 +17,7 @@ use std::cell::RefCell;
 use std::sync::Arc;
 
 use arena::Id;
+use builder::ThirBuilder;
 use diagnostics::Code;
 use diagnostics::Diagnostic;
 use diagnostics::fix::Fix;
@@ -34,6 +35,7 @@ use model::semantic_types::ImplementationId;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
 use model::semantic_types::Types;
+use model::thir;
 use model::thir::Fact;
 use model::thir::FactKind;
 use model::thir::Symbol;
@@ -41,13 +43,39 @@ use rustc_hash::FxHashMap;
 use scope::Scope;
 use source::Span;
 use syntax::ast;
+use syntax::ast::Language;
+
+/// What the checker asks of a language: how each feature's nodes are
+/// checked (docs/feature-front.md, section 7).
+pub trait Checked: Language {
+    /// The feature expression `expr`, written at `span`, where a value of
+    /// the type `expected` is wanted, if one is.
+    fn check_expr(
+        builder: &mut ThirBuilder<'_, '_, Self>,
+        expr: Self::Expr,
+        span: Span,
+        expected: Option<TypeId>,
+    ) -> thir::Expr;
+
+    /// The type the feature type `ty`, written at `span`, names.
+    fn resolve_type(checker: &mut Checker<'_, Self>, ty: Self::Type, span: Span) -> TypeId;
+
+    /// The type the module's type declaration `definition`, written
+    /// `written`, declares with the feature type `ty`.
+    fn declare_type(
+        checker: &mut Checker<'_, Self>,
+        definition: DefId,
+        written: ast::TypeDecl<Self>,
+        ty: Self::Type,
+    ) -> TypeId;
+}
 
 /// Checks a program's declarations. Each module-scope declaration (`DefId`)
 /// is checked once, the first time anything asks for it, and its result is
 /// kept in the table of its category: types, functions or constants. A body's
 /// own names (`Symbol::Local`) are checked in place with the body.
-pub struct Checker<'p> {
-    pub modules: &'p [model::program::Module], // in the program's order
+pub struct Checker<'p, L: Language> {
+    pub modules: &'p [model::program::Module<L>], // in the program's order
     /// What checking each module found so far, by `ModuleId`.
     pub module_checks: Vec<ModuleChecks<'p>>,
     pub types: Types, // the program's types, built-in and declared
@@ -173,15 +201,15 @@ pub enum State<T> {
     Done(T),
 }
 
-impl<'p> Checker<'p> {
+impl<'p, L: Checked> Checker<'p, L> {
     /// Nothing checked yet of `modules` but their scopes, whose errors are
     /// each module's first diagnostics, for `target`.
     /// Facts are recorded when `record_facts`, as for an editor.
     pub fn new(
-        modules: &'p [model::program::Module],
+        modules: &'p [model::program::Module<L>],
         target: &'static Machine,
         record_facts: bool,
-    ) -> Checker<'p> {
+    ) -> Checker<'p, L> {
         let module_checks = (0..modules.len())
             .map(|index| {
                 let mut diagnostics = Vec::new();
@@ -334,7 +362,7 @@ impl<'p> Checker<'p> {
     }
 
     /// The type `ty` as a message names it (`Types::text`).
-    pub(crate) fn type_text(&self, ty: TypeId) -> String {
+    pub fn type_text(&self, ty: TypeId) -> String {
         model::program::type_text(self.modules, &self.types, ty)
     }
 
@@ -446,7 +474,7 @@ impl<'p> Checker<'p> {
     }
 
     /// The module being checked.
-    pub(crate) fn module(&self) -> &'p model::program::Module {
+    pub fn module(&self) -> &'p model::program::Module<L> {
         &self.modules[self.current_module().index()]
     }
 
@@ -456,14 +484,14 @@ impl<'p> Checker<'p> {
     }
 
     /// Adds `diagnostic` to what the module being checked reported.
-    fn report(&mut self, diagnostic: Diagnostic) {
+    pub fn report(&mut self, diagnostic: Diagnostic) {
         let module = self.current_module().index();
         self.module_checks[module].diagnostics.push(diagnostic);
     }
 
     /// Reports the error `message` at `span` of the module, and gives the type
     /// of an error already reported, so nothing more is reported about it.
-    fn error(&mut self, code: Code, message: impl Into<String>, span: Span) -> TypeId {
+    pub fn error(&mut self, code: Code, message: impl Into<String>, span: Span) -> TypeId {
         let diagnostic = Diagnostic::new(code, message).label(&self.module().ast.file, span, "");
         self.report(diagnostic);
         TypeId::INVALID
@@ -535,11 +563,11 @@ impl<'p> Checker<'p> {
     /// `module::Type::name`. A path that names nothing or is not supported is
     /// reported. Another module's name is reachable only if it starts with an
     /// upper case letter.
-    pub(crate) fn resolve_path(&mut self, path: Id<ast::Type>) -> Option<Symbol> {
+    pub(crate) fn resolve_path(&mut self, path: Id<ast::Type<L>>) -> Option<Symbol> {
         let tree = &self.module().ast;
         let span = tree.types.span(path);
         // A `Type::Generic` alone, as `Box<T>`, is one segment.
-        let segments: Vec<Id<ast::Type>> = match tree.types[path] {
+        let segments: Vec<Id<ast::Type<L>>> = match tree.types[path] {
             ast::Type::Path(segments) => tree.children.lists.items(segments).collect(),
             _ => vec![path],
         };
@@ -699,7 +727,7 @@ impl<'p> Checker<'p> {
 
     /// Reports syntax the checker does not handle yet, such as `what` =
     /// "reference types".
-    fn not_supported(&mut self, span: Span, what: &str) -> TypeId {
+    pub fn not_supported(&mut self, span: Span, what: &str) -> TypeId {
         let message = format!("{what} are not supported yet");
         self.error(diagnostics::NOT_SUPPORTED_YET, message, span)
     }

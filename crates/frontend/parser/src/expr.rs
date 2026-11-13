@@ -15,8 +15,9 @@ use syntax::operators::Precedence;
 use syntax::operators::UnaryOp;
 use token::TokenKind;
 
+use crate::Grammar;
 use crate::Parser;
-use crate::literals::anonymous_struct_literal;
+use crate::Rules;
 use crate::literals::array_literal;
 use crate::literals::bool_literal;
 use crate::literals::character_literal;
@@ -25,28 +26,37 @@ use crate::literals::number_literal;
 use crate::literals::string_literal;
 
 /// Reads the expression the current token begins.
-type PrefixRule = fn(&mut Parser) -> Id<Expr>;
+pub type PrefixRule<L> = fn(&mut Parser<L>) -> Id<Expr<L>>;
+
+/// Reads what continues the path `path` in an expression, from the token
+/// after it.
+pub type AfterPathRule<L> = fn(&mut Parser<L>, Id<Type<L>>) -> Id<Expr<L>>;
 
 /// Reads what the current token adds to the expression `left`.
-type InfixRule = fn(&mut Parser, Id<Expr>) -> Id<Expr>;
+pub type InfixRule<L> = fn(&mut Parser<L>, Id<Expr<L>>) -> Id<Expr<L>>;
 
-/// The rules of each token, indexed by token kind. A token without a prefix
-/// rule cannot begin an expression; a token without an infix rule never
-/// continues one. `binary` is the operator a token of the `binary` rule
-/// writes.
-struct Rules {
-    prefix: [Option<PrefixRule>; 256],
-    infix: [Option<(Precedence, InfixRule)>; 256],
-    binary: [Option<BinaryOp>; 256],
-}
-
-impl Rules {
-    const fn prefix(&mut self, kind: TokenKind, read: PrefixRule) {
+impl<L: Grammar> Rules<L> {
+    pub const fn prefix(&mut self, kind: TokenKind, read: PrefixRule<L>) {
+        assert!(
+            self.prefix[kind as usize].is_none(),
+            "two rules begin an expression with one token"
+        );
         self.prefix[kind as usize] = Some(read);
     }
 
-    const fn infix(&mut self, kind: TokenKind, precedence: Precedence, read: InfixRule) {
+    pub const fn infix(&mut self, kind: TokenKind, precedence: Precedence, read: InfixRule<L>) {
+        assert!(
+            self.infix[kind as usize].is_none(),
+            "two rules continue an expression with one token"
+        );
         self.infix[kind as usize] = Some((precedence, read));
+    }
+
+    /// The rule that reads what continues a path when the two tokens after
+    /// it are `first` and `second`.
+    fn after_path_rule(&self, first: TokenKind, second: TokenKind) -> Option<AfterPathRule<L>> {
+        let (paired, read) = self.after_path[first as usize]?;
+        (paired == second).then_some(read)
     }
 
     const fn binary_operator(&mut self, kind: TokenKind, op: BinaryOp) {
@@ -55,12 +65,8 @@ impl Rules {
     }
 }
 
-static RULES: Rules = {
-    let mut rules = Rules {
-        prefix: [None; 256],
-        infix: [None; 256],
-        binary: [None; 256],
-    };
+/// Adds the core's expression rules to `rules`.
+pub(crate) const fn expression_rows<L: Grammar>(rules: &mut Rules<L>) {
     // values
     rules.prefix(TokenKind::Ident, name_or_path);
     rules.prefix(TokenKind::SelfValue, self_name);
@@ -74,7 +80,6 @@ static RULES: Rules = {
     rules.prefix(TokenKind::None, none_literal);
     rules.prefix(TokenKind::LeftParen, parentheses);
     rules.prefix(TokenKind::LeftBracket, array_literal);
-    rules.prefix(TokenKind::Dot, anonymous_struct_literal);
 
     // prefix operators and built-in calls
     rules.prefix(TokenKind::Plus, leading_plus);
@@ -129,20 +134,19 @@ static RULES: Rules = {
     rules.infix(TokenKind::LeftParen, Precedence::Call, call);
     rules.infix(TokenKind::LeftBracket, Precedence::Call, index);
     rules.infix(TokenKind::Dot, Precedence::Call, selector);
-    rules
-};
-
-/// Whether an expression can begin with `kind`.
-pub(crate) fn starts_expression(kind: TokenKind) -> bool {
-    RULES.prefix[kind as usize].is_some()
 }
 
-impl Parser {
+/// Whether an expression can begin with `kind`.
+pub(crate) fn starts_expression<L: Grammar>(kind: TokenKind) -> bool {
+    L::rules().prefix[kind as usize].is_some()
+}
+
+impl<L: Grammar> Parser<L> {
     /// Reads an expression whose operators bind tighter than `min`.
-    pub(crate) fn expr(&mut self, min: Precedence) -> Id<Expr> {
+    pub fn expr(&mut self, min: Precedence) -> Id<Expr<L>> {
         source::grow_stack(|| {
             let t = self.tok();
-            let Some(read) = RULES.prefix[t.kind as usize] else {
+            let Some(read) = L::rules().prefix[t.kind as usize] else {
                 self.fail(
                     Diagnostic::new(
                         diagnostics::EXPECTED_TOKEN,
@@ -157,7 +161,7 @@ impl Parser {
                 return self.add(self.last_end, Expr::Invalid);
             };
             let mut left = read(self);
-            while let Some((precedence, read)) = RULES.infix[self.tok().kind as usize]
+            while let Some((precedence, read)) = L::rules().infix[self.tok().kind as usize]
                 && precedence > min
             {
                 left = read(self, left);
@@ -167,13 +171,13 @@ impl Parser {
     }
 
     /// Reads the current token as an expression without children.
-    pub(crate) fn leaf(&mut self, node: Expr) -> Id<Expr> {
+    pub(crate) fn leaf(&mut self, node: Expr<L>) -> Id<Expr<L>> {
         let start = self.next().span.start;
         self.add(start, node)
     }
 
     /// The start of expression `id`, where an infix expression on it starts.
-    fn start_of(&self, id: Id<Expr>) -> u32 {
+    fn start_of(&self, id: Id<Expr<L>>) -> u32 {
         self.tree.exprs.span(id).start
     }
 
@@ -183,16 +187,17 @@ impl Parser {
     fn starts_path(&self) -> bool {
         match self.ahead(1).kind {
             TokenKind::ColonColon => true,
-            TokenKind::Dot => self.ahead(2).kind == TokenKind::LeftBrace,
             TokenKind::Less => self.opens_type_arguments(),
-            _ => false,
+            first => L::rules()
+                .after_path_rule(first, self.ahead(2).kind)
+                .is_some(),
         }
     }
 
     /// Whether the `<` after the current name opens type arguments: its
-    /// matching `>` comes before the statement ends, and `::` or `.{` follows
-    /// it. Only those two decide, so in `if a < b && c > d {` the `<` stays a
-    /// comparison.
+    /// matching `>` comes before the statement ends, and `::` or what
+    /// continues a path (`.{`) follows it. Only those decide, so in
+    /// `if a < b && c > d {` the `<` stays a comparison.
     fn opens_type_arguments(&self) -> bool {
         let mut depth = 0i32;
         for i in self.current() + 1..self.tokens.len() {
@@ -211,8 +216,9 @@ impl Parser {
             }
             if depth == 0 {
                 let next = self.tokens[i + 1].kind;
+                let after = self.tokens.get(i + 2).map_or(TokenKind::Eof, |t| t.kind);
                 return next == TokenKind::ColonColon
-                    || next == TokenKind::Dot && self.tokens[i + 2].kind == TokenKind::LeftBrace;
+                    || L::rules().after_path_rule(next, after).is_some();
             }
         }
         false
@@ -220,7 +226,7 @@ impl Parser {
 
     /// Reports `case` unless it is a full path `Enum::Case` (or a type already
     /// reported as invalid).
-    pub(crate) fn require_path(&mut self, case: Id<Type>) {
+    pub(crate) fn require_path(&mut self, case: Id<Type<L>>) {
         if !matches!(self.tree.types[case], Type::Path(_) | Type::Invalid) {
             let span = self.tree.types.span(case);
             self.repair(
@@ -238,18 +244,18 @@ impl Parser {
 /// (`a::B`, `Box<T>::new`), a struct literal (`Point.{...}`) or a variant
 /// literal (`Enum::Case with payload`).
 /// Reads `self`, the name of a type's function's first parameter.
-fn self_name(p: &mut Parser) -> Id<Expr> {
+fn self_name<L: Grammar>(p: &mut Parser<L>) -> Id<Expr<L>> {
     p.leaf(Expr::Name)
 }
 
-fn name_or_path(p: &mut Parser) -> Id<Expr> {
+fn name_or_path<L: Grammar>(p: &mut Parser<L>) -> Id<Expr<L>> {
     if !p.starts_path() {
         return p.leaf(Expr::Name);
     }
     let path = p.named_type();
     let start = p.tree.types.span(path).start;
-    if p.at(TokenKind::Dot) && p.ahead(1).kind == TokenKind::LeftBrace {
-        return p.struct_literal(Some(path), start);
+    if let Some(read) = L::rules().after_path_rule(p.tok().kind, p.ahead(1).kind) {
+        return read(p, path);
     }
     if p.at(TokenKind::With) && matches!(p.tree.types[path], Type::Path(_)) {
         p.next();
@@ -266,19 +272,19 @@ fn name_or_path(p: &mut Parser) -> Id<Expr> {
 }
 
 /// Reads a range with no start: `..b`, `..=b`, or `..` before `]`.
-fn open_range(p: &mut Parser) -> Id<Expr> {
+fn open_range<L: Grammar>(p: &mut Parser<L>) -> Id<Expr<L>> {
     let start = p.tok().span.start;
     range_from(p, start, None)
 }
 
 /// Reads a range from `low`: `a..b`, `a..=b`, or `a..` before `]`.
-fn range(p: &mut Parser, low: Id<Expr>) -> Id<Expr> {
+fn range<L: Grammar>(p: &mut Parser<L>, low: Id<Expr<L>>) -> Id<Expr<L>> {
     range_from(p, p.start_of(low), Some(low))
 }
 
 /// Reads `..` or `..=` and what follows it: an end, then `:step` to step by
 /// more than one. Only right before the `]` may a range leave out its end.
-fn range_from(p: &mut Parser, start: u32, low: Option<Id<Expr>>) -> Id<Expr> {
+fn range_from<L: Grammar>(p: &mut Parser<L>, start: u32, low: Option<Id<Expr<L>>>) -> Id<Expr<L>> {
     let op = p.next();
     let mut high = None;
     if !p.at(TokenKind::RightBracket) {
@@ -314,7 +320,7 @@ fn range_from(p: &mut Parser, start: u32, low: Option<Id<Expr>>) -> Id<Expr> {
 }
 
 /// Reads `( expression )`.
-fn parentheses(p: &mut Parser) -> Id<Expr> {
+fn parentheses<L: Grammar>(p: &mut Parser<L>) -> Id<Expr<L>> {
     let open = p.next();
     let inner = p.expr(Precedence::Lowest);
     p.close(TokenKind::RightParen, open);
@@ -324,20 +330,20 @@ fn parentheses(p: &mut Parser) -> Id<Expr> {
 /// Reads a binary operator and its right side. The right side takes only
 /// operators that bind tighter, so operators of one precedence group to the
 /// left: a - b - c is (a - b) - c.
-fn binary(p: &mut Parser, left: Id<Expr>) -> Id<Expr> {
+fn binary<L: Grammar>(p: &mut Parser<L>, left: Id<Expr<L>>) -> Id<Expr<L>> {
     let kind = p.next().kind;
-    let op = RULES.binary[kind as usize].expect("binary is the rule of operator tokens only");
+    let op = L::rules().binary[kind as usize].expect("binary is the rule of operator tokens only");
     let right = p.expr(op.precedence());
     p.add(p.start_of(left), Expr::Binary { op, left, right })
 }
 
 /// Reads the arguments of a call to `callee`.
-fn call(p: &mut Parser, callee: Id<Expr>) -> Id<Expr> {
+fn call<L: Grammar>(p: &mut Parser<L>, callee: Id<Expr<L>>) -> Id<Expr<L>> {
     let arguments = p.delimited(
         TokenKind::LeftParen,
         TokenKind::RightParen,
         false,
-        starts_expression,
+        starts_expression::<L>,
         spreadable,
     );
     p.add(p.start_of(callee), Expr::Call { callee, arguments })
@@ -345,7 +351,7 @@ fn call(p: &mut Parser, callee: Id<Expr>) -> Id<Expr> {
 
 /// Reads an entry of an array literal or an argument of a call: `value` or
 /// `value...`.
-pub(crate) fn spreadable(p: &mut Parser) -> Id<Expr> {
+pub(crate) fn spreadable<L: Grammar>(p: &mut Parser<L>) -> Id<Expr<L>> {
     let start = p.tok().span.start;
     let value = p.expr(Precedence::Lowest);
     if !p.at(TokenKind::Ellipsis) {
@@ -357,7 +363,7 @@ pub(crate) fn spreadable(p: &mut Parser) -> Id<Expr> {
 
 /// Reads `+x` as `x`, reporting the `+`: there is no unary `+`, as it would
 /// change nothing.
-fn leading_plus(p: &mut Parser) -> Id<Expr> {
+fn leading_plus<L: Grammar>(p: &mut Parser<L>) -> Id<Expr<L>> {
     let plus = p.next().span;
     let fix = p.fix(plus, "");
     p.repair(
@@ -372,7 +378,7 @@ fn leading_plus(p: &mut Parser) -> Id<Expr> {
 }
 
 /// Reads `-x`, `!x` or `~x`.
-fn unary(p: &mut Parser) -> Id<Expr> {
+fn unary<L: Grammar>(p: &mut Parser<L>) -> Id<Expr<L>> {
     let token = p.next();
     let op = match token.kind {
         TokenKind::Minus => UnaryOp::Negate,
@@ -385,7 +391,7 @@ fn unary(p: &mut Parser) -> Id<Expr> {
 }
 
 /// Reads `&x` or `&mut x`.
-fn reference(p: &mut Parser) -> Id<Expr> {
+fn reference<L: Grammar>(p: &mut Parser<L>) -> Id<Expr<L>> {
     let start = p.next().span.start;
     // `&[]T` and `&mut []T` are slice types; nothing after `&` reads `[]`.
     let after_mut = usize::from(p.at(TokenKind::Mut));
@@ -420,14 +426,14 @@ fn reference(p: &mut Parser) -> Id<Expr> {
 
 /// Reads a type that cannot be a value (`*T`, `rawptr`) where a value could
 /// go.
-fn type_value(p: &mut Parser) -> Id<Expr> {
+fn type_value<L: Grammar>(p: &mut Parser<L>) -> Id<Expr<L>> {
     let start = p.tok().span.start;
     let ty = p.type_expr();
     p.add(start, Expr::Type(ty))
 }
 
 /// Reads `@x`.
-fn raw_address(p: &mut Parser) -> Id<Expr> {
+fn raw_address<L: Grammar>(p: &mut Parser<L>) -> Id<Expr<L>> {
     let start = p.next().span.start;
     let value = p.expr(Precedence::Prefix);
     p.add(start, Expr::RawAddress(value))
@@ -435,7 +441,7 @@ fn raw_address(p: &mut Parser) -> Id<Expr> {
 
 /// Reads `print(values)` or `println(values)`, which take any number of
 /// values.
-fn print(p: &mut Parser) -> Id<Expr> {
+fn print<L: Grammar>(p: &mut Parser<L>) -> Id<Expr<L>> {
     let keyword = p.next();
     let node = Expr::Print {
         newline: keyword.kind == TokenKind::Println,
@@ -443,7 +449,7 @@ fn print(p: &mut Parser) -> Id<Expr> {
             TokenKind::LeftParen,
             TokenKind::RightParen,
             false,
-            starts_expression,
+            starts_expression::<L>,
             |p| p.expr(Precedence::Lowest),
         ),
     };
@@ -451,7 +457,7 @@ fn print(p: &mut Parser) -> Id<Expr> {
 }
 
 /// Reads `[index]` after `value`.
-fn index(p: &mut Parser, value: Id<Expr>) -> Id<Expr> {
+fn index<L: Grammar>(p: &mut Parser<L>, value: Id<Expr<L>>) -> Id<Expr<L>> {
     let open = p.next();
     let index = p.expr(Precedence::Lowest);
     p.close(TokenKind::RightBracket, open);
@@ -459,7 +465,7 @@ fn index(p: &mut Parser, value: Id<Expr>) -> Id<Expr> {
 }
 
 /// Reads `.name` or `.*` after `value`.
-fn selector(p: &mut Parser, value: Id<Expr>) -> Id<Expr> {
+fn selector<L: Grammar>(p: &mut Parser<L>, value: Id<Expr<L>>) -> Id<Expr<L>> {
     p.next();
     if p.at(TokenKind::Asterisk) {
         p.next();
@@ -470,14 +476,14 @@ fn selector(p: &mut Parser, value: Id<Expr>) -> Id<Expr> {
 }
 
 /// Reads `as Type` after `value`.
-fn cast(p: &mut Parser, value: Id<Expr>) -> Id<Expr> {
+fn cast<L: Grammar>(p: &mut Parser<L>, value: Id<Expr<L>>) -> Id<Expr<L>> {
     p.next();
     let ty = p.type_expr();
     p.add(p.start_of(value), Expr::Cast { value, ty })
 }
 
 /// Reads `is Enum::Case` after `value`; the case is a full path.
-fn case_test(p: &mut Parser, value: Id<Expr>) -> Id<Expr> {
+fn case_test<L: Grammar>(p: &mut Parser<L>, value: Id<Expr<L>>) -> Id<Expr<L>> {
     p.next();
     let case = p.type_expr();
     p.require_path(case);
@@ -486,7 +492,7 @@ fn case_test(p: &mut Parser, value: Id<Expr>) -> Id<Expr> {
 
 /// Reads `orelse fallback` or `orelse { block }` after `value`. The fallback
 /// may itself end in `orelse`: a orelse b orelse c is a orelse (b orelse c).
-fn or_else(p: &mut Parser, value: Id<Expr>) -> Id<Expr> {
+fn or_else<L: Grammar>(p: &mut Parser<L>, value: Id<Expr<L>>) -> Id<Expr<L>> {
     p.next();
     let fallback = if p.at(TokenKind::LeftBrace) {
         let block = p.block();
@@ -501,7 +507,7 @@ fn or_else(p: &mut Parser, value: Id<Expr>) -> Id<Expr> {
 /// Reads `|> f(arguments)` after `value`. Its right side takes only what
 /// binds tighter than a prefix operator, a call, so `a |> len() as i32` is
 /// (a |> len()) as i32. The target must call a function, not a method.
-fn pipe(p: &mut Parser, value: Id<Expr>) -> Id<Expr> {
+fn pipe<L: Grammar>(p: &mut Parser<L>, value: Id<Expr<L>>) -> Id<Expr<L>> {
     p.next();
     let call = p.expr(Precedence::Prefix);
     match p.tree.exprs[call] {

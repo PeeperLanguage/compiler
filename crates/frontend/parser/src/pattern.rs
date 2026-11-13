@@ -6,13 +6,14 @@ use syntax::ast::Pattern;
 
 use token::TokenKind;
 
+use crate::Grammar;
 use crate::Parser;
 use crate::is_name;
 
-impl Parser {
+impl<L: Grammar> Parser<L> {
     /// Reads `Enum::Case`, perhaps followed by `with` and the pattern of its
     /// payload. The case is a full path.
-    pub(crate) fn case_pattern(&mut self) -> Id<Pattern> {
+    pub(crate) fn case_pattern(&mut self) -> Id<Pattern<L>> {
         source::grow_stack(|| {
             let start = self.tok().span.start;
             let case = self.type_expr();
@@ -27,7 +28,7 @@ impl Parser {
 
     /// Reads the pattern after `with`: `none`, `_`, a name to bind,
     /// `.{ fields }`, or another case.
-    fn payload_pattern(&mut self) -> Id<Pattern> {
+    fn payload_pattern(&mut self) -> Id<Pattern<L>> {
         let t = self.tok();
         match t.kind {
             TokenKind::None => {
@@ -66,7 +67,7 @@ impl Parser {
     /// Reads `.{ a, b as c, _ }`: fields to bind, each by its own name or by the
     /// name after `as`, and a `_` for the fields left out, which must come last.
     /// A `=` written for `as` is read as `as`.
-    pub(crate) fn struct_pattern(&mut self) -> Id<Pattern> {
+    pub(crate) fn struct_pattern(&mut self) -> Id<Pattern<L>> {
         let start = self.next().span.start; // `.`
         let fields = self.delimited(
             TokenKind::LeftBrace,

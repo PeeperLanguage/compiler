@@ -7,12 +7,15 @@ license-file.workspace = true
 publish.workspace = true
 
 [dependencies]
+arena.workspace = true
 diagnostics.workspace = true
 model.workspace = true
 syntax.workspace = true
 check.workspace = true
 eval.workspace = true
 lower.workspace = true
+parser.workspace = true
+structs.workspace = true
 runtime_abi.workspace = true
 source.workspace = true
 

@@ -1,3 +1,4 @@
+use compile::language::Peeper;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::Command;
@@ -43,7 +44,7 @@ fn program_ll(text: &str, target: &str) -> HashMap<String, String> {
             "fn Half(a: i32, b: i32) -> i32 { return a / b; }\n".to_string(),
         ),
     ]);
-    let program = project::load(&project, &open_files);
+    let program = project::load::<Peeper>(&project, &open_files);
     assert!(program.checkable);
     let files: Vec<_> = (program.modules.iter())
         .map(|module| module.ast.file.clone())

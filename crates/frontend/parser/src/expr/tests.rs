@@ -3,6 +3,7 @@ use syntax::ast::Stmt;
 use syntax::ast::Tree;
 
 use super::*;
+use crate::tests::Bare;
 use crate::tests::dump_of;
 use crate::tests::messages;
 use crate::tests::one_error;
@@ -52,7 +53,7 @@ fn operators_are_written_as_their_tokens() {
 }
 
 /// The expression of the first statement of the first function.
-fn first_expression(tree: &Tree) -> Id<Expr> {
+fn first_expression(tree: &Tree<Bare>) -> Id<Expr<Bare>> {
     let decl = tree.declarations().next().unwrap();
     let Decl::Function(f) = tree.decls[decl] else {
         panic!("not a function")
@@ -70,7 +71,7 @@ fn first_expression(tree: &Tree) -> Id<Expr> {
 }
 
 /// An expression with each binary operation in parentheses.
-fn grouped(t: &Tree, id: Id<Expr>) -> String {
+fn grouped(t: &Tree<Bare>, id: Id<Expr<Bare>>) -> String {
     let text = |span| t.file.slice(span).to_string();
     match t.exprs[id] {
         Expr::Binary { op, left, right } => {
@@ -99,7 +100,7 @@ fn grouped(t: &Tree, id: Id<Expr>) -> String {
             end,
             step,
         } => {
-            let part = |part: Option<Id<Expr>>| part.map_or(String::new(), |e| grouped(t, e));
+            let part = |part: Option<Id<Expr<Bare>>>| part.map_or(String::new(), |e| grouped(t, e));
             let op = if inclusive { "..=" } else { ".." };
             let step = step.map_or(String::new(), |e| format!(":{}", grouped(t, e)));
             format!("({}{op}{}{step})", part(start), part(end))
@@ -186,9 +187,7 @@ fn parses_expressions() {
     b'y';
     true;
     none;
-    Point.{ x = 1, y = -2 };
-    .{ a = &mut v, b = @raw };
-    Shape::Line with .{ end = Box<i32>::new(1) };
+    Shape::Line with Box<i32>::new(1);
     [_]u8{ 1, 2, 4..=8:2..., (0..3)..., a... };
     sum(1, a..., &mut b...);
     println(items[1..=n]);
@@ -209,40 +208,17 @@ fn parses_expressions() {
       expression statement
         none literal none
       expression statement
-        struct literal
-          type name Point
-          field value
-            field name x
-            number literal 1
-          field value
-            field name y
-            unary expression -
-              number literal 2
-      expression statement
-        struct literal
-          field value
-            field name a
-            reference expression mut
-              name reference v
-          field value
-            field name b
-            raw address expression
-              name reference raw
-      expression statement
         variant literal
           path
             type name Shape
             type name Line
-          struct literal
-            field value
-              field name end
-              call expression
-                path
-                  generic type
-                    type name Box
-                    type name i32
-                  type name new
-                number literal 1
+          call expression
+            path
+              generic type
+                type name Box
+                type name i32
+              type name new
+            number literal 1
       expression statement
         array literal
           fixed array type
@@ -290,10 +266,6 @@ fn expression_errors() {
         ("a is b;", "enum case must use a fully named path"),
         ("a |> b;", "pipe target must be a free-function call"),
         ("a |> b.c();", "pipe cannot call a method"),
-        (
-            ".{ a: 1, b: 2 };",
-            "expected `=` after struct literal field name",
-        ),
         ("[x]i32{};", "expected array length"),
         (
             "[]i32{};",
@@ -350,13 +322,13 @@ fn type_expressions() {
     assert_eq!(dump_of(text), want);
 }
 
-/// `<` begins type arguments only when `::` or `.{` follows the matching `>`.
+/// `<` begins type arguments only when `::`, or what continues a path, follows
+/// the matching `>`.
 #[test]
 fn comparison_is_not_type_arguments() {
     for (text, want) in [
         ("a < b && c > d;", "binary"),
         ("Box<T>::new();", "call"),
-        ("Pair<A, B>.{};", "struct literal"),
         ("a < b;", "binary"),
         ("f(a < b, c > d);", "call"),
     ] {
@@ -365,7 +337,6 @@ fn comparison_is_not_type_arguments() {
         let got = match tree.exprs[first_expression(&tree)] {
             Expr::Binary { .. } => "binary",
             Expr::Call { .. } => "call",
-            Expr::StructLiteral { .. } => "struct literal",
             other => panic!("{text}: {other:?}"),
         };
         assert_eq!(got, want, "{text}");

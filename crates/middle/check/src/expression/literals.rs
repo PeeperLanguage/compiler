@@ -1,5 +1,5 @@
-//! Checking literals that build a value: strings, `none`, structs, arrays,
-//! their spreads, and ranges.
+//! Checking literals that build a value: strings, `none`, arrays, their
+//! spreads, and ranges.
 
 use std::num::NonZeroU32;
 
@@ -14,15 +14,15 @@ use model::semantic_types::TypeId;
 use model::thir::Expr;
 use model::thir::ExprKind;
 use model::thir::FactKind;
-use model::thir::FieldValue;
 use source::Span;
 use syntax::ast;
 use syntax::operators::Precedence;
 
+use crate::Checked;
 use crate::builder::ThirBuilder;
 use crate::expression::unsuffixed_literal;
 
-impl ThirBuilder<'_, '_> {
+impl<L: Checked> ThirBuilder<'_, '_, L> {
     /// The string literal at `span`, a `&str` or with its `c` a `&cstr` (`ty`):
     /// its bytes.
     pub(crate) fn string_literal(&mut self, span: Span, ty: TypeId) -> Expr {
@@ -61,102 +61,6 @@ impl ThirBuilder<'_, '_> {
         }
     }
 
-    /// `Type.{ name = value, ... }`, written at `span`, or `.{ ... }` taking
-    /// the struct type `expected`: a struct value with each field set once.
-    /// A field that is unknown, set twice or missing is reported.
-    pub(super) fn check_struct_literal(
-        &mut self,
-        written: Option<Id<ast::Type>>,
-        fields: List<ast::FieldValue>,
-        span: Span,
-        expected: Option<TypeId>,
-    ) -> Expr {
-        let tree = &self.checker.module().ast;
-        let ty = match (written, expected) {
-            (Some(written), _) => self.checker.resolve_value_type(written),
-            (None, Some(expected))
-                if matches!(self.checker.types[expected], Type::Struct { .. }) =>
-            {
-                expected
-            }
-            (None, _) => {
-                let message = "this struct literal needs its type: write it before `.{`";
-                self.checker.error(diagnostics::MISSING_TYPE, message, span)
-            }
-        };
-        let Type::Struct {
-            definition,
-            fields: field_types,
-            ..
-        } = &self.checker.types[ty]
-        else {
-            if ty != TypeId::INVALID {
-                let message = format!(
-                    "expected a struct type, found `{}`",
-                    self.checker.type_text(ty)
-                );
-                let span = written.map_or(span, |written| tree.types.span(written));
-                self.checker
-                    .error(diagnostics::TYPE_MISMATCH, message, span);
-            }
-            for field in tree.children.lists.items(fields) {
-                self.add_expr(tree.children.field_values[field].value, None); // for its own errors
-            }
-            return Expr::INVALID;
-        };
-        let (definition, field_types) = (*definition, field_types.clone());
-        // Where each field is set, by its index.
-        let mut set: Vec<Option<Span>> = vec![None; field_types.len()];
-        let mut checked: Vec<NonZeroU32> = Vec::with_capacity(fields.len());
-        for field in tree.children.lists.items(fields) {
-            let ast::FieldValue { name, value } = tree.children.field_values[field];
-            let Some(index) = self.field_index(ty, name) else {
-                self.add_expr(value, None); // for its own errors
-                continue;
-            };
-            if let Some(first) = set[index] {
-                let text = name.text(&tree.file);
-                self.checker.report(
-                    Diagnostic::new(
-                        diagnostics::DUPLICATE_FIELD,
-                        format!("field `{text}` is set twice"),
-                    )
-                    .label(&tree.file, name.span, "")
-                    .label(&tree.file, first, "first set here"),
-                );
-                self.add_expr(value, None);
-                continue;
-            }
-            set[index] = Some(name.span);
-            let value = self.add_required(value, field_types[index]);
-            let index = index as u32;
-            checked.push(self.body.add(FieldValue { index, value }, name.span).into());
-        }
-        let missing: Vec<String> = model::program::field_names(self.checker.modules, definition)
-            .zip(&set)
-            .filter(|(_, set)| set.is_none())
-            .map(|(name, _)| format!("`{name}`"))
-            .collect();
-        if !missing.is_empty() {
-            let fields = if missing.len() == 1 {
-                "field"
-            } else {
-                "fields"
-            };
-            let message = format!(
-                "missing {fields} {} in `{}`",
-                missing.join(", "),
-                self.checker.type_text(ty)
-            );
-            self.checker
-                .error(diagnostics::MISSING_FIELD, message, span);
-        }
-        Expr {
-            ty,
-            kind: ExprKind::StructLiteral(self.body.children.lists.add(&checked)),
-        }
-    }
-
     /// `[N]T{ entries }`, written at `span`, or `[_]T{ entries }`, whose
     /// length is the number of values its entries give: each entry a `T`, or
     /// a spread of a range, an array or a slice (`count_spread`). They must
@@ -165,8 +69,8 @@ impl ThirBuilder<'_, '_> {
     /// length, which the entries known now must not already pass.
     pub(super) fn check_array_literal(
         &mut self,
-        written: Id<ast::Type>,
-        entries: List<ast::Expr>,
+        written: Id<ast::Type<L>>,
+        entries: List<ast::Expr<L>>,
         span: Span,
     ) -> Expr {
         let tree = &self.checker.module().ast;
@@ -209,7 +113,7 @@ impl ThirBuilder<'_, '_> {
     /// Without an element type, each entry is checked for its own errors.
     fn check_entries(
         &mut self,
-        entries: impl Iterator<Item = Id<ast::Expr>>,
+        entries: impl Iterator<Item = Id<ast::Expr<L>>>,
         element: TypeId,
         alone_in: Option<TypeId>,
     ) -> (Vec<NonZeroU32>, Option<u128>, Option<(Span, &'static str)>) {
@@ -275,7 +179,7 @@ impl ThirBuilder<'_, '_> {
     fn help_spread(
         &self,
         mismatch: Diagnostic,
-        written: Id<ast::Expr>,
+        written: Id<ast::Expr<L>>,
         value: Id<Expr>,
         alone_in: Option<TypeId>,
     ) -> Diagnostic {
@@ -332,7 +236,7 @@ impl ThirBuilder<'_, '_> {
     /// reach the variables named.
     pub(super) fn check_variadic(
         &mut self,
-        values: &[Id<ast::Expr>],
+        values: &[Id<ast::Expr<L>>],
         parameter: TypeId,
         span: Span,
     ) -> Id<Expr> {
@@ -435,7 +339,7 @@ impl ThirBuilder<'_, '_> {
     }
 
     /// The written `values` of a spread into `element`s, checked.
-    fn add_spread(&mut self, values: Id<ast::Expr>, element: TypeId) -> Id<Expr> {
+    fn add_spread(&mut self, values: Id<ast::Expr<L>>, element: TypeId) -> Id<Expr> {
         // Only an integer element has ranges, whose ends then take its type.
         let hint = self.checker.types.range(element);
         self.add_expr(values, hint)
@@ -552,7 +456,11 @@ impl ThirBuilder<'_, '_> {
     /// `range[T]` is `expected`; the step is of the range type's step type
     /// and not a constant zero (`check_range_step`). A range without both
     /// ends is not supported yet.
-    pub(super) fn check_range(&mut self, range: Id<ast::Expr>, expected: Option<TypeId>) -> Expr {
+    pub(super) fn check_range(
+        &mut self,
+        range: Id<ast::Expr<L>>,
+        expected: Option<TypeId>,
+    ) -> Expr {
         let tree = &self.checker.module().ast;
         let span = tree.exprs.span(range);
         let ast::Expr::Range {
@@ -595,8 +503,8 @@ impl ThirBuilder<'_, '_> {
     /// such literals.
     pub(super) fn check_range_ends(
         &mut self,
-        start: Id<ast::Expr>,
-        end: Id<ast::Expr>,
+        start: Id<ast::Expr<L>>,
+        end: Id<ast::Expr<L>>,
         hint: Option<TypeId>,
     ) -> (Id<Expr>, Id<Expr>) {
         let tree = &self.checker.module().ast;

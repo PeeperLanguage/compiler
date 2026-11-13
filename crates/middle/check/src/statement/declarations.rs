@@ -14,18 +14,19 @@ use model::thir::Variable;
 use syntax::ast;
 use syntax::ast::Ident;
 
+use crate::Checked;
 use crate::builder::ThirBuilder;
 use crate::function::constant_refusal;
 
-impl ThirBuilder<'_, '_> {
+impl<L: Checked> ThirBuilder<'_, '_, L> {
     /// `let mut name: ty = value;`. The variable is declared after its value is
     /// checked, so the value cannot use it.
     pub(super) fn check_let_statement(
         &mut self,
         mutable: bool,
         name: Ident,
-        ty: Option<Id<ast::Type>>,
-        value: Option<Id<ast::Expr>>,
+        ty: Option<Id<ast::Type<L>>>,
+        value: Option<Id<ast::Expr<L>>>,
     ) -> Stmt {
         let declared = ty.map(|ty| self.checker.resolve_value_type(ty));
         let initialized = value.is_some();
@@ -99,7 +100,10 @@ impl ThirBuilder<'_, '_> {
     /// `const name: ty = value;`: a name for a value known at compile time.
     /// Without a type, the constant takes its value's type. Gives its type and
     /// value, or `None` after an error.
-    pub(crate) fn check_const_statement(&mut self, declaration: Id<ast::Decl>) -> Option<Constant> {
+    pub(crate) fn check_const_statement(
+        &mut self,
+        declaration: Id<ast::Decl<L>>,
+    ) -> Option<Constant> {
         let ast::Decl::Const {
             name, ty, value, ..
         } = self.checker.module().ast.decls[declaration]
@@ -123,7 +127,7 @@ impl ThirBuilder<'_, '_> {
     /// it is known only when the program runs, reported.
     pub(crate) fn check_constant_value(
         &mut self,
-        value: Id<ast::Expr>,
+        value: Id<ast::Expr<L>>,
         declared: Option<TypeId>,
     ) -> Option<Constant> {
         let span = self.checker.module().ast.exprs.span(value);

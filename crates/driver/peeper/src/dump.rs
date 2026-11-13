@@ -2,6 +2,7 @@
 //! text, one file per module and kind, for reading what the compiler made of
 //! a program.
 
+use compile::language::Peeper;
 use std::io::Write;
 use std::path::Path;
 
@@ -36,14 +37,14 @@ impl Dump {
 /// written once it has no errors. The LLVM text comes from the program's
 /// `llvm::Module`s, which the driver builds once for dumps and linking.
 pub struct Dumps<'p> {
-    program: &'p model::program::Program,
+    program: &'p model::program::Program<Peeper>,
     kinds: &'p [Dump],
     texts: Vec<Vec<String>>, // by module, then by kind; empty for `Ll`
 }
 
 impl<'p> Dumps<'p> {
     /// No text yet for any of the `kinds` of `program`'s modules.
-    pub fn new(program: &'p model::program::Program, kinds: &'p [Dump]) -> Dumps<'p> {
+    pub fn new(program: &'p model::program::Program<Peeper>, kinds: &'p [Dump]) -> Dumps<'p> {
         Dumps {
             program,
             kinds,

@@ -1,59 +1,20 @@
-//! Literals: numbers, strings, characters, `true`, `false`, `none`, and struct
-//! and array literals.
+//! Literals: numbers, strings, characters, `true`, `false`, `none`, and array
+//! literals.
 
 use arena::Id;
 use diagnostics::Diagnostic;
 use syntax::ast::Expr;
-use syntax::ast::FieldValue;
 use syntax::ast::Length;
 use syntax::ast::Type;
-use syntax::operators::Precedence;
 use token::Token;
 use token::TokenKind;
 
+use crate::Grammar;
 use crate::Parser;
 use crate::expr::spreadable;
 use crate::expr::starts_expression;
-use crate::is_name;
 
-impl Parser {
-    /// Reads `.{ name = value, ... }` after `ty` (none when there is no type), a
-    /// literal that starts at `start`. A `name: value` field, the colon of a
-    /// declaration where a field is set, is read as if it were `=`, and all such
-    /// colons are reported in one error.
-    pub(crate) fn struct_literal(&mut self, ty: Option<Id<Type>>, start: u32) -> Id<Expr> {
-        self.next(); // `.`
-        let mut colons = Vec::new();
-        let fields = self.delimited(
-            TokenKind::LeftBrace,
-            TokenKind::RightBrace,
-            false,
-            is_name,
-            |p| {
-                let field_start = p.tok().span.start;
-                let name = p.name();
-                let t = p.tok();
-                if t.kind == TokenKind::Colon {
-                    p.next();
-                    colons.push(p.fix(t.span, " ="));
-                } else {
-                    p.expect(TokenKind::Assign);
-                }
-                let value = p.expr(Precedence::Lowest);
-                p.add(field_start, FieldValue { name, value })
-            },
-        );
-        if !colons.is_empty() {
-            let d = Diagnostic::new(
-                diagnostics::EXPECTED_TOKEN,
-                "expected `=` after struct literal field name",
-            )
-            .label(&self.tree.file, colons[0].span, "");
-            self.repair(d.help("set a field with `=`", colons));
-        }
-        self.add(start, Expr::StructLiteral { ty, fields })
-    }
-
+impl<L: Grammar> Parser<L> {
     /// Checks the type suffix of number literal `t`, the part of a number the
     /// lexer leaves to the parser. Whether the value fits its type is the type
     /// checker's to decide.
@@ -82,45 +43,39 @@ impl Parser {
 }
 
 /// Reads `"text"` or `c"text"`.
-pub(crate) fn string_literal(p: &mut Parser) -> Id<Expr> {
+pub(crate) fn string_literal<L: Grammar>(p: &mut Parser<L>) -> Id<Expr<L>> {
     let c_string = p.is_either(TokenKind::CString, TokenKind::String);
     p.leaf(Expr::String { c_string })
 }
 
 /// Reads `'x'` or `b'x'`.
-pub(crate) fn character_literal(p: &mut Parser) -> Id<Expr> {
+pub(crate) fn character_literal<L: Grammar>(p: &mut Parser<L>) -> Id<Expr<L>> {
     let byte = p.is_either(TokenKind::ByteChar, TokenKind::Char);
     p.leaf(Expr::Char { byte })
 }
 
 /// Reads `true` or `false`.
-pub(crate) fn bool_literal(p: &mut Parser) -> Id<Expr> {
+pub(crate) fn bool_literal<L: Grammar>(p: &mut Parser<L>) -> Id<Expr<L>> {
     let value = p.is_either(TokenKind::True, TokenKind::False);
     p.leaf(Expr::Bool(value))
 }
 
 /// Reads `none`.
-pub(crate) fn none_literal(p: &mut Parser) -> Id<Expr> {
+pub(crate) fn none_literal<L: Grammar>(p: &mut Parser<L>) -> Id<Expr<L>> {
     p.leaf(Expr::None)
 }
 
 /// Reads a number and checks its type suffix.
-pub(crate) fn number_literal(p: &mut Parser) -> Id<Expr> {
+pub(crate) fn number_literal<L: Grammar>(p: &mut Parser<L>) -> Id<Expr<L>> {
     p.check_number(p.tok());
     p.leaf(Expr::Number)
-}
-
-/// Reads `.{ name = value, ... }`, a struct literal without a type.
-pub(crate) fn anonymous_struct_literal(p: &mut Parser) -> Id<Expr> {
-    let start = p.tok().span.start;
-    p.struct_literal(None, start)
 }
 
 /// Reads `[N]T{ entries }` or `[_]T{ entries }` (the length is the number of
 /// values they give); an entry is a value, or `values...`, which spreads an
 /// array or a range: `(0..3)...` or `0..3...`. Without `{` after it, `[N]T`
 /// is the type alone.
-pub(crate) fn array_literal(p: &mut Parser) -> Id<Expr> {
+pub(crate) fn array_literal<L: Grammar>(p: &mut Parser<L>) -> Id<Expr<L>> {
     let start = p.tok().span.start;
     let after = p.ahead(1);
     let ty = if after.kind == TokenKind::Underscore {
@@ -141,7 +96,7 @@ pub(crate) fn array_literal(p: &mut Parser) -> Id<Expr> {
         TokenKind::LeftBrace,
         TokenKind::RightBrace,
         false,
-        starts_expression,
+        starts_expression::<L>,
         spreadable,
     );
     p.add(start, Expr::ArrayLiteral { ty, entries })

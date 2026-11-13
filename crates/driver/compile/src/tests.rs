@@ -7,6 +7,7 @@ use super::Options;
 use super::Output;
 use super::Results;
 use super::run;
+use crate::language::Peeper;
 use diagnostics::Diagnostic;
 use model::machine::Machine;
 
@@ -18,7 +19,7 @@ fn x86_64() -> &'static Machine {
 /// The program of `modules`, each an import path and its text, loaded as
 /// `peeper check` loads it from `app:main`, with every file given as open
 /// editor text so nothing is read from disk. Loading must find no error.
-fn load(modules: &[(&str, &str)]) -> model::program::Program {
+fn load(modules: &[(&str, &str)]) -> model::program::Program<Peeper> {
     let folder = |package: &str| match package {
         "core" => PathBuf::from("/peeper-build-test/libs/core/src"),
         _ => PathBuf::from("/peeper-build-test/src"),
@@ -706,7 +707,7 @@ fn messages(results: &Results) -> Vec<String> {
 
 /// The messages of a first compile of `program` for the machine named
 /// `target`.
-fn messages_on(program: &model::program::Program, target: &str) -> Vec<String> {
+fn messages_on(program: &model::program::Program<Peeper>, target: &str) -> Vec<String> {
     let target = Machine::named(target).unwrap();
     let found = run(
         program,

@@ -377,6 +377,19 @@ builders' helpers (`add_expr`, `resolve`, `report`, `temporary`, `store`,
 v4's `gateway::lower` had this API (`emit`, `temporary`, `new_block`,
 `branch`, `declare`); it was the part that worked.
 
+**Built (step 19, piece 2).** Each phase names what it asks of a feature
+in its own trait, so a phase depends on no later one:
+`syntax::ast::Language` (the feature nodes, `precedence`, `fields`),
+`parser::Grammar` (the rule table) and `check::Checked` (`check_expr`,
+`resolve_type`, `declare_type`). The table is built by `const` code in the
+top crate, so two rules for one token fail the build. A feature claims a
+declaration keyword, a type keyword (`Rules::keyword_type`), an expression
+prefix, or what continues a path (`Rules::after_path`: `Point.{`). There is
+no `features!` macro while structs are the one feature: `Peeper`'s nodes
+are the struct crate's own. A field and a field's value stay core nodes
+(`ast::Field`, `ast::FieldValue`), since the core reads fields too
+(`point.x`, the field names `model::program::field_names` gives).
+
 ## 8. The boundary after lowering
 
 `feature-free-mir.md` made the MIR the line, but five places past it still
@@ -431,6 +444,16 @@ dependency between features.
 This also answers plan item 10: the syntax tree leaves `model`; its core
 part goes to `core/syntax`, each feature's nodes to the feature.
 
+A consequence for tests: a crate's own tests cannot use a crate that
+depends on it, so the core's tests cannot write a feature's syntax. Each
+core crate (`parser`, `check`) tests in a language of its own with no
+feature (`Bare`). A feature's crate tests its syntax and checking in a
+language of the core and itself. A core test that needs a feature only to
+reach core behaviour (an `extern` function taking a struct, a type's
+functions) moves unchanged to the top crate's tests
+(`driver/compile/tests/`). No test is deleted: the test names before and
+after a move are compared.
+
 ## 10. Gates
 
 For every step from 18 on:
@@ -459,9 +482,12 @@ For every step from 18 on:
   syntax rows, nodes, checking and lowering into `features/structs`, then
   the speed gate. One commit per piece, each byte-identical:
   1. `llvm` takes the files and names it reads, not `Program`.
-  2. The syntax side: `Language`, the generic tree, the parser table in the
-     top crate (`driver/compile`), the struct rows and nodes. Speed measured.
-  3. The checker and THIR side: struct literals and fields; `members`.
+  2. The syntax side and struct checking: `Language`, the generic tree, the
+     parser table in the top crate (`driver/compile`), the struct rows and
+     nodes, and the checking of a struct declaration and literal into the
+     core's struct type and value. Speed measured.
+  3. The rest of the checker and THIR side: fields (`point.x`) and
+     `members`.
   4. The type and lowering: `Type::Struct` becomes the feature's type, with
      the rest of the trait. Speed measured again.
 

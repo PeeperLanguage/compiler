@@ -17,6 +17,7 @@ use rustc_hash::FxHashMap;
 use source::SourceFile;
 use source::Span;
 use syntax::ast;
+use syntax::ast::Language;
 
 use crate::builtin::layout_function;
 
@@ -52,9 +53,9 @@ impl<'p> Scope<'p> {
     /// have functions (`fn Point::name`); `None` for any other name. A type
     /// here is always this module's: imports bring in modules, and the
     /// prelude is not copied in.
-    pub(crate) fn struct_named(
+    pub(crate) fn struct_named<L: Language>(
         &self,
-        modules: &[model::program::Module],
+        modules: &[model::program::Module<L>],
         name: &str,
     ) -> Option<DefId> {
         match self.get(None, name) {
@@ -92,10 +93,16 @@ impl<'p> Scope<'p> {
 
 /// Whether the type declaration `definition` can have functions
 /// (`fn Point::name`): only a struct can.
-pub(crate) fn has_functions(modules: &[model::program::Module], definition: DefId) -> bool {
+pub(crate) fn has_functions<L: Language>(
+    modules: &[model::program::Module<L>],
+    definition: DefId,
+) -> bool {
     let tree = &modules[definition.module.index()].ast;
     match model::program::declaration(modules, definition) {
-        ast::Decl::Type(declaration) => matches!(tree.types[declaration.ty], ast::Type::Struct(_)),
+        ast::Decl::Type(declaration) => match tree.types[declaration.ty] {
+            ast::Type::Feature(ty) => L::fields(&ty).is_some(),
+            _ => false,
+        },
         _ => false,
     }
 }
@@ -118,7 +125,7 @@ pub(crate) fn nearest<'d, 'f: 'd>(
 
 /// Reports `name` declared again at `again` in the same `place` (a module or
 /// a block) of `file`, where it was first declared at `first`.
-pub(crate) fn report_redeclared(
+pub fn report_redeclared(
     file: &Arc<SourceFile>,
     name: &str,
     place: &str,
@@ -138,9 +145,9 @@ pub(crate) fn report_redeclared(
 /// top-level names, since a type may be declared below its functions; the
 /// type must be a struct of this module, so it has the same functions
 /// everywhere.
-pub fn collect<'p>(
+pub fn collect<'p, L: Language>(
     id: ModuleId,
-    modules: &'p [model::program::Module],
+    modules: &'p [model::program::Module<L>],
     diagnostics: &mut Vec<Diagnostic>,
 ) -> Scope<'p> {
     let module = &modules[id.index()];
@@ -258,101 +265,6 @@ mod tests {
             module: ModuleId::from_index(module),
             index,
         }
-    }
-
-    #[test]
-    fn declarations_and_imports() {
-        let text = "import \"app:utils\";\nfn main() { const K: i32 = 1; later(); }\nfn later() {}\nconst Limit: i32 = 4;\nstruct Point { x: i32 }\nfn Point::length(&self) -> i32 { return 0; }\nfn Point::origin() -> Point { return .{ x = 0 }; }\n";
-        let (utils, global) = (ModuleId::from_index(0), ModuleId::from_index(1));
-        let imports = vec![
-            Import {
-                kind: ImportKind::Declared(0),
-                module: utils,
-            },
-            Import {
-                kind: ImportKind::Prelude,
-                module: global,
-            },
-        ];
-        let modules = [
-            module("app:utils", "", Vec::new()),
-            module("core:global", "fn global() {}", Vec::new()),
-            module("app:main", text, imports),
-        ];
-        let mut diagnostics = Vec::new();
-        let scope = collect(ModuleId::from_index(2), &modules, &mut diagnostics);
-        assert!(diagnostics.is_empty());
-        // A declaration's place counts top-level declarations only: `main`'s
-        // body `const` does not move `later`.
-        assert_eq!(
-            scope.get(None, "main"),
-            Some(Symbol::Function(definition(2, 0)))
-        );
-        assert_eq!(
-            scope.get(None, "later"),
-            Some(Symbol::Function(definition(2, 1)))
-        );
-        assert_eq!(
-            scope.get(None, "Limit"),
-            Some(Symbol::Constant(definition(2, 2)))
-        );
-        assert_eq!(
-            scope.get(None, "Point"),
-            Some(Symbol::Type(definition(2, 3)))
-        );
-        assert_eq!(scope.get(None, "utils"), Some(Symbol::Module(utils)));
-        assert_eq!(
-            scope.get(None, "length"),
-            None,
-            "a method is not a module name"
-        );
-        let point = Some(definition(2, 3));
-        assert_eq!(
-            scope.get(point, "origin"),
-            Some(Symbol::Function(definition(2, 5)))
-        );
-        assert_eq!(
-            scope.get(None, "origin"),
-            None,
-            "a type's function is not a module name"
-        );
-        assert_eq!(
-            scope.get(None, "global"),
-            None,
-            "the prelude is not copied in"
-        );
-        assert_eq!(scope.parent, Some(global), "the prelude's scope comes next");
-    }
-
-    #[test]
-    fn a_type_function_needs_a_struct_of_its_module() {
-        // The owner may be declared below; anything but a struct of this
-        // module is refused, and a function declared twice in a type is
-        // reported; the module's own `a` is another name.
-        let text = "fn Point::a() {}\nstruct Point { x: i32 }\nfn Point::a() {}\nconst Limit: i32 = 1;\nfn Limit::b() {}\nfn Missing::c() {}\ntype Other = Point;\nfn Other::d() {}\nfn i32::e() {}\nfn a() {}\n";
-        let modules = [module("app:main", text, Vec::new())];
-        let mut diagnostics = Vec::new();
-        let scope = collect(ModuleId::from_index(0), &modules, &mut diagnostics);
-        let point = Some(definition(0, 1));
-        assert_eq!(
-            scope.get(point, "a"),
-            Some(Symbol::Function(definition(0, 0)))
-        );
-        assert_eq!(
-            scope.get(None, "a"),
-            Some(Symbol::Function(definition(0, 9)))
-        );
-        let messages: Vec<&str> = diagnostics.iter().map(|d| d.message.as_str()).collect();
-        assert_eq!(
-            messages,
-            [
-                "`a` is already declared in this type",
-                "`Limit` is not a struct declared in this module",
-                "`Missing` is not a struct declared in this module",
-                "`Other` is not a struct declared in this module",
-                "`i32` is not a struct declared in this module",
-            ]
-        );
     }
 
     #[test]

@@ -14,14 +14,15 @@ use source::Span;
 use syntax::ast;
 use syntax::ast::Ident;
 
+use crate::Checked;
 use crate::builder::ThirBuilder;
 
-impl ThirBuilder<'_, '_> {
+impl<L: Checked> ThirBuilder<'_, '_, L> {
     /// `value.field`: the field of a struct value, or of the struct a
     /// reference or typed raw pointer points to; or `len`, an array's, a
     /// slice's or a `&str`'s only field. An array's type gives it, so the
     /// array is not read.
-    pub(super) fn check_field(&mut self, value: Id<ast::Expr>, field: Ident) -> Expr {
+    pub(super) fn check_field(&mut self, value: Id<ast::Expr<L>>, field: Ident) -> Expr {
         let value = self.add_expr(value, None);
         let ty = self.body.exprs[value].ty;
         let pointee = self.checker.types[ty].pointee();
@@ -109,8 +110,8 @@ impl ThirBuilder<'_, '_> {
     /// program runs. A written range slices, which only `&` does.
     pub(super) fn check_index(
         &mut self,
-        array: Id<ast::Expr>,
-        index: Id<ast::Expr>,
+        array: Id<ast::Expr<L>>,
+        index: Id<ast::Expr<L>>,
         span: Span,
     ) -> Expr {
         let tree = &self.checker.module().ast;
@@ -198,7 +199,7 @@ impl ThirBuilder<'_, '_> {
     /// index is (`ExprKind::Slice`). Ends known at compile time must be
     /// inside the array and in order; others, and every end of a slice's,
     /// are checked when the program runs. A step is an error.
-    pub(super) fn check_slice(&mut self, mutable: bool, indexed: Id<ast::Expr>) -> Expr {
+    pub(super) fn check_slice(&mut self, mutable: bool, indexed: Id<ast::Expr<L>>) -> Expr {
         let tree = &self.checker.module().ast;
         let ast::Expr::Index {
             value: array,
@@ -270,11 +271,11 @@ impl ThirBuilder<'_, '_> {
     /// order when both are; `None` after an error.
     pub(super) fn check_slice_ends(
         &mut self,
-        ends: [Option<Id<ast::Expr>>; 2],
+        ends: [Option<Id<ast::Expr<L>>>; 2],
         inclusive: bool,
         viewed: TypeId,
         length: Option<u64>,
-        range: Id<ast::Expr>,
+        range: Id<ast::Expr<L>>,
     ) -> Option<[Option<Id<Expr>>; 2]> {
         // No slice is longer than the largest `usize`.
         let limit = length.unwrap_or(u64::MAX >> (64 - self.checker.target.pointer_bits));
@@ -332,7 +333,7 @@ impl ThirBuilder<'_, '_> {
 
     /// `reference.*`, written at `span`: the value a reference or a typed
     /// raw pointer points to.
-    pub(super) fn check_dereference(&mut self, reference: Id<ast::Expr>, span: Span) -> Expr {
+    pub(super) fn check_dereference(&mut self, reference: Id<ast::Expr<L>>, span: Span) -> Expr {
         let reference = self.add_expr(reference, None);
         let ty = self.body.exprs[reference].ty;
         match &self.checker.types[ty] {
@@ -397,7 +398,7 @@ impl ThirBuilder<'_, '_> {
     /// The index of the field `name` of the struct type `ty`, in declaration
     /// order; `None` after reporting that the struct has no such field, with
     /// its nearest field name.
-    pub(super) fn field_index(&mut self, ty: TypeId, name: Ident) -> Option<usize> {
+    pub fn field_index(&mut self, ty: TypeId, name: Ident) -> Option<usize> {
         let Type::Struct { definition, .. } = self.checker.types[ty] else {
             unreachable!("only a struct type has fields")
         };

@@ -97,14 +97,17 @@ dependencies = [
 name = "compile"
 version = "0.3.1"
 dependencies = [
+ "arena",
  "check",
  "diagnostics",
  "eval",
  "lower",
  "model",
+ "parser",
  "project",
  "runtime_abi",
  "source",
+ "structs",
  "syntax",
 ]
 
@@ -439,6 +442,7 @@ dependencies = [
  "arena",
  "bigint",
  "check",
+ "compile",
  "model",
  "parser",
  "project",
@@ -586,6 +590,7 @@ dependencies = [
 name = "project"
 version = "0.3.1"
 dependencies = [
+ "compile",
  "diagnostics",
  "literal",
  "model",
@@ -734,6 +739,20 @@ dependencies = [
  "libc",
  "psm",
  "windows-sys",
+]
+
+[[package]]
+name = "structs"
+version = "0.3.1"
+dependencies = [
+ "arena",
+ "check",
+ "diagnostics",
+ "model",
+ "parser",
+ "source",
+ "syntax",
+ "token",
 ]
 
 [[package]]

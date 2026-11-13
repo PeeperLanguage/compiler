@@ -14,6 +14,7 @@ mod statement;
 mod tests;
 
 use std::num::NonZeroU32;
+use syntax::ast::Language;
 
 use arena::Arena;
 use arena::Id;
@@ -67,12 +68,12 @@ pub struct ProgramDebugTypes {
 /// `function`, for `target`. `None` when checking it reported an error
 /// (`has_errors`) or left it incomplete. `modules` names types for a
 /// debugger (`debug_types`, shared by the program's bodies).
-pub fn lower(
+pub fn lower<L: Language>(
     body: &thir::Body,
     function: TypeId,
     types: &Types,
     target: &'static Machine,
-    modules: &[Module],
+    modules: &[Module<L>],
     debug_types: &mut ProgramDebugTypes,
 ) -> Option<Body> {
     if body.has_errors {
@@ -191,11 +192,11 @@ fn slot_of(variable: Id<thir::Variable>) -> Id<Slot> {
     Id::from_index(variable.index())
 }
 
-struct Lowering<'t> {
+struct Lowering<'t, L: Language> {
     thir: &'t thir::Body,
     types: &'t Types,
     target: &'static Machine,
-    modules: &'t [Module],
+    modules: &'t [Module<L>],
     debug_types: &'t mut ProgramDebugTypes,
     mir: Body,
     block: Id<Block>,              // the block being filled
@@ -257,7 +258,7 @@ impl Value {
 /// clang runs out of stack on debug types tens of thousands of nodes deep.
 const DEEPEST_DEBUG_TYPE: u32 = 5_000;
 
-impl Lowering<'_> {
+impl<L: Language> Lowering<'_, L> {
     /// A new block starting at `span`; `finish` gives it its instructions and
     /// terminator.
     fn new_block(&mut self, span: Span) -> Id<Block> {

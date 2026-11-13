@@ -19,11 +19,12 @@ use model::semantic_types::TypeId;
 use model::thir;
 use runtime_abi::symbols::Runtime;
 use source::Span;
+use syntax::ast::Language;
 
 use crate::Lowering;
 use crate::Value;
 
-impl Lowering<'_> {
+impl<L: Language> Lowering<'_, L> {
     /// `print(values)`, or `println(values)` when `newline`: the values
     /// with a space between each, then what was kept back is written out.
     pub(super) fn lower_print(

@@ -25,6 +25,7 @@ use source::Span;
 use syntax::ast;
 use syntax::ast::Ident;
 
+use crate::Checked;
 use crate::builder::ThirBuilder;
 use crate::builtin::LayoutFact;
 use crate::builtin::layout_function;
@@ -33,14 +34,14 @@ use crate::declaration::is_self;
 use crate::function::function_declaration;
 use crate::scope;
 
-impl ThirBuilder<'_, '_> {
+impl<L: Checked> ThirBuilder<'_, '_, L> {
     /// `print(values)`, or `println(values)` when `newline`: each value of a
     /// type `printable` takes. A plain string literal is printed as a `&cstr`,
     /// though it is not one anywhere else.
     // shortcut: a built-in until a library function takes any number of
     // values of any printable type; then delete it with THIR's and MIR's
     // `Print`.
-    pub(super) fn check_print(&mut self, newline: bool, values: List<ast::Expr>) -> Expr {
+    pub(super) fn check_print(&mut self, newline: bool, values: List<ast::Expr<L>>) -> Expr {
         let tree = &self.checker.module().ast;
         let mut checked: Vec<NonZeroU32> = Vec::with_capacity(values.len());
         for value in tree.children.lists.items(values) {
@@ -122,7 +123,7 @@ impl ThirBuilder<'_, '_> {
         &mut self,
         fact: LayoutFact,
         text: &str,
-        arguments: List<ast::Expr>,
+        arguments: List<ast::Expr<L>>,
         span: Span,
     ) -> Expr {
         let tree = &self.checker.module().ast;
@@ -169,8 +170,8 @@ impl ThirBuilder<'_, '_> {
     /// (`copy_called`).
     pub(super) fn check_call(
         &mut self,
-        callee: Id<ast::Expr>,
-        arguments: List<ast::Expr>,
+        callee: Id<ast::Expr<L>>,
+        arguments: List<ast::Expr<L>>,
         span: Span,
     ) -> Expr {
         let tree = &self.checker.module().ast;
@@ -231,7 +232,7 @@ impl ThirBuilder<'_, '_> {
             }
             found => found,
         };
-        let not_const = |&(place, _): &(usize, Id<ast::Expr>)| !const_places.contains(&place);
+        let not_const = |&(place, _): &(usize, Id<ast::Expr<L>>)| !const_places.contains(&place);
         let signature = found.map(|(callee, ty)| (callee, ty, self.checker.types[ty].clone()));
         let Some((
             callee,
@@ -288,7 +289,7 @@ impl ThirBuilder<'_, '_> {
             checked.push(argument.into());
         }
         if variadic {
-            let rest: Vec<Id<ast::Expr>> = given.collect();
+            let rest: Vec<Id<ast::Expr<L>>> = given.collect();
             let slice = self.check_variadic(&rest, parameters[first + fixed], span);
             self.reborrow_in_place(slice);
             checked.push(slice.into());
@@ -364,7 +365,7 @@ impl ThirBuilder<'_, '_> {
     /// gives as `self`, the callee, and its type.
     fn method(
         &mut self,
-        value: Id<ast::Expr>,
+        value: Id<ast::Expr<L>>,
         name: Ident,
         span: Span,
     ) -> Option<(Id<Expr>, Callee, TypeId)> {
@@ -415,7 +416,7 @@ impl ThirBuilder<'_, '_> {
     fn copy_called(
         &mut self,
         definition: DefId,
-        arguments: List<ast::Expr>,
+        arguments: List<ast::Expr<L>>,
         first: usize,
         const_places: &mut Vec<usize>,
         span: Span,
@@ -425,13 +426,13 @@ impl ThirBuilder<'_, '_> {
         let declared = function_declaration(modules, definition);
         let parameters = tree.children.lists.items(declared.signature.parameters);
         // `self` is never `const`, so a `const` parameter is past the receiver.
-        let const_parameters: Vec<(usize, ast::Param)> = (parameters.enumerate())
+        let const_parameters: Vec<(usize, ast::Param<L>)> = (parameters.enumerate())
             .map(|(place, parameter)| (place, tree.children.params[parameter]))
             .filter(|(_, parameter)| parameter.constant)
             .map(|(place, parameter)| (place - first, parameter))
             .collect();
         const_places.extend(const_parameters.iter().map(|&(place, _)| place));
-        let written: Vec<Id<ast::Expr>> =
+        let written: Vec<Id<ast::Expr<L>>> =
             (self.checker.module().ast.children.lists.items(arguments)).collect();
         let pattern = self.checker.function_type(definition, span);
         if pattern == TypeId::INVALID {

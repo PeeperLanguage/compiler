@@ -1,7 +1,18 @@
 //! What the checking tests share: a one-module program read from text, whose
 //! declarations are checked one at a time.
 
+use arena::List;
+use model::DefId;
+use model::semantic_types::TypeId;
+use model::thir;
+use parser::Grammar;
+use parser::Rules;
+use source::Span;
+use std::convert::Infallible;
 use std::sync::Arc;
+use syntax::ast;
+use syntax::ast::Language;
+use syntax::operators::Precedence;
 
 use model::ModuleId;
 use model::machine::Machine;
@@ -9,7 +20,59 @@ use model::program::ImportKind;
 use model::semantic_types::Types;
 use source::SourceFile;
 
+use crate::Checked;
 use crate::Checker;
+use crate::builder::ThirBuilder;
+
+/// The language the checking tests are written in: the core, with no
+/// feature, since each feature's crate depends on this one.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum Bare {}
+
+impl Language for Bare {
+    type Expr = Infallible;
+    type Type = Infallible;
+
+    fn precedence(expr: &Infallible) -> Precedence {
+        match *expr {}
+    }
+
+    fn fields(ty: &Infallible) -> Option<List<ast::Field<Bare>>> {
+        match *ty {}
+    }
+}
+
+static RULES: Rules<Bare> = Rules::core();
+
+impl Grammar for Bare {
+    fn rules() -> &'static Rules<Bare> {
+        &RULES
+    }
+}
+
+impl Checked for Bare {
+    fn check_expr(
+        _: &mut ThirBuilder<'_, '_, Bare>,
+        expr: Infallible,
+        _: Span,
+        _: Option<TypeId>,
+    ) -> thir::Expr {
+        match expr {}
+    }
+
+    fn resolve_type(_: &mut Checker<'_, Bare>, ty: Infallible, _: Span) -> TypeId {
+        match ty {}
+    }
+
+    fn declare_type(
+        _: &mut Checker<'_, Bare>,
+        _: DefId,
+        _: ast::TypeDecl<Bare>,
+        ty: Infallible,
+    ) -> TypeId {
+        match ty {}
+    }
+}
 
 /// The module `path`, written as `text`, with `imports`; its text must parse
 /// without errors.
@@ -17,7 +80,7 @@ pub(crate) fn module(
     path: &str,
     text: &str,
     imports: Vec<model::program::Import>,
-) -> model::program::Module {
+) -> model::program::Module<Bare> {
     let file = Arc::new(SourceFile::new("main.peep", text));
     let (ast, parse) = parser::parse(&file);
     assert!(parse.is_empty(), "{parse:?}");
@@ -39,7 +102,7 @@ pub(crate) type Reported = (&'static str, String, String);
 /// types and the diagnostics.
 pub(crate) fn with_checker<T>(
     text: &str,
-    work: impl FnOnce(&mut Checker, ModuleId) -> T,
+    work: impl FnOnce(&mut Checker<Bare>, ModuleId) -> T,
 ) -> (T, Types, Vec<Reported>) {
     let (utils_id, main_id) = (ModuleId::from_index(0), ModuleId::from_index(1));
     let imports = vec![model::program::Import {

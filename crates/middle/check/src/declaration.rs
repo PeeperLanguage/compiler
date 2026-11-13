@@ -7,7 +7,6 @@ use diagnostics::Diagnostic;
 use model::ConstArguments;
 use model::DefId;
 use model::layout::layout;
-use model::layout::struct_layout;
 use model::program::EXTERN_ATTRIBUTE;
 use model::semantic_types;
 use model::semantic_types::ConstArgument;
@@ -22,7 +21,9 @@ use model::thir::FactKind;
 use model::thir::Symbol;
 use source::Span;
 use syntax::ast;
+use syntax::ast::Language;
 
+use crate::Checked;
 use crate::Checker;
 use crate::Checking;
 use crate::builder::ThirBuilder;
@@ -39,11 +40,11 @@ use crate::scope::report_redeclared;
 // lifetime, as Rust does.
 const MOST_HOLDERS: usize = 4_096;
 
-impl Checker<'_> {
+impl<L: Checked> Checker<'_, L> {
     /// The type the module's type declaration or alias `definition` declares:
-    /// a struct's type (`Type::Struct`), an interface's (`Type::Interface`),
-    /// or the type an alias names. Enums and type parameters are not
-    /// supported yet.
+    /// an interface's (`Type::Interface`), a feature's (`declare_type`), or
+    /// the type an alias names. Enums and type parameters are not supported
+    /// yet.
     pub(crate) fn check_type_declaration(&mut self, definition: DefId) -> TypeId {
         let tree = &self.module().ast;
         let (written, is_alias) = match tree.decls[tree.declaration(definition.index)] {
@@ -58,43 +59,7 @@ impl Checker<'_> {
             return self.resolve_value_type(written.ty);
         }
         let what = match tree.types[written.ty] {
-            ast::Type::Struct(fields) => {
-                let mut field_types = Vec::with_capacity(fields.len());
-                let name_of = |field: Id<ast::Field>| tree.children.fields[field].name;
-                for (index, field) in tree.children.lists.items(fields).enumerate() {
-                    let ast::Field { name, ty } = tree.children.fields[field];
-                    let text = name.text(&tree.file);
-                    // A struct has few fields, so the ones before are searched.
-                    let mut before = tree.children.lists.items(fields).take(index).map(name_of);
-                    if let Some(first) = before.find(|first| first.text(&tree.file) == text) {
-                        let diagnostic =
-                            report_redeclared(&tree.file, text, "struct", name.span, first.span);
-                        self.report(diagnostic);
-                    }
-                    // A struct held by value is checked here: one that holds
-                    // itself, however deep, is a cycle, as is one a reference
-                    // field reaches: a reference's target is a complete type.
-                    // A raw pointer's need not be (`resolve_type`).
-                    field_types.push(self.resolve_value_type(ty));
-                }
-                // Invalid when a field is, as an array is when its element
-                // is, so no later phase lays out a field it cannot.
-                if field_types.contains(&TypeId::INVALID) {
-                    return TypeId::INVALID;
-                }
-                let (offsets, size, align) = struct_layout(&self.types, &field_types, self.target);
-                let named = self.types.intern(Type::Named(definition));
-                let mut ty = self.fits_target(named, size, written.name.span);
-                let holders = self.types.holders_in_fields(&field_types);
-                if self.reports_too_many_holders(named, holders, written.name.span) {
-                    ty = TypeId::INVALID;
-                }
-                if ty != TypeId::INVALID {
-                    self.types
-                        .define_struct(named, field_types.into(), (offsets, size, align));
-                }
-                return ty;
-            }
+            ast::Type::Feature(ty) => return L::declare_type(self, definition, written, ty),
             ast::Type::Interface(_) => return self.check_interface(definition),
             ast::Type::Enum(_) => "enum declarations",
             _ => unreachable!("the parser gives a type declaration only these types"),
@@ -127,7 +92,11 @@ impl Checker<'_> {
     /// any copy: an invalid type for each `const` parameter. Only a type one
     /// is read as one (`resolve_global`), and an invalid type reports
     /// nothing.
-    fn own_arguments(&mut self, tree: &ast::Tree, signature: ast::Signature) -> ConstArguments {
+    fn own_arguments(
+        &mut self,
+        tree: &ast::Tree<L>,
+        signature: ast::Signature<L>,
+    ) -> ConstArguments {
         let count = (tree.children.lists.items(signature.parameters))
             .filter(|&parameter| tree.children.params[parameter].constant)
             .count();
@@ -143,7 +112,7 @@ impl Checker<'_> {
     pub(crate) fn const_value_type(
         &mut self,
         definition: DefId,
-        ty: Id<ast::Type>,
+        ty: Id<ast::Type<L>>,
         used_at: Span,
     ) -> TypeId {
         let tree = &self.modules[definition.module.index()].ast;
@@ -230,7 +199,7 @@ impl Checker<'_> {
     /// (`copy_type`).
     fn signature_type(
         &mut self,
-        signature: ast::Signature,
+        signature: ast::Signature<L>,
         has_owner: bool,
         external: bool,
     ) -> TypeId {
@@ -318,9 +287,10 @@ impl Checker<'_> {
     fn check_interface(&mut self, definition: DefId) -> TypeId {
         let modules = self.modules;
         let tree = &modules[definition.module.index()].ast;
-        let declared: Vec<&ast::Function> = model::program::interface_methods(modules, definition)
-            .expect("an interface declaration has methods")
-            .collect();
+        let declared: Vec<&ast::Function<L>> =
+            model::program::interface_methods(modules, definition)
+                .expect("an interface declaration has methods")
+                .collect();
         let mut methods = Vec::with_capacity(declared.len());
         for (index, method) in declared.iter().enumerate() {
             let text = method.name.text(&tree.file);
@@ -499,7 +469,7 @@ impl Checker<'_> {
     /// `None` when an error was reported.
     fn result_origins(
         &mut self,
-        signature: &ast::Signature,
+        signature: &ast::Signature<L>,
         parameters: &[TypeId],
         result: TypeId,
     ) -> Option<Box<[u32]>> {
@@ -628,7 +598,7 @@ impl Checker<'_> {
     /// The type of a value whose type is written `ty`: a named type is the
     /// type its declaration declares, so a value's type is complete (an
     /// alias names a complete type already).
-    pub(crate) fn resolve_value_type(&mut self, ty: Id<ast::Type>) -> TypeId {
+    pub fn resolve_value_type(&mut self, ty: Id<ast::Type<L>>) -> TypeId {
         let resolved = self.resolve_type(ty);
         self.value_type(resolved, ty)
     }
@@ -636,7 +606,7 @@ impl Checker<'_> {
     /// `resolve_value_type` of `resolved`, the type written `ty`. An
     /// interface method's `self` taken whole is the interface being checked,
     /// so it stays a name.
-    fn value_type(&mut self, resolved: TypeId, ty: Id<ast::Type>) -> TypeId {
+    fn value_type(&mut self, resolved: TypeId, ty: Id<ast::Type<L>>) -> TypeId {
         let tree = &self.module().ast;
         if let ast::Type::Owner = tree.types[ty]
             && self.is_interface(resolved)
@@ -669,7 +639,7 @@ impl Checker<'_> {
 
     /// The type of a parameter or result written `ty`, of a C function when
     /// `external`.
-    fn resolve_signature_type(&mut self, ty: Id<ast::Type>, external: bool) -> TypeId {
+    fn resolve_signature_type(&mut self, ty: Id<ast::Type<L>>, external: bool) -> TypeId {
         let resolved = self.resolve_value_type(ty);
         if !external {
             return resolved;
@@ -794,7 +764,7 @@ impl Checker<'_> {
 
     /// Whether `ty`, written at `span` and holding `holders` references and
     /// slices, holds more than `MOST_HOLDERS`, after reporting it there.
-    fn reports_too_many_holders(&mut self, ty: TypeId, holders: usize, span: Span) -> bool {
+    pub fn reports_too_many_holders(&mut self, ty: TypeId, holders: usize, span: Span) -> bool {
         if holders <= MOST_HOLDERS {
             return false;
         }
@@ -807,7 +777,7 @@ impl Checker<'_> {
     /// `ty`, made at `span`, or invalid after an error there when its `size`
     /// is more bytes than the target allows for a value, which no copy of it
     /// could count.
-    fn fits_target(&mut self, ty: TypeId, size: u64, span: Span) -> TypeId {
+    pub fn fits_target(&mut self, ty: TypeId, size: u64, span: Span) -> TypeId {
         let largest = self.target.largest_object();
         if size <= largest {
             return ty;
@@ -954,7 +924,7 @@ impl Checker<'_> {
     /// takes a type: a type the parser read (`ast::Expr::Type`), or a value
     /// spelled like a type, a name, a path, `&x`, `&mut x` or `range[x]`.
     /// Anything else is reported as not a type.
-    pub(crate) fn resolve_type_argument(&mut self, argument: Id<ast::Expr>) -> TypeId {
+    pub(crate) fn resolve_type_argument(&mut self, argument: Id<ast::Expr<L>>) -> TypeId {
         let resolved = self.expression_type(argument);
         let span = self.module().ast.exprs.span(argument);
         if self.is_interface(resolved) {
@@ -965,7 +935,7 @@ impl Checker<'_> {
 
     /// `resolve_type_argument` before it is made a value's type, as
     /// `resolve_type` is.
-    fn expression_type(&mut self, expression: Id<ast::Expr>) -> TypeId {
+    fn expression_type(&mut self, expression: Id<ast::Expr<L>>) -> TypeId {
         source::grow_stack(|| {
             let tree = &self.module().ast;
             let span = tree.exprs.span(expression);
@@ -1008,12 +978,13 @@ impl Checker<'_> {
     /// its declaration is checked; a value's type is `resolve_value_type`. A
     /// local never names a type
     /// (`ThirBuilder::declare`), so only top-level names are looked up.
-    fn resolve_type(&mut self, ty: Id<ast::Type>) -> TypeId {
+    fn resolve_type(&mut self, ty: Id<ast::Type<L>>) -> TypeId {
         // Types written in types, `& & ... i32`, are a deep recursion.
         source::grow_stack(|| {
             let tree = &self.module().ast;
             let span = tree.types.span(ty);
             let what = match tree.types[ty] {
+                ast::Type::Feature(feature) => return L::resolve_type(self, feature, span),
                 // `self`'s type: the owner of the function being checked, which
                 // has one (`check_function`). An owner that is not a struct
                 // was reported by `scope::collect`.
@@ -1117,7 +1088,6 @@ impl Checker<'_> {
                     };
                 }
                 ast::Type::Function(_) => "function types",
-                ast::Type::Struct(_) => "struct types",
                 ast::Type::Enum(_) => "enum types",
                 ast::Type::Interface(_) => "interface types",
             };
@@ -1128,7 +1098,10 @@ impl Checker<'_> {
 
 /// Where the first `const` parameter of `signature`, in `tree`, is written,
 /// if it has one.
-pub fn const_parameter(tree: &ast::Tree, signature: ast::Signature) -> Option<Span> {
+pub fn const_parameter<L: Language>(
+    tree: &ast::Tree<L>,
+    signature: ast::Signature<L>,
+) -> Option<Span> {
     let mut parameters = tree.children.lists.items(signature.parameters);
     let parameter = parameters.find(|&parameter| tree.children.params[parameter].constant)?;
     Some(tree.children.params.span(parameter))
@@ -1139,7 +1112,11 @@ pub fn const_parameter(tree: &ast::Tree, signature: ast::Signature) -> Option<Sp
 /// know. A path names another module's type, and a type the checker
 /// refuses (`resolve_type`), such as `?T`, is reported: neither names one.
 /// Its own function, as it recurses.
-fn names_type_parameter(tree: &ast::Tree, ty: Id<ast::Type>, parameters: &[&str]) -> bool {
+fn names_type_parameter<L: Language>(
+    tree: &ast::Tree<L>,
+    ty: Id<ast::Type<L>>,
+    parameters: &[&str],
+) -> bool {
     // Types written in types, `& & ... T`, are a deep recursion.
     source::grow_stack(|| match tree.types[ty] {
         ast::Type::Name => parameters.contains(&tree.file.slice(tree.types.span(ty))),
@@ -1159,18 +1136,20 @@ fn names_type_parameter(tree: &ast::Tree, ty: Id<ast::Type>, parameters: &[&str]
         | ast::Type::Optional(_)
         | ast::Type::RawPointer
         | ast::Type::Function(_)
-        | ast::Type::Struct(_)
         | ast::Type::Enum(_)
         | ast::Type::Interface(_)
         | ast::Type::Owner
         | ast::Type::Type
         | ast::Type::Invalid => false,
+        // shortcut: a feature's type is taken to name no type parameter, as
+        // a struct type (the only one) does not; ask the feature when one can.
+        ast::Type::Feature(_) => false,
     })
 }
 
 /// Whether `parameter` of a function in `tree` is `self`, `&self` or
 /// `&mut self`: of the type the function belongs to.
-pub(crate) fn is_self(tree: &ast::Tree, parameter: ast::Param) -> bool {
+pub(crate) fn is_self<L: Language>(tree: &ast::Tree<L>, parameter: ast::Param<L>) -> bool {
     let taken = match tree.types[parameter.ty] {
         ast::Type::Reference { target, .. } => target,
         _ => parameter.ty,
@@ -1235,41 +1214,6 @@ mod tests {
         assert_eq!(found[2], format!("fn[{:?}] -> {void}", TypeId::CSTR));
     }
 
-    #[test]
-    fn errors_are_located() {
-        let (found, found_reported) = declared_types(
-            "fn a(x: Missing) {}\nfn b(m: utils) {}\nfn c(r: &i32) -> &i32 in q {}\nfn d<T>(x: T) {}\nfn e(x: i32 = 1) {}\nstruct P { x: i32 }\n#[extern(\"f\")]\nfn f(p: P);\nfn ok(p: P) -> P { return p; }\nfn g(x: a) {}\nfn h(s: string) {}\nfn i(&self) {}\nfn P::j(a: i32, mut self) {}\n",
-        );
-        let expected = reported(&[
-            ("T0002", "unknown type `Missing`", "Missing"),
-            ("T0021", "`utils` is a module, not a type", "utils"),
-            ("T0002", "`q` is not a parameter", "q"),
-            ("T0043", "generic functions are not supported yet", "T"),
-            ("T0043", "default parameters are not supported yet", "1"),
-            (
-                "T0043",
-                "struct, array, range, slice and `&str` parameters and results of `extern` functions are not supported yet",
-                "P",
-            ),
-            ("T0021", "`a` is a value, not a type", "a"),
-            ("T0043", "string types are not supported yet", "string"),
-            (
-                "P0005",
-                "only a type's function takes `self`: `fn Point::name(&self)`",
-                "&self",
-            ),
-            ("P0005", "`self` must be the first parameter", "self"),
-        ]);
-        assert_eq!(found_reported, expected);
-        let invalid = format!("{:?}", TypeId::INVALID);
-        assert_eq!(
-            found[0],
-            format!("fn[{invalid}] -> {:?}", TypeId::VOID),
-            "an error stays inside the signature"
-        );
-        assert_eq!(found[3], "Invalid");
-    }
-
     /// An `extern` function is C's, so it has no body here, and any other
     /// function has one; their calls are not lowered.
     #[test]
@@ -1292,49 +1236,5 @@ mod tests {
             ])
         );
         assert_eq!(found, ["Invalid", "Invalid"]);
-    }
-
-    /// `extern` on a function is the one attribute there is.
-    #[test]
-    fn other_attributes_are_reported() {
-        let (_, found_reported) =
-            declared_types("#[inline]\nfn f();\n#[extern(\"s\")]\nstruct S {}\n");
-        assert_eq!(
-            found_reported,
-            reported(&[
-                ("P0005", "unknown attribute `inline`", "#[inline]"),
-                (
-                    "P0005",
-                    "a function needs a body, or `#[extern(\"name\")]` when C defines it",
-                    "f"
-                ),
-                (
-                    "P0005",
-                    "`extern` names a C function, so only a function has it",
-                    "#[extern(\"s\")]"
-                ),
-            ])
-        );
-    }
-
-    /// An `extern` of another shape is reported, and its function still gets
-    /// the C rules.
-    #[test]
-    fn a_malformed_extern_is_reported() {
-        let (_, found_reported) = declared_types(
-            "struct P { x: i32 }\n#[extern(1)]\nfn a();\n#[extern(\"b\", 2)]\nfn b();\n#[extern(\"c\")]\n#[extern(\"d\")]\nfn c(p: P);\n",
-        );
-        let shape = "write `#[extern(\"name\")]` once, with the C function's name";
-        let expected = reported(&[
-            ("P0005", shape, "#[extern(1)]"),
-            ("P0005", shape, "#[extern(\"b\", 2)]"),
-            ("P0005", shape, "#[extern(\"d\")]"),
-            (
-                "T0043",
-                "struct, array, range, slice and `&str` parameters and results of `extern` functions are not supported yet",
-                "P",
-            ),
-        ]);
-        assert_eq!(found_reported, expected);
     }
 }

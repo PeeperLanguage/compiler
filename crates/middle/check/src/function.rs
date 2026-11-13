@@ -19,8 +19,10 @@ use model::thir;
 use rustc_hash::FxHashSet;
 use source::Span;
 use syntax::ast;
+use syntax::ast::Language;
 
 use crate::COPY_DEPTH_LIMIT;
+use crate::Checked;
 use crate::Checker;
 use crate::Checking;
 use crate::Copied;
@@ -35,7 +37,7 @@ pub(crate) enum Built {
     Kept(Option<Box<mir::Body>>),
 }
 
-impl Checker<'_> {
+impl<L: Checked> Checker<'_, L> {
     /// Builds the body of the function `copy`, asked for at `used_at`, into
     /// `thir`, recording its facts when `records_facts` (not when it is
     /// built only to run at compile time, `evaluate_call`): checks it
@@ -361,10 +363,10 @@ impl Checker<'_> {
 }
 
 /// The function `definition`, as written.
-pub(crate) fn function_declaration(
-    modules: &[model::program::Module],
+pub(crate) fn function_declaration<L: Language>(
+    modules: &[model::program::Module<L>],
     definition: DefId,
-) -> &ast::Function {
+) -> &ast::Function<L> {
     match model::program::declaration(modules, definition) {
         ast::Decl::Function(function) => function,
         _ => unreachable!("`{definition:?}` is a function"),

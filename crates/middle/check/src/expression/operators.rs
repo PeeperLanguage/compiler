@@ -16,17 +16,18 @@ use syntax::ast;
 use syntax::operators::BinaryOp;
 use syntax::operators::UnaryOp;
 
+use crate::Checked;
 use crate::builder::ThirBuilder;
 use crate::expression::unsuffixed_literal;
 
-impl ThirBuilder<'_, '_> {
+impl<L: Checked> ThirBuilder<'_, '_, L> {
     /// `value as ty`: `value` as a value of the type `ty`, which its type
     /// converts to with `as` or without it (`Types::conversion`). A number
     /// literal takes the type `ty` if it can, so `300 as u8` is an error.
     pub(super) fn check_cast(
         &mut self,
-        value: Id<ast::Expr>,
-        ty: Id<ast::Type>,
+        value: Id<ast::Expr<L>>,
+        ty: Id<ast::Type<L>>,
         span: Span,
     ) -> Expr {
         let to = self.checker.resolve_value_type(ty);
@@ -126,7 +127,7 @@ impl ThirBuilder<'_, '_> {
     pub(super) fn check_unary(
         &mut self,
         op: UnaryOp,
-        operand: Id<ast::Expr>,
+        operand: Id<ast::Expr<L>>,
         span: Span,
         expected: Option<TypeId>,
     ) -> Expr {
@@ -175,8 +176,8 @@ impl ThirBuilder<'_, '_> {
     pub(super) fn check_binary(
         &mut self,
         op: BinaryOp,
-        left_operand: Id<ast::Expr>,
-        right_operand: Id<ast::Expr>,
+        left_operand: Id<ast::Expr<L>>,
+        right_operand: Id<ast::Expr<L>>,
         span: Span,
         expected: Option<TypeId>,
     ) -> Expr {
@@ -343,7 +344,7 @@ impl ThirBuilder<'_, '_> {
         &mut self,
         op: &str,
         ty: TypeId,
-        operand: Id<ast::Expr>,
+        operand: Id<ast::Expr<L>>,
         span: Span,
         fits: impl Fn(&Type) -> bool,
     ) -> Expr {

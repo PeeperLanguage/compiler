@@ -6,6 +6,8 @@ use std::collections::HashMap;
 use diagnostics::Diagnostic;
 use model::program::ImportKind;
 
+use syntax::ast::Language;
+
 use crate::loading::Loaded;
 
 #[derive(Clone, Copy, PartialEq)]
@@ -16,8 +18,8 @@ enum Visit {
 /// Orders modules so each follows the modules it imports, and reports every
 /// import cycle. It visits modules and imports in path order, so the result
 /// does not depend on how the workers were scheduled.
-struct Sorter<'a> {
-    modules: &'a HashMap<String, Loaded>,
+struct Sorter<'a, L: Language> {
+    modules: &'a HashMap<String, Loaded<L>>,
     visits: HashMap<&'a str, Visit>,
     /// The modules being visited, outermost first, each with the import that
     /// reached it: none for the first.
@@ -25,7 +27,9 @@ struct Sorter<'a> {
     order: Vec<String>,
     cycles: Vec<Diagnostic>,
 }
-pub(crate) fn sort_modules(modules: &HashMap<String, Loaded>) -> (Vec<String>, Vec<Diagnostic>) {
+pub(crate) fn sort_modules<L: Language>(
+    modules: &HashMap<String, Loaded<L>>,
+) -> (Vec<String>, Vec<Diagnostic>) {
     let mut sorter = Sorter {
         modules,
         visits: HashMap::with_capacity(modules.len()),
@@ -42,7 +46,7 @@ pub(crate) fn sort_modules(modules: &HashMap<String, Loaded>) -> (Vec<String>, V
     }
     (sorter.order, sorter.cycles)
 }
-impl<'a> Sorter<'a> {
+impl<'a, L: Language> Sorter<'a, L> {
     /// Visits the module `path`, reached by the import `reached_by`.
     fn visit(&mut self, path: &'a str, reached_by: Option<ImportKind>) {
         self.visits.insert(path, Visit::Started);

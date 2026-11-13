@@ -15,8 +15,10 @@ use model::program::Import;
 use model::program::ImportKind;
 use model::program::Module;
 use model::program::default_alias;
+use parser::Grammar;
 use source::SourceFile;
 use source::Span;
+use syntax::ast::Language;
 use syntax::ast::Tree;
 
 use crate::PRELUDE_PATH;
@@ -26,9 +28,9 @@ use crate::path_text;
 
 /// A module being loaded: its imports are known by path until every module
 /// has its place in the program's order.
-pub(crate) struct Loaded {
+pub(crate) struct Loaded<L: Language> {
     pub(crate) path: String,
-    pub(crate) ast: Tree,
+    pub(crate) ast: Tree<L>,
     pub(crate) imports: Vec<(ImportKind, String)>, // with the imported module's path
     pub(crate) imports_complete: bool, // every written import names a module it brings in
     pub(crate) diagnostics: Vec<Diagnostic>,
@@ -43,12 +45,12 @@ pub(crate) struct Job {
 /// Reads, parses and resolves the imports of one module, taking its text from
 /// `open_files` when it is open there. A file that cannot be read, or is not
 /// UTF-8, gets an empty tree and one error.
-pub(crate) fn load_module(
+pub(crate) fn load_module<L: Grammar>(
     packages: &HashMap<String, PathBuf>,
     open_files: &HashMap<PathBuf, impl AsRef<str>>,
     job: Job,
     with_prelude: bool,
-) -> Loaded {
+) -> Loaded<L> {
     let path = path_text(&job.file);
     let text = match open_files.get(&job.file) {
         // Copied: every worker shares the map, and a source file owns its text.
@@ -92,9 +94,9 @@ pub(crate) fn load_module(
     loaded.resolve_imports(packages, open_files, job.standalone, with_prelude);
     loaded
 }
-impl Loaded {
+impl<L: Language> Loaded<L> {
     /// The module, its imports resolved to the places in `ids`.
-    pub(crate) fn into_module(self, ids: &HashMap<String, ModuleId>) -> Module {
+    pub(crate) fn into_module(self, ids: &HashMap<String, ModuleId>) -> Module<L> {
         let imports = self.imports.iter();
         let imports = imports.map(|(kind, path)| Import {
             kind: *kind,

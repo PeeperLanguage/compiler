@@ -4,6 +4,7 @@
 //! A name or child that is missing after a syntax error is an empty span or an
 //! `Invalid` node.
 
+use std::fmt::Debug;
 use std::sync::Arc;
 
 use arena::Arena;
@@ -19,38 +20,55 @@ use crate::operators::BinaryOp;
 use crate::operators::Precedence;
 use crate::operators::UnaryOp;
 
+/// The language a tree is written in: the core's nodes, plus the nodes of
+/// each feature, which the top crate lists (docs/feature-front.md, section
+/// 7). A feature's node sits in the core's arena as a `Feature` kind, so it
+/// keeps the core's ids and spans.
+pub trait Language: Copy + Debug + 'static {
+    /// A feature's expression: one kind per feature, each the feature's own.
+    type Expr: Copy + Debug + Send + Sync;
+    /// A feature's written type.
+    type Type: Copy + Debug + Send + Sync;
+
+    /// The precedence the feature expression `expr`'s last part was read at
+    /// (`Expr::precedence`).
+    fn precedence(expr: &Self::Expr) -> Precedence;
+
+    /// The fields of the feature type `ty`, if it has fields.
+    fn fields(ty: &Self::Type) -> Option<List<Field<Self>>>;
+}
+
 nodes! {
-    Tree;
-    Decl => decls,
-    Type => types,
-    Stmt => stmts,
-    Block => blocks,
-    Expr => exprs,
-    Pattern => patterns,
-    Name => children.names,
-    Attribute => children.attributes,
-    Param => children.params,
-    Field => children.fields,
-    Variant => children.variants,
-    FieldValue => children.field_values,
-    MatchArm => children.match_arms,
+    <L: Language> Tree<L>;
+    Decl<L> => decls,
+    Type<L> => types,
+    Stmt<L> => stmts,
+    Block<L> => blocks,
+    Expr<L> => exprs,
+    Pattern<L> => patterns,
+    Attribute<L> => children.attributes,
+    Param<L> => children.params,
+    Field<L> => children.fields,
+    Variant<L> => children.variants,
+    FieldValue<L> => children.field_values,
+    MatchArm<L> => children.match_arms,
 }
 
 /// The syntax tree of one file. It never changes once the parser returns it.
-pub struct Tree {
+pub struct Tree<L: Language> {
     pub file: Arc<SourceFile>,
     pub imports: Vec<Import>,
     /// The module's own declarations, in source order: what a `DefId`
     /// counts. A body's `const` is in `decls` but not here.
-    pub top_level: List<Decl>,
+    pub top_level: List<Decl<L>>,
 
-    pub decls: Arena<Decl>, // every declaration, top-level or in a body
-    pub types: Arena<Type>,
-    pub stmts: Arena<Stmt>,
-    pub blocks: Arena<Block>,
-    pub exprs: Arena<Expr>,
-    pub patterns: Arena<Pattern>,
-    pub children: Children,
+    pub decls: Arena<Decl<L>>, // every declaration, top-level or in a body
+    pub types: Arena<Type<L>>,
+    pub stmts: Arena<Stmt<L>>,
+    pub blocks: Arena<Block<L>>,
+    pub exprs: Arena<Expr<L>>,
+    pub patterns: Arena<Pattern<L>>,
+    pub children: Children<L>,
 
     /// Whether every token of the text is in the tree: false after a lexical
     /// error, after a syntax error the parser skipped text for, and for text
@@ -60,20 +78,35 @@ pub struct Tree {
 
 /// How a node holds several others: storage reached only through the node
 /// that holds it, never by an id from elsewhere.
-#[derive(Default)]
-pub struct Children {
+pub struct Children<L: Language> {
     pub names: Arena<Name>,
-    pub attributes: Arena<Attribute>,
-    pub params: Arena<Param>,
-    pub fields: Arena<Field>,
-    pub variants: Arena<Variant>,
-    pub field_values: Arena<FieldValue>,
-    pub match_arms: Arena<MatchArm>,
+    pub attributes: Arena<Attribute<L>>,
+    pub params: Arena<Param<L>>,
+    pub fields: Arena<Field<L>>,
+    pub variants: Arena<Variant<L>>,
+    pub field_values: Arena<FieldValue<L>>,
+    pub match_arms: Arena<MatchArm<L>>,
     pub lists: Lists,
 }
 
-impl Tree {
-    pub fn new(file: Arc<SourceFile>) -> Tree {
+// Derived, it would require `L: Default`.
+impl<L: Language> Default for Children<L> {
+    fn default() -> Children<L> {
+        Children {
+            names: Arena::default(),
+            attributes: Arena::default(),
+            params: Arena::default(),
+            fields: Arena::default(),
+            variants: Arena::default(),
+            field_values: Arena::default(),
+            match_arms: Arena::default(),
+            lists: Lists::default(),
+        }
+    }
+}
+
+impl<L: Language> Tree<L> {
+    pub fn new(file: Arc<SourceFile>) -> Tree<L> {
         Tree {
             file,
             imports: Vec::new(),
@@ -91,17 +124,17 @@ impl Tree {
 
     /// The top-level declaration at `index` of `top_level`, the place a
     /// `DefId` names.
-    pub fn declaration(&self, index: u32) -> Id<Decl> {
+    pub fn declaration(&self, index: u32) -> Id<Decl<L>> {
         self.children.lists.get(self.top_level, index as usize)
     }
 
     /// The module's own declarations, in source order (`top_level`).
-    pub fn declarations(&self) -> impl ExactSizeIterator<Item = Id<Decl>> + '_ {
+    pub fn declarations(&self) -> impl ExactSizeIterator<Item = Id<Decl<L>>> + '_ {
         self.children.lists.items(self.top_level)
     }
 
     /// `expr` without the parentheses written around it, which only group.
-    pub fn unparenthesized(&self, mut expr: Id<Expr>) -> Id<Expr> {
+    pub fn unparenthesized(&self, mut expr: Id<Expr<L>>) -> Id<Expr<L>> {
         while let Expr::Parentheses(inner) = self.exprs[expr] {
             expr = inner;
         }
@@ -109,7 +142,7 @@ impl Tree {
     }
 
     /// Adds `node` with `span` to its arena.
-    pub fn add<T: Node<Container = Tree>>(&mut self, node: T, span: Span) -> Id<T> {
+    pub fn add<T: Node<Container = Tree<L>>>(&mut self, node: T, span: Span) -> Id<T> {
         T::arena(self).push(node, span)
     }
 }
@@ -124,13 +157,13 @@ pub struct Import {
 
 /// The doc comment and attributes before a declaration.
 #[derive(Clone, Copy, Debug)]
-pub struct Metadata {
+pub struct Metadata<L: Language> {
     pub doc_comment: Option<Span>, // the `///` lines
-    pub attributes: List<Attribute>,
+    pub attributes: List<Attribute<L>>,
 }
 
-impl Metadata {
-    pub const NONE: Metadata = Metadata {
+impl<L: Language> Metadata<L> {
+    pub const NONE: Metadata<L> = Metadata {
         doc_comment: None,
         attributes: List::EMPTY,
     };
@@ -138,9 +171,9 @@ impl Metadata {
 
 /// `#[name(arguments)]`
 #[derive(Clone, Copy, Debug)]
-pub struct Attribute {
+pub struct Attribute<L: Language> {
     pub name: Ident,
-    pub arguments: List<Expr>,
+    pub arguments: List<Expr<L>>,
 }
 
 /// An identifier written in the source, by where it is written: its text is
@@ -163,24 +196,24 @@ impl Ident {
 pub struct Name;
 
 #[derive(Clone, Copy, Debug)]
-pub enum Decl {
-    Function(Function),
+pub enum Decl<L: Language> {
+    Function(Function<L>),
     /// `const name: Type = value;`, also as a statement
     Const {
-        metadata: Metadata,
+        metadata: Metadata<L>,
         name: Ident,
-        ty: Option<Id<Type>>,
-        value: Option<Id<Expr>>,
+        ty: Option<Id<Type<L>>>,
+        value: Option<Id<Expr<L>>>,
     },
-    /// `struct Name<T> { fields }`, `enum Name<T> { variants }` or
-    /// `iface Name<T> { methods }`; its type, a `Type::Struct`, `Type::Enum`
-    /// or `Type::Interface`, says which
-    Type(TypeDecl),
+    /// `enum Name<T> { variants }`, `iface Name<T> { methods }` or a
+    /// feature's, such as `struct Name<T> { fields }`; its type, a
+    /// `Type::Enum`, `Type::Interface` or `Type::Feature`, says which
+    Type(TypeDecl<L>),
     /// `type Name<T> = Type;`
-    Alias(TypeDecl),
+    Alias(TypeDecl<L>),
 }
 
-impl Decl {
+impl<L: Language> Decl<L> {
     /// The declaration's name.
     pub fn name(&self) -> Ident {
         match *self {
@@ -191,7 +224,7 @@ impl Decl {
     }
 
     /// The doc comment and attributes before the declaration.
-    pub fn metadata(&self) -> Metadata {
+    pub fn metadata(&self) -> Metadata<L> {
         match *self {
             Decl::Function(function) => function.metadata,
             Decl::Const { metadata, .. } => metadata,
@@ -204,13 +237,13 @@ impl Decl {
 /// `;` for a body defined elsewhere; an interface method has no body.
 /// Everything but the owner, the name and the body is its signature.
 #[derive(Clone, Copy, Debug)]
-pub struct Function {
-    pub metadata: Metadata,
+pub struct Function<L: Language> {
+    pub metadata: Metadata<L>,
     /// `Point` in `fn Point::name`: the type the function belongs to.
     pub owner: Option<Ident>,
     pub name: Ident,
-    pub signature: Signature,
-    pub body: Option<Id<Block>>,
+    pub signature: Signature<L>,
+    pub body: Option<Id<Block<L>>>,
 }
 
 /// A function's type: its type parameters, parameters, result and the
@@ -218,87 +251,93 @@ pub struct Function {
 /// type parameters, and its parameters only a name and a type. A method's
 /// first parameter is `self`, of the type `Type::Owner`.
 #[derive(Clone, Copy, Debug)]
-pub struct Signature {
+pub struct Signature<L: Language> {
     pub type_parameters: List<Name>,
-    pub parameters: List<Param>,
-    pub result: Option<Id<Type>>,
+    pub parameters: List<Param<L>>,
+    pub result: Option<Id<Type<L>>>,
     pub origins: List<Name>, // what a returned reference may point into
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct TypeDecl {
-    pub metadata: Metadata,
+pub struct TypeDecl<L: Language> {
+    pub metadata: Metadata<L>,
     pub name: Ident,
     pub type_parameters: List<Name>,
-    pub ty: Id<Type>,
+    pub ty: Id<Type<L>>,
 }
 
 /// `mut name: Type = default`; in a function type, only the name and type. A
 /// parameter written `_: Type` has no name.
 #[derive(Clone, Copy, Debug)]
-pub struct Param {
+pub struct Param<L: Language> {
     /// `const name: type`: the call gives a type, known when compiling.
     pub constant: bool,
     pub mutable: bool,
     pub name: Option<Ident>,
-    pub ty: Id<Type>,
+    pub ty: Id<Type<L>>,
     /// `name: ...T` or `name: ...mut T`: `ty` is the slice `&[]T` or `&mut []T`
     /// that holds the call's last arguments.
     pub variadic: bool,
-    pub default: Option<Id<Expr>>,
+    pub default: Option<Id<Expr<L>>>,
 }
 
 /// `name: Type` in a struct.
 #[derive(Clone, Copy, Debug)]
-pub struct Field {
+pub struct Field<L: Language> {
     pub name: Ident,
-    pub ty: Id<Type>,
+    pub ty: Id<Type<L>>,
 }
 
 /// `Name` or `Name: Payload` in an enum.
 #[derive(Clone, Copy, Debug)]
-pub struct Variant {
+pub struct Variant<L: Language> {
     pub name: Ident,
-    pub payload: Option<Id<Type>>,
+    pub payload: Option<Id<Type<L>>>,
 }
 
 #[derive(Clone, Copy, Debug)]
-pub enum Type {
+pub enum Type<L: Language> {
     /// a type written as a name; its text is its span
     Name,
     /// `a::B<T>`; the segments are `Name`s and `Generic`s
-    Path(List<Type>),
+    Path(List<Type<L>>),
     /// `Box<T>`
-    Generic { name: Ident, arguments: List<Type> },
+    Generic {
+        name: Ident,
+        arguments: List<Type<L>>,
+    },
     /// `range[T]`: a built-in type's name with a type in brackets after it,
     /// part of how that type is written, not type arguments; the checker
     /// says which names take one
-    Bracketed { name: Ident, inner: Id<Type> },
+    Bracketed { name: Ident, inner: Id<Type<L>> },
     /// `&T` or `&mut T`
-    Reference { mutable: bool, target: Id<Type> },
+    Reference { mutable: bool, target: Id<Type<L>> },
     /// `*T`, a raw pointer to a `T`
-    Pointer(Id<Type>),
+    Pointer(Id<Type<L>>),
     /// `?T`
-    Optional(Id<Type>),
+    Optional(Id<Type<L>>),
     /// `rawptr`
     RawPointer,
     /// `[4]T`, or `[_]T` in an array literal
-    FixedArray { length: Length, element: Id<Type> },
+    FixedArray {
+        length: Length,
+        element: Id<Type<L>>,
+    },
     /// `&[]T`, or `&mut []T` when `mutable`
-    Slice { mutable: bool, element: Id<Type> },
+    Slice { mutable: bool, element: Id<Type<L>> },
     /// `fn(T) -> R in a`
-    Function(Signature),
-    /// `struct { fields }`
-    Struct(List<Field>),
+    Function(Signature<L>),
     /// `enum { variants }`
-    Enum(List<Variant>),
+    Enum(List<Variant<L>>),
     /// `iface { methods }`
-    Interface(List<Decl>), // `Decl::Function`s without bodies
+    Interface(List<Decl<L>>), // `Decl::Function`s without bodies
     /// The type the function belongs to, `Point` in `fn Point::sum(&self)`;
     /// in an interface, the type that meets it. Only `self` has it.
     Owner,
     /// `type`, written as a parameter's type: the parameter takes a type
     Type,
+    /// a feature's written type
+    Feature(L::Type),
     /// a type that could not be parsed
     Invalid,
 }
@@ -313,76 +352,76 @@ pub enum Length {
 
 /// `{ statements }`
 #[derive(Clone, Copy, Debug)]
-pub struct Block {
-    pub statements: List<Stmt>,
+pub struct Block<L: Language> {
+    pub statements: List<Stmt<L>>,
 }
 
 #[derive(Clone, Copy, Debug)]
-pub enum Stmt {
-    Block(Id<Block>),
+pub enum Stmt<L: Language> {
+    Block(Id<Block<L>>),
     /// `let mut name: Type = value;`
     Let {
         mutable: bool,
         name: Ident,
-        ty: Option<Id<Type>>,
-        value: Option<Id<Expr>>,
+        ty: Option<Id<Type<L>>>,
+        value: Option<Id<Expr<L>>>,
     },
     /// a `Decl::Const`
-    Const(Id<Decl>),
-    Return(Option<Id<Expr>>),
+    Const(Id<Decl<L>>),
+    Return(Option<Id<Expr<L>>>),
     /// `panic message;`
-    Panic(Id<Expr>),
+    Panic(Id<Expr<L>>),
     /// an expression followed by `;`
-    Expression(Id<Expr>),
+    Expression(Id<Expr<L>>),
     /// `target = value;`
     Assign {
-        target: Id<Expr>,
-        value: Id<Expr>,
+        target: Id<Expr<L>>,
+        value: Id<Expr<L>>,
     },
     /// `let .{ a, b as c } = value;`; the pattern is a `Pattern::Struct`
     Destructure {
-        pattern: Id<Pattern>,
-        value: Id<Expr>,
+        pattern: Id<Pattern<L>>,
+        value: Id<Expr<L>>,
     },
     /// `if condition { } else { }`; the else is a `Stmt::Block` or a `Stmt::If`
     If {
-        condition: Id<Expr>,
-        then: Option<Id<Block>>,
-        otherwise: Option<Id<Stmt>>,
+        condition: Id<Expr<L>>,
+        then: Option<Id<Block<L>>>,
+        otherwise: Option<Id<Stmt<L>>>,
     },
     /// `for { }` or `for control { }`, where `control` is a `bool`
     /// condition or a range to count through (`for 0..n { }`, `for r { }`),
     /// as its type says.
     Loop {
-        control: Option<Id<Expr>>,
-        body: Option<Id<Block>>,
+        control: Option<Id<Expr<L>>>,
+        body: Option<Id<Block<L>>>,
     },
     /// `for value in items { }` or `for index, value in items { }`, with no
     /// index for `for _, value in`; the iterable may be a range.
     ForIn {
         index: Option<Ident>,
         value: Ident,
-        iterable: Id<Expr>,
-        body: Option<Id<Block>>,
+        iterable: Id<Expr<L>>,
+        body: Option<Id<Block<L>>>,
     },
     Break,
     Continue,
     /// `match subject { arms }`
     Match {
-        subject: Id<Expr>,
-        arms: List<MatchArm>,
+        subject: Id<Expr<L>>,
+        arms: List<MatchArm<L>>,
     },
 }
 
 /// `pattern => { }`; the pattern is a `Pattern::Wildcard` or a `Pattern::Case`.
 #[derive(Clone, Copy, Debug)]
-pub struct MatchArm {
-    pub pattern: Id<Pattern>,
-    pub body: Id<Block>,
+pub struct MatchArm<L: Language> {
+    pub pattern: Id<Pattern<L>>,
+    pub body: Id<Block<L>>,
 }
 
 #[derive(Clone, Copy, Debug)]
-pub enum Pattern {
+pub enum Pattern<L: Language> {
     /// `_`: a match arm's or a payload's pattern that binds nothing
     Wildcard,
     /// `none`
@@ -390,13 +429,13 @@ pub enum Pattern {
     /// `Enum::Case` or `Enum::Case with pattern`; the inner pattern is a `None`,
     /// a `Wildcard`, a `Binding`, a `Struct` or a `Case`
     Case {
-        case: Id<Type>,
-        inner: Option<Id<Pattern>>,
+        case: Id<Type<L>>,
+        inner: Option<Id<Pattern<L>>>,
     },
     /// a name to bind; its text is its span
     Binding,
     /// `.{ a, b as c, _ }`: `Field`s, then perhaps a `Rest`
-    Struct(List<Pattern>),
+    Struct(List<Pattern<L>>),
     /// `a`, or `a as b`; without a binding, the field's own name is bound
     Field {
         field: Ident,
@@ -409,12 +448,12 @@ pub enum Pattern {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub enum Expr {
+pub enum Expr<L: Language> {
     /// a use of a declared name; its text is its span
     Name,
     /// a path such as `a::B` or `Box<T>::new`; the type is a `Type::Path` or a
     /// `Type::Generic`
-    Path(Id<Type>),
+    Path(Id<Type<L>>),
     /// the number is its text
     Number,
     /// `"..."`, or `c"..."` when `c_string`; `literal::value` decodes the text
@@ -428,69 +467,87 @@ pub enum Expr {
     /// `left op right`
     Binary {
         op: BinaryOp,
-        left: Id<Expr>,
-        right: Id<Expr>,
+        left: Id<Expr<L>>,
+        right: Id<Expr<L>>,
     },
     /// `-x`, `!x` or `~x`
-    Unary { op: UnaryOp, value: Id<Expr> },
+    Unary { op: UnaryOp, value: Id<Expr<L>> },
     /// `&x` or `&mut x`
-    Reference { mutable: bool, value: Id<Expr> },
+    Reference { mutable: bool, value: Id<Expr<L>> },
     /// `@x`
-    RawAddress(Id<Expr>),
+    RawAddress(Id<Expr<L>>),
     /// `print(values)`, or `println(values)` when `newline`
-    Print { newline: bool, values: List<Expr> },
+    Print {
+        newline: bool,
+        values: List<Expr<L>>,
+    },
     /// `f(arguments)`
     Call {
-        callee: Id<Expr>,
-        arguments: List<Expr>,
+        callee: Id<Expr<L>>,
+        arguments: List<Expr<L>>,
     },
     /// `x.name`
-    Selector { value: Id<Expr>, field: Ident },
+    Selector { value: Id<Expr<L>>, field: Ident },
     /// `x.*`: the value a reference refers to
-    Dereference(Id<Expr>),
+    Dereference(Id<Expr<L>>),
     /// `x[index]`; the index may be a `Range`
-    Index { value: Id<Expr>, index: Id<Expr> },
+    Index {
+        value: Id<Expr<L>>,
+        index: Id<Expr<L>>,
+    },
     /// `a..b`, or `a..=b` when `inclusive`, inside `[ ]`, after `in` or as
     /// an array literal's value, with `a..b:step` stepping by more than one
     Range {
         inclusive: bool,
-        start: Option<Id<Expr>>,
-        end: Option<Id<Expr>>,
-        step: Option<Id<Expr>>,
-    },
-    /// `Type.{ name = value }`, or `.{ ... }` without a type
-    StructLiteral {
-        ty: Option<Id<Type>>,
-        fields: List<FieldValue>,
+        start: Option<Id<Expr<L>>>,
+        end: Option<Id<Expr<L>>>,
+        step: Option<Id<Expr<L>>>,
     },
     /// `Enum::Variant with payload`; the case is a `Type::Path`
-    VariantLiteral { case: Id<Type>, payload: Id<Expr> },
+    VariantLiteral {
+        case: Id<Type<L>>,
+        payload: Id<Expr<L>>,
+    },
     /// `[N]T{ entries }`; the type is a fixed array or slice type
-    ArrayLiteral { ty: Id<Type>, entries: List<Expr> },
+    ArrayLiteral {
+        ty: Id<Type<L>>,
+        entries: List<Expr<L>>,
+    },
     /// `values...`, an entry of an array literal or an argument of a call:
     /// each value of the array, slice or range `values` in order
-    Spread(Id<Expr>),
+    Spread(Id<Expr<L>>),
     /// `x as T`
-    Cast { value: Id<Expr>, ty: Id<Type> },
+    Cast { value: Id<Expr<L>>, ty: Id<Type<L>> },
     /// `x is Enum::Variant`
-    Is { value: Id<Expr>, case: Id<Type> },
+    Is {
+        value: Id<Expr<L>>,
+        case: Id<Type<L>>,
+    },
     /// `x orelse fallback`; the fallback may be a `Block`
-    OrElse { value: Id<Expr>, fallback: Id<Expr> },
+    OrElse {
+        value: Id<Expr<L>>,
+        fallback: Id<Expr<L>>,
+    },
     /// a block as an `orelse` fallback
-    Block(Id<Block>),
+    Block(Id<Block<L>>),
     /// `x |> f(arguments)`, kept as written; the call is a `Call`
-    Pipe { value: Id<Expr>, call: Id<Expr> },
+    Pipe {
+        value: Id<Expr<L>>,
+        call: Id<Expr<L>>,
+    },
     /// `( expression )`
-    Parentheses(Id<Expr>),
+    Parentheses(Id<Expr<L>>),
     /// a type where a value could go, written so it can only be a type
     /// (`*T`, `rawptr`, `[N]T` with no `{` after it, `&[]T`): only an
     /// argument that takes a type accepts it
-    Type(Id<Type>),
+    Type(Id<Type<L>>),
+    /// a feature's expression
+    Feature(L::Expr),
     /// an expression that could not be parsed
     Invalid,
 }
 
-impl Expr {
+impl<L: Language> Expr<L> {
     /// The precedence the expression's last part was read at: an operator
     /// written after it that binds tighter joins that part, not the whole
     /// (`-a.*` reads `a`, `a + b as T` casts `b`).
@@ -519,20 +576,20 @@ impl Expr {
             | Expr::Selector { .. }
             | Expr::Dereference(_)
             | Expr::Index { .. }
-            | Expr::StructLiteral { .. }
             | Expr::ArrayLiteral { .. }
             | Expr::Spread(_)
             | Expr::Block(_)
             | Expr::Parentheses(_)
             | Expr::Type(_)
             | Expr::Invalid => Precedence::Call,
+            Expr::Feature(expr) => L::precedence(expr),
         }
     }
 }
 
 /// `name = value` in a struct literal.
 #[derive(Clone, Copy, Debug)]
-pub struct FieldValue {
+pub struct FieldValue<L: Language> {
     pub name: Ident,
-    pub value: Id<Expr>,
+    pub value: Id<Expr<L>>,
 }

@@ -906,3 +906,33 @@
   nodes carrying `<L>` (the marker type must derive the node traits).
   Gates: 2,501 dump files identical to 745b61ce (339 with debug info, 179
   `.ll` with panics); `check.sh` all ok.
+- Step 19 piece 2, the syntax side and struct checking (2026-11-13, Fuad:
+  "go ahead", then "go with the default" for where tests go). Every tree
+  node, `Program`, the parser, the checker and lowering are generic over
+  `L: Language`. Each phase names what it asks of a feature in its own
+  trait: `syntax::ast::Language` (`Expr`, `Type`, `precedence`, `fields`),
+  `parser::Grammar` (the `Rules` table), `check::Checked` (`check_expr`,
+  `resolve_type`, `declare_type`). The table gained three row kinds a
+  feature can claim: a keyword type (`Rules::keyword_type`; enum and iface
+  became core rows of it), what continues a path (`Rules::after_path`,
+  read by `starts_path`, `opens_type_arguments` and `name_or_path`, so
+  `.{` is no longer written in the core), and declarations
+  (`Rules::declaration`). The new crate `crates/features/structs` holds
+  `StructLiteral` and `StructType`, their parse rows, and the checking of a
+  struct declaration and literal (moved unchanged from `check`), which
+  still give the core's `Type::Struct` and `ExprKind::StructLiteral`.
+  `Peeper` (`driver/compile/language.rs`) is the core plus structs, its
+  table built by `const` code; no `features!` macro while there is one
+  feature. `ast::Field` and `ast::FieldValue` stay core nodes (the core
+  reads fields: `point.x`, `field_names`); the struct pattern
+  (`let .{ a } = s`) is still a core node. Tests: `parser` and `check`
+  test in `Bare` (no feature); the struct cases of 8 parser tests became 8
+  tests in `structs` (looking at the tree, as the dump is the parser's
+  test code); 5 checker tests that need a struct moved unchanged to
+  `driver/compile/tests/checks_through_structs.rs`. No test name lost:
+  297 before, 305 after. Mutations proved both moved sets can fail.
+  `check.sh` gained a feature boundary check (no core crate depends on
+  `structs`; proved to fail on a planted line). Gates: 2,501 dump files
+  identical to 745b61ce (run twice: after the move and after the path
+  lookahead change); instructions +0.04% against 3ae1d4ec (stage 1
+  alone: -0.14%).

@@ -10,9 +10,10 @@ use model::thir::ExprKind;
 use model::thir::Variable;
 use source::Span;
 
+use crate::Checked;
 use crate::builder::ThirBuilder;
 
-impl ThirBuilder<'_, '_> {
+impl<L: Checked> ThirBuilder<'_, '_, L> {
     /// A `&place` or `&mut place` reference to the checked place `place`.
     /// `&mut` needs a place that can be written.
     pub(super) fn check_borrow(&mut self, mutable: bool, place: Id<Expr>) -> Expr {
