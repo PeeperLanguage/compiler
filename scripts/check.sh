@@ -30,16 +30,16 @@ check "runtime clippy" clippy-driver --edition=2024 -Cpanic=abort --crate-type=s
     --emit=metadata --out-dir target/runtime-clippy -D warnings runtime/peeper_rt.rs
 # The phases after lowering read only the MIR of core concepts
 # (docs/feature-front.md section 8): `model`'s core files name no front
-# module, and eval, flow and llvm name only those and `program`.
-# shortcut: llvm still reads the syntax tree through `model::program`, and
-# this is a grep; replace both with the crate split of section 9, which Cargo
-# checks.
+# module, and eval, flow and llvm name only those. llvm's tests load and
+# compile a whole program, so they may.
+# shortcut: this is a grep; replace it with the crate split of section 9,
+# which Cargo checks.
 front='semantic_types|thir|program|layout'
 check "middle boundary" bash -c "
     ! grep -rnE 'crate::($front)' crates/middle/model/src/{mir,machine,constant}.rs &&
     ! grep -nE '^use crate::' crates/middle/model/src/lib.rs &&
     ! grep -rnE 'model::($front)' crates/middle/eval crates/middle/flow &&
-    ! grep -rnE 'model::(semantic_types|thir|layout)' crates/backend/llvm &&
+    ! grep -rnE --exclude=tests.rs 'model::($front)' crates/backend/llvm &&
     ! grep -rnE '\bsyntax::' crates/middle/model/src/{mir,machine,constant,lib}.rs \
         crates/middle/{eval,flow} crates/backend/llvm"
 check "tests" cargo test --workspace --no-fail-fast

@@ -60,29 +60,31 @@ pub(crate) struct Defined {
     /// As a debugger shows it, `const` arguments too; empty in a release
     /// build.
     pub(crate) shown_name: String,
+    /// Where its name is declared, for its line in a debugger; empty in a
+    /// release build.
+    pub(crate) declared_at: Span,
     pub(crate) body: Body,
 }
 
 impl Module<'_> {
-    /// Adds the function `defined`: one of this module, or a copy of another
-    /// module's function this module called first. `symbols` holds the
-    /// symbol of it and of each function it names; `debug_types` what its
-    /// slots' debug types are, in a debug build.
+    /// Adds the function `defined`, written in `file`: one of this module,
+    /// or a copy of another module's function this module called first.
+    /// `symbols` holds the symbol of it and of each function it names;
+    /// `debug_types` what its slots' debug types are, in a debug build.
     pub(crate) fn add_body(
         &mut self,
         defined: &Defined,
+        file: &SourceFile,
         symbols: &FxHashMap<FunctionCopy, String>,
         debug_types: &DebugTypes,
     ) {
         let Defined {
             copy,
             shown_name,
+            declared_at,
             body,
         } = defined;
         let symbol = &symbols[copy];
-        let file = &self.program.modules[copy.definition.module.index()]
-            .ast
-            .file;
         let globals = (body.globals.iter())
             .map(|global| match global {
                 Global::Bytes(bytes) => self.add_string(bytes),
@@ -90,7 +92,7 @@ impl Module<'_> {
             })
             .collect();
         let (subprogram, scopes) = self
-            .add_debug_info(*copy, file, symbol, shown_name, body, debug_types)
+            .add_debug_info(*declared_at, file, symbol, shown_name, body, debug_types)
             .unzip();
         let targets = jump_targets(body);
         let mut writer = Writer {
@@ -389,7 +391,7 @@ fn c_register_type(class: Class, extension: Option<Extension>, result: bool) -> 
 struct Writer<'m, 'p, 'b> {
     module: &'m mut Module<'p>,
     body: &'b Body,
-    file: &'p SourceFile, // the function's own, which a copy's module may not be
+    file: &'b SourceFile, // the function's own, which a copy's module may not be
     symbols: &'b FxHashMap<FunctionCopy, String>,
     globals: Vec<String>,                      // each global's address
     scopes: Vec<usize>, // by debug scope, its metadata; none in a release build
@@ -1073,7 +1075,7 @@ impl Writer<'_, '_, '_> {
         debug_scope: Id<DebugScope>,
     ) {
         let location = self.location(span, debug_scope);
-        let text = panic_text(&self.module.program.root, self.file, message, span);
+        let text = panic_text(self.module.root, self.file, message, span);
         let string = self.module.add_string(&text);
         let (stderr, length, code) = (
             STDERR.to_string(),

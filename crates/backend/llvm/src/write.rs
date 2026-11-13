@@ -4,6 +4,8 @@
 //! the next module.
 
 use std::num::NonZero;
+use std::path::Path;
+use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::mpsc;
 
@@ -13,6 +15,8 @@ use model::machine::Machine;
 use model::mir;
 use model::mir::DebugTypes;
 use rustc_hash::FxHashMap;
+use source::SourceFile;
+use source::Span;
 
 use crate::BuildMode;
 use crate::Module;
@@ -49,8 +53,9 @@ impl FunctionQueue {
     /// Adds the function `copy`, whose MIR is `body`, to the LLVM module of
     /// `module`, the module whose compile built it: its own, or the first
     /// to call a copy of another module's function. `symbol_of` names a
-    /// copy for the linker, and `shown_name` names this one for a debugger;
-    /// `debug_types` are the program's so far. A program's functions come
+    /// copy for the linker; `debug_name` gives, for a debugger, the name
+    /// this one is shown by and where its name is declared; `debug_types`
+    /// are the program's so far. A program's functions come
     /// module by module, so a function of another module sends the one
     /// before to a worker.
     pub fn add(
@@ -59,7 +64,7 @@ impl FunctionQueue {
         copy: FunctionCopy,
         body: mir::Body,
         symbol_of: impl Fn(FunctionCopy) -> String,
-        shown_name: impl FnOnce() -> String,
+        debug_name: impl FnOnce() -> (String, Span),
         debug_types: &DebugTypes,
     ) {
         if self.module != Some(module) {
@@ -76,16 +81,17 @@ impl FunctionQueue {
         };
         name(copy);
         body.named_functions().for_each(name);
-        let shown_name = match self.mode {
+        let (shown_name, declared_at) = match self.mode {
             BuildMode::Debug => {
                 self.debug_types.copy_new(debug_types);
-                shown_name()
+                debug_name()
             }
-            BuildMode::Release => String::new(),
+            BuildMode::Release => (String::new(), Span::default()),
         };
         self.functions.push(Defined {
             copy,
             shown_name,
+            declared_at,
             body,
         });
     }
@@ -107,19 +113,21 @@ impl FunctionQueue {
     }
 }
 
-/// The LLVM text of each module of `program`, built in `mode` for `target`,
-/// in the program's order, and what `compile` gave.
+/// The LLVM text of each module of the project in `root`, whose source
+/// files are `files` in the program's order, built in `mode` for `target`,
+/// in that order, and what `compile` gave.
 /// `compile` runs on this thread and puts each function it checks in the
 /// queue; up to one worker per core writes the modules meanwhile.
 pub fn write_modules<'p, T>(
-    program: &'p model::program::Program,
+    root: &'p Path,
+    files: &[Arc<SourceFile>],
     target: &'static Machine,
     mode: BuildMode,
     compile: impl FnOnce(&mut FunctionQueue) -> T,
 ) -> (Vec<Module<'p>>, T) {
     let (sender, receiver) = mpsc::channel::<Batch>();
     let receiver = Mutex::new(receiver);
-    let count = program.modules.len();
+    let count = files.len();
     let workers = std::thread::available_parallelism().map_or(1, NonZero::get);
     let (written, compiled) = std::thread::scope(|scope| {
         let handles: Vec<_> = (0..workers.min(count))
@@ -132,9 +140,11 @@ pub fn write_modules<'p, T>(
                         let Ok(batch) = next else {
                             return written; // the channel is closed and empty
                         };
-                        let mut module = Module::new(program, batch.module, target, mode);
+                        let file = files[batch.module.index()].clone();
+                        let mut module = Module::new(root, file, batch.module, target, mode);
                         for defined in &batch.functions {
-                            module.add_body(defined, &batch.symbols, &batch.debug_types);
+                            let file = &files[defined.copy.definition.module.index()];
+                            module.add_body(defined, file, &batch.symbols, &batch.debug_types);
                         }
                         written.push(module);
                     }
@@ -160,8 +170,16 @@ pub fn write_modules<'p, T>(
         (written, compiled)
     });
     // A module with no function to write is empty.
-    let mut modules: Vec<Module> = (0..count)
-        .map(|index| Module::new(program, ModuleId::from_index(index), target, mode))
+    let mut modules: Vec<Module> = (files.iter().enumerate())
+        .map(|(index, file)| {
+            Module::new(
+                root,
+                file.clone(),
+                ModuleId::from_index(index),
+                target,
+                mode,
+            )
+        })
         .collect();
     for module in written {
         let index = module.module.index();

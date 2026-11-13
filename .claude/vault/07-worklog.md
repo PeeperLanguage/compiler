@@ -890,3 +890,19 @@
   section 11): with every type in one enum they would only rename matches,
   and have no caller (RULES.md 1.1). Gates: 2,501 dump files identical to
   745b61ce on the host and i686; `check.sh` all ok.
+- Step 19 piece 1, `llvm` off `Program` (2026-11-13, Fuad: "continue
+  next" to the pilot plan). A generic `Program<L>` would have made `llvm`
+  generic; it read only the project root, each module's file, a
+  function's declared name (its debug line) and the entry symbol. Now
+  `write_modules` takes `root` and `files`, `FunctionQueue::add` takes
+  `debug_name` giving the shown name and where the name is declared
+  (`Defined::declared_at`), and `add_entry_point` takes the symbol; the
+  driver computes them. `check.sh` now forbids `model::program` in
+  `llvm` (not its tests, which compile a whole program); proved to fail
+  on a planted line. Spikes for the pilot (not in the repo,
+  `target/step12-probes/front/spikes`): a per-language parser table as a
+  static in the top crate, built by `const` code from generic feature
+  rows, with a two-claims panic at build time; and `nodes!` impls for
+  nodes carrying `<L>` (the marker type must derive the node traits).
+  Gates: 2,501 dump files identical to 745b61ce (339 with debug info, 179
+  `.ll` with panics); `check.sh` all ok.

@@ -6,7 +6,6 @@ use std::fmt::Write;
 use std::path::Path;
 
 use arena::Id;
-use model::FunctionCopy;
 use model::mir::Body;
 use model::mir::DebugScope;
 use model::mir::DebugType;
@@ -15,6 +14,7 @@ use model::mir::DebugTypes;
 use model::mir::Passing;
 use rustc_hash::FxHashMap;
 use source::SourceFile;
+use source::Span;
 
 use crate::Module;
 use crate::text::comma_separated;
@@ -224,8 +224,9 @@ impl fmt::Display for DebugLocation {
 }
 
 impl Module<'_> {
-    /// Adds the debug info of the function `copy`, written in `source`,
-    /// linked as `symbol` and shown as `shown_name`, whose MIR is `body`:
+    /// Adds the debug info of the function whose name is declared at
+    /// `declared_at` in `source`, linked as `symbol` and shown as `shown_name`, whose MIR
+    /// is `body`:
     /// its `DISubprogram`, and a `DILexicalBlock` for each block that
     /// declares a variable a debugger shows. Gives the subprogram and the
     /// metadata of each debug scope: its lexical block, else its parent's;
@@ -234,7 +235,7 @@ impl Module<'_> {
     /// too.
     pub(crate) fn add_debug_info(
         &mut self,
-        copy: FunctionCopy,
+        declared_at: Span,
         source: &SourceFile,
         symbol: &str,
         shown_name: &str,
@@ -243,9 +244,7 @@ impl Module<'_> {
     ) -> Option<(usize, Vec<usize>)> {
         let pointer_bits = self.target.pointer_bits;
         let metadata = self.metadata.as_mut()?;
-        let modules = &self.program.modules;
-        let (name, _) = model::program::declared_name(modules, copy.definition);
-        let (line, _) = source.position(name.span.start as usize);
+        let (line, _) = source.position(declared_at.start as usize);
         // As the function is passed them: a value kept in memory by its
         // address, a result kept in memory where a first parameter points,
         // so a debugger reads no result from the C ABI's registers.

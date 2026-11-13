@@ -204,7 +204,7 @@ it without a feature:
 
 ### 5.2 What a type answers
 
-A sketch; names and exact signatures are settled in step 18:
+A sketch; names and exact signatures are settled in step 19:
 
 ```rust
 /// What a type is, asked by the core and by any feature.
@@ -397,12 +397,11 @@ integer to `machine::MAX_INTEGER_BITS`, and `Constant` and `value_text`,
 which read a `Type`, to `semantic_types`.
 
 `check.sh` checks it (done, step 18a): the core files name no front module,
-`flow` and `eval` name only the core, and `llvm` the core and `program`. One
-link is left: `llvm` reads the syntax tree through `Program` (each module's
-file, a function's declared name for its debug line, the entry symbol).
-The tree left `model` for `syntax` (step 18b), but `Program` holds it next
-to the checker's `Types`, so the link stays until `Program` is split; the
-check forbids `llvm` to name `syntax` itself. The check is a grep until
+and `flow`, `eval` and `llvm` name only the core. The last link, `llvm`
+reading the syntax tree through `Program`, went at the start of step 19:
+the driver hands `llvm` the project root, each module's file, a function's
+shown name and where its name is declared, and the entry symbol, so a
+generic `Program<L>` does not reach the back end. The check is a grep until
 `model`'s core is a crate of its own, which Cargo checks (section 9). The second check, that no
 feature crate's `Cargo.toml` names another, waits for the first feature
 crate (step 19): with none, it cannot fail.
@@ -458,9 +457,17 @@ For every step from 18 on:
 - **19.** Structs as the pilot: the `Language` generic (section 7), the
   `TypeShape` trait with only what the core must ask of a struct type, its
   syntax rows, nodes, checking and lowering into `features/structs`, then
-  the speed gate. Then one feature per step; each adds the views of 5.2 it
-  needs (`number` and `operation` with numbers, `view` with references,
-  `elements` with arrays).
+  the speed gate. One commit per piece, each byte-identical:
+  1. `llvm` takes the files and names it reads, not `Program`.
+  2. The syntax side: `Language`, the generic tree, the parser table in the
+     top crate (`driver/compile`), the struct rows and nodes. Speed measured.
+  3. The checker and THIR side: struct literals and fields; `members`.
+  4. The type and lowering: `Type::Struct` becomes the feature's type, with
+     the rest of the trait. Speed measured again.
+
+  Then one feature per step; each adds the views of 5.2 it needs (`number`
+  and `operation` with numbers, `view` with references, `elements` with
+  arrays).
 
 The traits of 5.2 are not added ahead of the pilot: while every type is a
 variant of one enum, a view only renames a match, and a method with no

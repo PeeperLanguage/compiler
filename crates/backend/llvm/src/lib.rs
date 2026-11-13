@@ -13,11 +13,13 @@ pub mod write;
 use std::collections::BTreeMap;
 use std::collections::HashSet;
 use std::fmt::Write;
+use std::path::Path;
+use std::sync::Arc;
 
-use model::DefId;
 use model::ModuleId;
 use model::machine::Machine;
 use rustc_hash::FxHashMap;
+use source::SourceFile;
 
 use crate::debug_info::Metadata;
 use crate::text::global;
@@ -39,7 +41,8 @@ fn clang_flag(target: &Machine) -> Option<String> {
 
 /// The LLVM text of one module, built a function at a time.
 pub struct Module<'p> {
-    program: &'p model::program::Program,
+    root: &'p Path,        // the project folder, which panic messages name files from
+    file: Arc<SourceFile>, // the module's own
     module: ModuleId,
     functions: String, // each `define`
     strings: String,   // each string and function table constant's global
@@ -60,22 +63,22 @@ struct Written {
 }
 
 impl<'p> Module<'p> {
-    /// The module `module` of `program`, with no functions yet, built in
-    /// `mode`, for `target`.
+    /// The module `module`, written in `file` of the project in `root`,
+    /// with no functions yet, built in `mode`, for `target`.
     fn new(
-        program: &'p model::program::Program,
+        root: &'p Path,
+        file: Arc<SourceFile>,
         module: ModuleId,
         target: &'static Machine,
         mode: BuildMode,
     ) -> Module<'p> {
         let metadata = match mode {
-            BuildMode::Debug => Some(Metadata::new(
-                &program.modules[module.index()].ast.file.path,
-            )),
+            BuildMode::Debug => Some(Metadata::new(&file.path)),
             BuildMode::Release => None,
         };
         Module {
-            program,
+            root,
+            file,
             module,
             functions: String::new(),
             strings: String::new(),
@@ -86,10 +89,11 @@ impl<'p> Module<'p> {
         }
     }
 
-    /// Adds the C `main` that starts the program at the function `main`:
-    /// it gives `main`'s result as the exit code when `exit_code`, else 0.
-    pub fn add_entry_point(&mut self, main: DefId, exit_code: bool) {
-        let main = global(&model::program::symbol(&self.program.modules, main));
+    /// Adds the C `main` that starts the program at the function whose
+    /// symbol is `main`: it gives `main`'s result as the exit code when
+    /// `exit_code`, else 0.
+    pub fn add_entry_point(&mut self, main: &str, exit_code: bool) {
+        let main = global(main);
         let call = if exit_code {
             format!("  %code = call i32 {main}()\n  ret i32 %code")
         } else {
@@ -107,7 +111,7 @@ impl<'p> Module<'p> {
     }
 
     pub fn text(&self) -> String {
-        let path = &self.program.modules[self.module.index()].ast.file.path;
+        let path = &self.file.path;
         let mut out = String::new();
         _ = writeln!(out, "source_filename = {}\n", quoted(path.as_bytes()));
         out.push_str(&self.strings);

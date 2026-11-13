@@ -45,8 +45,15 @@ fn program_ll(text: &str, target: &str) -> HashMap<String, String> {
     ]);
     let program = project::load(&project, &open_files);
     assert!(program.checkable);
-    let (modules, results) =
-        super::write::write_modules(&program, target, super::BuildMode::Debug, |queue| {
+    let files: Vec<_> = (program.modules.iter())
+        .map(|module| module.ast.file.clone())
+        .collect();
+    let (modules, results) = super::write::write_modules(
+        &program.root,
+        &files,
+        target,
+        super::BuildMode::Debug,
+        |queue| {
             compile::run(
                 &program,
                 target,
@@ -62,18 +69,24 @@ fn program_ll(text: &str, target: &str) -> HashMap<String, String> {
                                 model::program::copy_symbol(&program.modules, checked.types, copy)
                             },
                             || {
-                                model::program::copy_name(
-                                    &program.modules,
+                                let definition = checked.function.definition;
+                                let (name, _) =
+                                    model::program::declared_name(&program.modules, definition);
+                                let modules = &program.modules;
+                                let shown = model::program::copy_name(
+                                    modules,
                                     checked.types,
                                     checked.function,
-                                )
+                                );
+                                (shown, name.span)
                             },
                             checked.debug_types,
                         );
                     }
                 },
             )
-        });
+        },
+    );
     assert_eq!(results.diagnostics().count(), 0);
     modules
         .iter()
