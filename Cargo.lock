@@ -44,6 +44,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "bools"
+version = "0.3.1"
+dependencies = [
+ "arena",
+ "model",
+ "parser",
+ "source",
+ "syntax",
+ "token",
+]
+
+[[package]]
 name = "browser"
 version = "0.3.1"
 dependencies = [
@@ -98,6 +110,7 @@ name = "compile"
 version = "0.3.1"
 dependencies = [
  "arena",
+ "bools",
  "check",
  "diagnostics",
  "eval",

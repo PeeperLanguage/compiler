@@ -19,7 +19,6 @@ use crate::Grammar;
 use crate::Parser;
 use crate::Rules;
 use crate::literals::array_literal;
-use crate::literals::bool_literal;
 use crate::literals::character_literal;
 use crate::literals::none_literal;
 use crate::literals::number_literal;
@@ -75,8 +74,6 @@ pub(crate) const fn expression_rows<L: Grammar>(rules: &mut Rules<L>) {
     rules.prefix(TokenKind::CString, string_literal);
     rules.prefix(TokenKind::Char, character_literal);
     rules.prefix(TokenKind::ByteChar, character_literal);
-    rules.prefix(TokenKind::True, bool_literal);
-    rules.prefix(TokenKind::False, bool_literal);
     rules.prefix(TokenKind::None, none_literal);
     rules.prefix(TokenKind::LeftParen, parentheses);
     rules.prefix(TokenKind::LeftBracket, array_literal);

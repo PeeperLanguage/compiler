@@ -15,6 +15,7 @@ check.workspace = true
 eval.workspace = true
 lower.workspace = true
 parser.workspace = true
+bools.workspace = true
 structs.workspace = true
 interfaces.workspace = true
 raw_pointers.workspace = true

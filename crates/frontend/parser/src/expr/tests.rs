@@ -185,7 +185,6 @@ fn parses_expressions() {
     c"c";
     'x';
     b'y';
-    true;
     none;
     Shape::Line with Box<i32>::new(1);
     [_]u8{ 1, 2, 4..=8:2..., (0..3)..., a... };
@@ -203,8 +202,6 @@ fn parses_expressions() {
         character literal 'x'
       expression statement
         character literal byte character b'y'
-      expression statement
-        bool literal true
       expression statement
         none literal none
       expression statement

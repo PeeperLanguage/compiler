@@ -449,7 +449,6 @@ impl<'t> Dumper<'t> {
                 byte.then_some(TokenKind::ByteChar.text()),
                 vec![],
             ),
-            Expr::Bool(_) => ("bool literal", None, vec![]),
             Expr::None => ("none literal", None, vec![]),
             Expr::Binary { op, left, right } => (
                 "binary expression",

@@ -11,7 +11,6 @@ use arena::Id;
 use diagnostics::Code;
 use diagnostics::Diagnostic;
 use diagnostics::fix::Fix;
-use model::constant::Value;
 use model::semantic_types::Conversion;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
@@ -231,10 +230,6 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
                     self.check_symbol_value(symbol, span)
                 }
                 ast::Expr::Number => self.check_number(span, None, expected),
-                ast::Expr::Bool(value) => Expr {
-                    ty: TypeId::BOOL,
-                    kind: ExprKind::Constant(Value::Bool(value)),
-                },
                 ast::Expr::String { c_string: true } => self.string_literal(span, TypeId::CSTR),
                 ast::Expr::String { c_string: false } => self.string_literal(span, TypeId::STR),
                 ast::Expr::Parentheses(inner) => self.check_expr(inner, expected),

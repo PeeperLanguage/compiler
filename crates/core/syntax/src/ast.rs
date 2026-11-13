@@ -462,8 +462,6 @@ pub enum Expr<L: Language> {
     String { c_string: bool },
     /// `'x'`, or `b'x'` when `byte`; `literal::value` decodes the text
     Char { byte: bool },
-    /// `true` or `false`
-    Bool(bool),
     /// `none`
     None,
     /// `left op right`
@@ -566,7 +564,6 @@ impl<L: Language> Expr<L> {
             | Expr::Number
             | Expr::String { .. }
             | Expr::Char { .. }
-            | Expr::Bool(_)
             | Expr::None
             | Expr::Print { .. }
             | Expr::Call { .. }

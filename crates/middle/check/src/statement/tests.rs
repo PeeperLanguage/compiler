@@ -59,7 +59,7 @@ fn statements_and_operators() {
                 let c = a + 1;
                 b = b + c;
                 const K: i64 = 2 * 3;
-                if a < 0 { return K; } else if !(a == 1) { b = -b; } else { let c = true; }
+                if a < 0 { return K; } else if !(a == 1) { b = -b; } else { let c = a == 2; }
                 let d: u8;
                 return b << 2u8;
             }",
@@ -74,7 +74,7 @@ fn statements_and_operators() {
     } else if (LogicalNot (a.0 EqualTo 1:i32)) {
         b.1 = (Negate b.1)
     } else {
-        let c.3 = true
+        let c.3 = (a.0 EqualTo 2:i32)
     }
     let d.4
     return (b.1 ShiftLeft 2:u8)
@@ -124,7 +124,7 @@ fn names_shadow_until_their_block_ends() {
     let (bodies, reported) = bodies(
         "fn f(x: i32) {
                 { let x = x + 1; let y = x; }
-                { let x = true; let z = x; }
+                { let x = x == 1; let z = x; }
                 let w = x;
                 { const x = 2u8; let v = x; }
             }",
@@ -137,7 +137,7 @@ fn names_shadow_until_their_block_ends() {
         let y.2 = x.1
     }
     {
-        let x.3 = true
+        let x.3 = (x.0 EqualTo 1:i32)
         let z.4 = x.3
     }
     let w.5 = x.0
@@ -154,7 +154,7 @@ fn names_shadow_until_their_block_ends() {
 fn hidden_names_come_back_level_by_level() {
     let (built, reported) = bodies(
         "fn f(x: i32) {
-                { let x = true; { let x = 2u8; let a = x; } let b = x; }
+                { let x = x == 1; { let x = 2u8; let a = x; } let b = x; }
                 let c = x;
             }",
     );
@@ -162,7 +162,7 @@ fn hidden_names_come_back_level_by_level() {
     assert_eq!(
         built,
         ["    {
-        let x.1 = true
+        let x.1 = (x.0 EqualTo 1:i32)
         {
             let x.2 = 2:u8
             let a.3 = x.2
@@ -209,7 +209,7 @@ fn a_block_declares_a_name_once() {
     let (shown, found) = bodies(
         "fn f(a: i32, a: i64) {
                 let b = 1;
-                let b = true;
+                let b = a == 1;
                 const C = 1;
                 let C = 2;
                 let a = 3;
@@ -286,7 +286,7 @@ fn errors_are_located() {
                 let b: u8 = -1;
                 let c: i8 = -(128);
                 let d = 1i32 + 2i64;
-                let e = true + false;
+                let e = (p == 1) + (p == 2);
                 let g = 1 / 0;
                 let h = 1u8 << 8;
                 let i = 1 << 1.5;
@@ -307,8 +307,8 @@ fn errors_are_located() {
                 break;
                 let q = 5f16;
                 let r: f64 = 0xff;
-                let t = -true;
-                { let m = true; }
+                let t = -(p == 1);
+                { let m = p == 1; }
                 alloc(1);
                 let .{ first, second as renamed } = 1;
                 let after = first + renamed;
@@ -329,7 +329,7 @@ fn errors_are_located() {
         (
             "T0004",
             "operator `+` cannot be applied to `bool`",
-            "true + false",
+            "(p == 1) + (p == 2)",
         ),
         ("T0004", "division by zero", "0"),
         ("T0004", "a shift count must be from 0 to 7", "8"),
@@ -371,7 +371,11 @@ fn errors_are_located() {
             "mismatched types: expected `f64`, found `i32`",
             "0xff",
         ),
-        ("T0004", "operator `-` cannot be applied to `bool`", "-true"),
+        (
+            "T0004",
+            "operator `-` cannot be applied to `bool`",
+            "-(p == 1)",
+        ),
         ("T0002", "unknown name `alloc`", "alloc"),
         (
             "T0043",
@@ -452,7 +456,7 @@ fn a_left_literal_gets_help_if_it_can_have_the_type() {
         ]
     );
     assert_eq!(
-        notes("fn f(x: i64) { let a = 1 + true; let b = 1.5 + x; }"),
+        notes("fn f(x: i64) { let a = 1 + (x == 1); let b = 1.5 + x; }"),
         [
             (mismatch("bool"), cast("i32")),
             (

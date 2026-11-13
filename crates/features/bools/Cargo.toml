@@ -1,0 +1,20 @@
+[package]
+name = "bools"
+description = "Bools: `true` and `false`, read and checked into the core's bool constants"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+publish.workspace = true
+
+[dependencies]
+arena.workspace = true
+model.workspace = true
+parser.workspace = true
+syntax.workspace = true
+token.workspace = true
+
+[dev-dependencies]
+source.workspace = true
+
+[lints]
+workspace = true

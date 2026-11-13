@@ -54,12 +54,6 @@ pub(crate) fn character_literal<L: Grammar>(p: &mut Parser<L>) -> Id<Expr<L>> {
     p.leaf(Expr::Char { byte })
 }
 
-/// Reads `true` or `false`.
-pub(crate) fn bool_literal<L: Grammar>(p: &mut Parser<L>) -> Id<Expr<L>> {
-    let value = p.is_either(TokenKind::True, TokenKind::False);
-    p.leaf(Expr::Bool(value))
-}
-
 /// Reads `none`.
 pub(crate) fn none_literal<L: Grammar>(p: &mut Parser<L>) -> Id<Expr<L>> {
     p.leaf(Expr::None)
