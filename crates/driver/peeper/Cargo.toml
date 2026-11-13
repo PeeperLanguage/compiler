@@ -12,6 +12,7 @@ diagnostics.workspace = true
 lexer.workspace = true
 project.workspace = true
 compile.workspace = true
+features.workspace = true
 eval.workspace = true
 llvm.workspace = true
 lsp.workspace = true

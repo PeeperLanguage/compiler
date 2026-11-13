@@ -2,7 +2,7 @@
 //! text, one file per module and kind, for reading what the compiler made of
 //! a program.
 
-use compile::language::Peeper;
+use features::Peeper;
 use std::io::Write;
 use std::path::Path;
 

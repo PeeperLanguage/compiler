@@ -4,7 +4,7 @@
 use std::sync::Arc;
 
 use check::Checker;
-use compile::language::Peeper;
+use features::Peeper;
 use model::ConstArguments;
 use model::DefId;
 use model::FunctionCopy;

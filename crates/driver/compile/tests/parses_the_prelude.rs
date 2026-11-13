@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use compile::language::Peeper;
+use features::Peeper;
 use source::SourceFile;
 use syntax::ast;
 

@@ -15,14 +15,7 @@ check.workspace = true
 eval.workspace = true
 lower.workspace = true
 parser.workspace = true
-bools.workspace = true
-casts.workspace = true
-structs.workspace = true
-text.workspace = true
-interfaces.workspace = true
-ranges.workspace = true
-arrays.workspace = true
-raw_pointers.workspace = true
+features.workspace = true
 runtime_abi.workspace = true
 source.workspace = true
 

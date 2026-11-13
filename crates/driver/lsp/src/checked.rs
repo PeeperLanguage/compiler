@@ -1,7 +1,7 @@
 //! What the last check found, kept for the next one and for requests: the
 //! compile results, and each module's facts by name.
 
-use compile::language::Peeper;
+use features::Peeper;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::path::Path;

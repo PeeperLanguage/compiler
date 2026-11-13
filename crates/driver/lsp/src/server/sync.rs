@@ -1,7 +1,7 @@
 //! Keeping the open files current, checking their programs and
 //! publishing the diagnostics.
 
-use compile::language::Peeper;
+use features::Peeper;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::path::Path;

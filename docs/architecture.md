@@ -191,11 +191,11 @@ and has one job:
   a statement or declaration picks its rule from a table too, the same way,
   and so does a keyword that begins a type (`struct { ... }`).
 - The tables are one `Rules` value per language, built by `const` code:
-  `Rules::core()` adds the core's rows, and the top crate
-  (`driver/compile`) adds each feature's (`structs::parse::rows`,
-  `interfaces::parse::rows`, `raw_pointers::parse::rows`). A feature's
-  rule lives in its crate (`crates/features/`), and calls the parser's
-  public reading methods.
+  `Rules::core()` adds the core's rows, and the `features` crate's list
+  (`crates/features/src/lib.rs`) adds each feature's (`structs::rows`,
+  `interfaces::rows`, `raw_pointers::rows`). A feature's rule lives in its
+  file (`crates/features/src/structs.rs`), and calls the parser's public
+  reading methods.
 - Rules in a table are plain functions taking `p: &mut Parser`; shared helpers
   stay methods.
 - `lib.rs` holds only what all rules share: the token cursor, errors and

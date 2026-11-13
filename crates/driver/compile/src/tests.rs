@@ -7,8 +7,8 @@ use super::Options;
 use super::Output;
 use super::Results;
 use super::run;
-use crate::language::Peeper;
 use diagnostics::Diagnostic;
+use features::Peeper;
 use model::machine::Machine;
 
 /// The machine the tests check for, but where they test another.

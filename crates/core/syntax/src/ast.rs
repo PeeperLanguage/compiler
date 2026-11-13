@@ -21,7 +21,7 @@ use crate::operators::Precedence;
 use crate::operators::UnaryOp;
 
 /// The language a tree is written in: the core's nodes, plus the nodes of
-/// each feature, which the top crate lists (docs/feature-front.md, section
+/// each feature, which the `features` crate lists (docs/feature-front.md, section
 /// 7). A feature's node sits in the core's arena as a `Feature` kind, so it
 /// keeps the core's ids and spans.
 pub trait Language: Copy + Debug + 'static {

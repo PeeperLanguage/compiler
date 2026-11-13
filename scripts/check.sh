@@ -42,12 +42,17 @@ check "middle boundary" bash -c "
     ! grep -rnE --exclude=tests.rs 'model::($front)' crates/backend/llvm &&
     ! grep -rnE '\bsyntax::' crates/middle/model/src/{mir,machine,constant,lib}.rs \
         crates/middle/{eval,flow} crates/backend/llvm"
-# A feature is named only by the language that lists it, in driver/compile
-# (docs/feature-front.md section 7); Cargo refuses the cycle for the crates a
-# feature depends on, this the others, and a feature naming another.
-check "feature boundary" bash -c \
-    "features=\$(ls crates/features | paste -sd'|') &&
-    ! grep -nE \"^(\$features)\\b\" crates/{base,core,frontend,middle,backend,features}/*/Cargo.toml"
+# A phase names no feature: only its tests may use the `features` crate
+# (docs/feature-front.md section 7); Cargo refuses the cycle for the crates
+# `features` depends on, this the others. And a feature's file names no
+# other feature: of its own crate, only the list's `Peeper` and enums, so
+# no module's path (`crate::bools`).
+check "feature boundary" bash -c "
+    for manifest in crates/{base,core,frontend,middle,backend}/*/Cargo.toml; do
+        sed '/^\[dev-dependencies\]/,\$d' \$manifest | grep -H --label=\$manifest '^features\b' && exit 1
+    done
+    ! grep -nE '\bcrate::[a-z_]' crates/features/src/*.rs |
+        grep -vE '^crates/features/src/(lib|testing)\.rs:'"
 check "tests" cargo test --workspace --no-fail-fast
 check "bundle" bash scripts/build.sh
 check "test programs on the bundle" env PEEPER="$PWD/build/bin/peeper" \

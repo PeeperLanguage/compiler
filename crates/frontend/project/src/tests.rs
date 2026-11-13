@@ -1,6 +1,6 @@
 use std::fmt::Write;
 
-use compile::language::Peeper;
+use features::Peeper;
 use model::program::Import;
 use model::program::Module;
 

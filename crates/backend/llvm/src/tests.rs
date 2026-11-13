@@ -1,4 +1,4 @@
-use compile::language::Peeper;
+use features::Peeper;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::Command;

@@ -1,13 +1,13 @@
 //! The checker's tests that need a feature to reach core behaviour. The
-//! checker's own tests are written in a language with no feature, as each
-//! feature depends on `check`; these are written in Peeper, through the
+//! checker's own tests are written in a language with no feature, as the
+//! `features` crate depends on `check`; these are written in Peeper, through the
 //! checker's public calls.
 
 use std::sync::Arc;
 
 use check::Checker;
 use check::scope::collect;
-use compile::language::Peeper;
+use features::Peeper;
 use model::ConstArguments;
 use model::DefId;
 use model::FunctionCopy;

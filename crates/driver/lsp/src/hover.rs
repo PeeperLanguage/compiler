@@ -1,6 +1,6 @@
 //! Hover text: what a name declares, and the docs of a keyword or built-in.
 
-use compile::language::Peeper;
+use features::Peeper;
 use std::fmt::Write;
 
 use arena::Id;

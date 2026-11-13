@@ -1,5 +1,12 @@
 # Design page: a front split by feature
 
+Since 2026-11-13 the features are files of one crate, not a crate each:
+`crates/features/src/lib.rs` is the list (`Peeper`, `FeatureExpr`,
+`FeatureType`), and `crates/features/src/<feature>.rs` holds a feature's
+nodes, parse rows and checking, written for `Peeper`. Where this page says
+"the top crate", "`driver/compile/src/language.rs`" or "a feature crate",
+read that; the phases are generic over `L` as described.
+
 Status: **draft for review, 2026-11-13.** Step 17 of
 `middle-cleanup.localplan.md`. No code is written for steps 18-20 until this
 page is agreed. The numbers come from scripts in

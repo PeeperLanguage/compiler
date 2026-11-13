@@ -8,6 +8,7 @@ publish.workspace = true
 
 [dependencies]
 compile.workspace = true
+features.workspace = true
 diagnostics.workspace = true
 eval.workspace = true
 lexer.workspace = true

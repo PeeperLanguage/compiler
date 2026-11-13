@@ -26,7 +26,7 @@ use crate::Checker;
 use crate::builder::ThirBuilder;
 
 /// The language the checking tests are written in: the core, with no
-/// feature, since each feature's crate depends on this one.
+/// feature, since the `features` crate depends on this one.
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum Bare {}
 

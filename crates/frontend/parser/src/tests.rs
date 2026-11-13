@@ -10,7 +10,7 @@ use syntax::operators::Precedence;
 use super::*;
 
 /// The language the parser's tests are written in: the core, with no
-/// feature, since each feature's crate depends on this one.
+/// feature, since the `features` crate depends on this one.
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum Bare {}
 

@@ -25,21 +25,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "arrays"
-version = "0.3.1"
-dependencies = [
- "arena",
- "check",
- "diagnostics",
- "literal",
- "model",
- "parser",
- "source",
- "syntax",
- "token",
-]
-
-[[package]]
 name = "bigint"
 version = "0.3.1"
 
@@ -59,43 +44,18 @@ dependencies = [
 ]
 
 [[package]]
-name = "bools"
-version = "0.3.1"
-dependencies = [
- "arena",
- "model",
- "parser",
- "source",
- "syntax",
- "token",
-]
-
-[[package]]
 name = "browser"
 version = "0.3.1"
 dependencies = [
  "compile",
  "diagnostics",
  "eval",
+ "features",
  "lexer",
  "model",
  "project",
  "serde_json",
  "test_programs",
-]
-
-[[package]]
-name = "casts"
-version = "0.3.1"
-dependencies = [
- "arena",
- "check",
- "diagnostics",
- "model",
- "parser",
- "source",
- "syntax",
- "token",
 ]
 
 [[package]]
@@ -139,24 +99,17 @@ name = "compile"
 version = "0.3.1"
 dependencies = [
  "arena",
- "arrays",
- "bools",
- "casts",
  "check",
  "diagnostics",
  "eval",
- "interfaces",
+ "features",
  "lower",
  "model",
  "parser",
  "project",
- "ranges",
- "raw_pointers",
  "runtime_abi",
  "source",
- "structs",
  "syntax",
- "text",
 ]
 
 [[package]]
@@ -253,6 +206,22 @@ dependencies = [
  "runtime_abi",
  "rustc-hash",
  "source",
+]
+
+[[package]]
+name = "features"
+version = "0.3.1"
+dependencies = [
+ "arena",
+ "bigint",
+ "check",
+ "diagnostics",
+ "literal",
+ "model",
+ "parser",
+ "source",
+ "syntax",
+ "token",
 ]
 
 [[package]]
@@ -431,20 +400,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "interfaces"
-version = "0.3.1"
-dependencies = [
- "arena",
- "check",
- "diagnostics",
- "model",
- "parser",
- "source",
- "syntax",
- "token",
-]
-
-[[package]]
 name = "itoa"
 version = "1.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -483,6 +438,7 @@ version = "0.3.1"
 dependencies = [
  "arena",
  "compile",
+ "features",
  "model",
  "project",
  "runtime_abi",
@@ -504,7 +460,7 @@ dependencies = [
  "arena",
  "bigint",
  "check",
- "compile",
+ "features",
  "model",
  "parser",
  "project",
@@ -521,6 +477,7 @@ dependencies = [
  "arena",
  "compile",
  "diagnostics",
+ "features",
  "lexer",
  "lsp-server",
  "lsp-types",
@@ -616,6 +573,7 @@ dependencies = [
  "compile",
  "diagnostics",
  "eval",
+ "features",
  "lexer",
  "llvm",
  "lsp",
@@ -652,8 +610,8 @@ dependencies = [
 name = "project"
 version = "0.3.1"
 dependencies = [
- "compile",
  "diagnostics",
+ "features",
  "literal",
  "model",
  "parser",
@@ -679,35 +637,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1fbf4db142a473a8d80c26bbf18454ed458bf8d26c8219c331daecfdbd079001"
 dependencies = [
  "proc-macro2",
-]
-
-[[package]]
-name = "ranges"
-version = "0.3.1"
-dependencies = [
- "arena",
- "bigint",
- "check",
- "diagnostics",
- "model",
- "parser",
- "source",
- "syntax",
- "token",
-]
-
-[[package]]
-name = "raw_pointers"
-version = "0.3.1"
-dependencies = [
- "arena",
- "check",
- "diagnostics",
- "model",
- "parser",
- "source",
- "syntax",
- "token",
 ]
 
 [[package]]
@@ -833,20 +762,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "structs"
-version = "0.3.1"
-dependencies = [
- "arena",
- "check",
- "diagnostics",
- "model",
- "parser",
- "source",
- "syntax",
- "token",
-]
-
-[[package]]
 name = "syn"
 version = "3.0.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -890,19 +805,6 @@ dependencies = [
 [[package]]
 name = "test_programs"
 version = "0.3.1"
-
-[[package]]
-name = "text"
-version = "0.3.1"
-dependencies = [
- "arena",
- "check",
- "model",
- "parser",
- "source",
- "syntax",
- "token",
-]
 
 [[package]]
 name = "tinystr"

@@ -2,7 +2,7 @@
 //! loading and linking. It is here, not in the command, so the compile
 //! benchmark times the work a build does.
 
-use compile::language::Peeper;
+use features::Peeper;
 use llvm::BuildMode;
 use model::FunctionCopy;
 use model::machine::Machine;

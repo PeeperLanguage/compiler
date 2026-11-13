@@ -1,5 +1,5 @@
 use super::*;
-use compile::language::Peeper;
+use features::Peeper;
 use test_programs::Mark;
 use test_programs::Mode;
 use test_programs::TestProgram;

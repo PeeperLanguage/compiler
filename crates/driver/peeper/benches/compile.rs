@@ -9,7 +9,7 @@
 //!
 //! cargo bench -p peeper --bench compile
 
-use compile::language::Peeper;
+use features::Peeper;
 use std::collections::HashMap;
 use std::fmt::Write;
 use std::path::Path;

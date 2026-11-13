@@ -9,8 +9,6 @@
 //! diagnostics are kept between compiles; ids, types, THIR and MIR are
 //! rebuilt, since their numbering shifts.
 
-pub mod language;
-
 use std::collections::HashMap;
 use std::hash::DefaultHasher;
 use std::hash::Hash;
@@ -41,7 +39,7 @@ use source::SourceFile;
 use source::Span;
 use syntax::ast;
 
-use crate::language::Peeper;
+use features::Peeper;
 
 /// What a compile found, kept for the next compile of the same program.
 #[derive(Default)]

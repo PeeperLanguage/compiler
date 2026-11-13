@@ -2,7 +2,7 @@
 //! apply the fixes asked for, print its diagnostics, write the dumps asked
 //! for, and build or run it.
 
-use compile::language::Peeper;
+use features::Peeper;
 use std::collections::HashMap;
 use std::io::Write;
 use std::path::Path;

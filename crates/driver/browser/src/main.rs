@@ -8,7 +8,7 @@
 //! overflow wasm's stack on very deep code, so a page runs a new instance for each
 //! check, and one crash loses nothing.
 
-use compile::language::Peeper;
+use features::Peeper;
 use std::collections::HashMap;
 use std::io::Read;
 use std::path::Path;

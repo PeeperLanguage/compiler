@@ -17,7 +17,7 @@ source.workspace = true
 
 [dev-dependencies]
 check.workspace = true
-compile.workspace = true
+features.workspace = true
 parser.workspace = true
 project.workspace = true
 

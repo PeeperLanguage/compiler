@@ -13,9 +13,7 @@ The codebase's fixed terms: use these words, with these meanings.
 | base | `literal` | literal text rules (`literal::numeric`) |
 | base | `runtime_abi` | what a running program does as seen from outside: messages, and the runtime functions the backend calls (`Runtime`), which the MIR names; shared by `model`, `lower`, `llvm` and `eval` |
 | core | `syntax` | the syntax tree (`ast`, generic over `L: Language`) and operator kinds (`operators`) |
-| features | `structs` | struct types and literals: their nodes, parse rows, and checking into the core's struct type and value |
-| features | `interfaces` | interface types: their node, parse rows, and the declaration's checking into the core's interface type |
-| features | `raw_pointers` | `rawptr`, `*T` and `@x`: their nodes, parse rows, and checking into the core's raw pointer type and address |
+| features | `features` | Peeper: the list of its features (`lib.rs`) and one file per feature (`structs.rs`, `arrays.rs`, ...): its nodes, parse rows, and checking into the core's types and values |
 | frontend | `token`, `lexer`, `parser` | tokens, lexing, parsing (tree in `syntax::ast`) |
 | frontend | `project` | loading, import resolution, module graph, `peeper.toml` (`name`, `build = "program"` or `"lib"`) |
 | middle | `model` | data only: `thir`, `mir`, `semantic_types`, `constant`, `machine`, `program`, `layout`, ids |
@@ -24,7 +22,7 @@ The codebase's fixed terms: use these words, with these meanings.
 | middle | `flow` | path checks over MIR |
 | middle | `eval` | what each MIR operation gives (`operations`); the MIR interpreter |
 | backend | `llvm` | MIR to LLVM text; clang and the linker; the runtime build |
-| driver | `compile` | one compile: module walk, reuse, `Output`; `language::Peeper`, the core and its features |
+| driver | `compile` | one compile: module walk, reuse, `Output`; the core's phases run on `features::Peeper` |
 | driver | `peeper`, `lsp`, `browser` | command line, language server, web build |
 | tools | `toolchain` | toolchain packs |
 

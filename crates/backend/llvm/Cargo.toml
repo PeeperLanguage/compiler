@@ -18,6 +18,7 @@ toml_edit.workspace = true
 
 [dev-dependencies]
 compile.workspace = true
+features.workspace = true
 project.workspace = true
 
 [lints]

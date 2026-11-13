@@ -1,7 +1,7 @@
 //! Answering the editor's requests: hover, go to definition and code
 //! actions.
 
-use compile::language::Peeper;
+use features::Peeper;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
