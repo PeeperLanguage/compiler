@@ -15,6 +15,7 @@ The codebase's fixed terms: use these words, with these meanings.
 | core | `syntax` | the syntax tree (`ast`, generic over `L: Language`) and operator kinds (`operators`) |
 | features | `structs` | struct types and literals: their nodes, parse rows, and checking into the core's struct type and value |
 | features | `interfaces` | interface types: their node, parse rows, and the declaration's checking into the core's interface type |
+| features | `raw_pointers` | `rawptr`, `*T` and `@x`: their nodes, parse rows, and checking into the core's raw pointer type and address |
 | frontend | `token`, `lexer`, `parser` | tokens, lexing, parsing (tree in `syntax::ast`) |
 | frontend | `project` | loading, import resolution, module graph, `peeper.toml` (`name`, `build = "program"` or `"lib"`) |
 | middle | `model` | data only: `thir`, `mir`, `semantic_types`, `constant`, `machine`, `program`, `layout`, ids |

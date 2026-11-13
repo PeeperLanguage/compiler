@@ -35,6 +35,10 @@ impl Language for Structs {
     fn methods(_: &StructType<Structs>) -> Option<List<ast::Decl<Structs>>> {
         None
     }
+
+    fn pointee(_: &StructType<Structs>) -> Option<Id<ast::Type<Structs>>> {
+        None
+    }
 }
 
 static RULES: Rules<Structs> = {
@@ -171,7 +175,7 @@ fn declaration_errors() {
 /// A literal with a type, without one, and as a variant's payload.
 #[test]
 fn parses_expressions() {
-    let text = "fn f() {\n    Point.{ x = 1, y = -2 };\n    .{ a = &mut v, b = @raw };\n    Shape::Line with .{ end = Box<i32>::new(1) };\n}\n";
+    let text = "fn f() {\n    Point.{ x = 1, y = -2 };\n    .{ a = &mut v, b = !flag };\n    Shape::Line with .{ end = Box<i32>::new(1) };\n}\n";
     let (tree, errors) = parse_text(text);
     assert!(errors.is_empty(), "{errors:?}");
     let found = statements(&tree);
@@ -181,7 +185,7 @@ fn parses_expressions() {
     );
     assert_eq!(
         literal(&tree, found[1]),
-        (None, vec!["a = &mut v".into(), "b = @raw".into()])
+        (None, vec!["a = &mut v".into(), "b = !flag".into()])
     );
     let ast::Expr::VariantLiteral { case, payload } = tree.exprs[found[2]] else {
         panic!("not a variant literal")

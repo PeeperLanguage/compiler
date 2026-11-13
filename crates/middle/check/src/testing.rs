@@ -1,6 +1,7 @@
 //! What the checking tests share: a one-module program read from text, whose
 //! declarations are checked one at a time.
 
+use arena::Id;
 use arena::List;
 use model::DefId;
 use model::semantic_types::TypeId;
@@ -42,6 +43,10 @@ impl Language for Bare {
     }
 
     fn methods(ty: &Infallible) -> Option<List<ast::Decl<Bare>>> {
+        match *ty {}
+    }
+
+    fn pointee(ty: &Infallible) -> Option<Id<ast::Type<Bare>>> {
         match *ty {}
     }
 }

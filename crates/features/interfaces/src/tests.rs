@@ -36,6 +36,10 @@ impl Language for Interfaces {
     fn methods(ty: &InterfaceType<Interfaces>) -> Option<List<ast::Decl<Interfaces>>> {
         Some(ty.methods)
     }
+
+    fn pointee(_: &InterfaceType<Interfaces>) -> Option<Id<ast::Type<Interfaces>>> {
+        None
+    }
 }
 
 static RULES: Rules<Interfaces> = {

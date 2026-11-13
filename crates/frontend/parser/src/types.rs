@@ -1,4 +1,4 @@
-//! Types: names and paths, pointers, optionals, arrays, function types, and the
+//! Types: names and paths, references, optionals, arrays, function types, and the
 //! types a keyword begins, as the enum type of a type declaration.
 
 use arena::Id;
@@ -36,8 +36,6 @@ pub(crate) const fn starts_core_type(kind: TokenKind) -> bool {
             | TokenKind::AndAnd
             | TokenKind::Question
             | TokenKind::QuestionQuestion
-            | TokenKind::Asterisk
-            | TokenKind::Rawptr
             | TokenKind::LeftBracket
             | TokenKind::Fn
     )
@@ -74,15 +72,6 @@ impl<L: Grammar> Parser<L> {
                     self.add(t.span.start, Type::Reference { mutable, target })
                 }
                 TokenKind::Question | TokenKind::QuestionQuestion => self.optional_type(),
-                TokenKind::Asterisk => {
-                    self.next();
-                    let target = self.type_expr();
-                    self.add(t.span.start, Type::Pointer(target))
-                }
-                TokenKind::Rawptr => {
-                    self.next();
-                    self.add(t.span.start, Type::RawPointer)
-                }
                 TokenKind::LeftBracket => self.array_type(),
                 TokenKind::Fn => self.function_type(),
                 _ => {

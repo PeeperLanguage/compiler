@@ -48,6 +48,11 @@ Decided 2026-11-11 (Fuad):
   `semantic_types::Type` names shapes (a struct, an array, a range, a
   reference), as Zig's type table does. A feature builds a shape when it
   checks its syntax; it owns no checked type of its own (5.2).
+- **The checked program stays one closed list too** (decided 2026-11-13,
+  step 19): `thir::ExprKind` and `thir::StmtKind` name operations on core
+  shapes (a call, a field, an index, an address, a binary operation), as
+  Zig's AIR does. A feature checks its syntax into those nodes; lowering,
+  operations and folding stay core (5.3).
 - **Features never depend on each other.** The test: delete one feature's
   folder, and everything else still builds.
 
@@ -242,7 +247,15 @@ a new shape fails the build until each handles it.
 The cost: a feature that needs a new shape (enums) adds a variant here and
 an arm to each full match, as a new type kind does in Zig's `Sema`.
 
-### 5.3 Operations (decided 2026-11-13)
+### 5.3 Operations (decided 2026-11-13; reversed the same day)
+
+**Reversed (2026-11-13, step 19):** with the checked types and the checked
+program closed (section 2), an operation's operands, its THIR node
+(`Binary`, `Unary`) and its lowering (`lower::arithmetic`) are all the
+core's, so a feature would own an operation with nothing of its own. The
+operations stay core, looked up by the core type, and `check::fold` stays
+until folding through `eval` is decided on its own. What follows is the
+earlier decision, kept for its reasoning.
 
 The core keeps, for each type, the list of operations it supports, and
 implements none of them. The operations are the language's unary and
@@ -295,8 +308,10 @@ measured first (section 10).
 
 The list, from today's syntax (decided 2026-11-13: all 22 kept; members
 became a core concept in step 19, 5.1). Each owns
-its rows in the parser tables, its node kinds, its checking and its
-lowering:
+its rows in the parser tables, its node kinds and its checking into core
+THIR nodes; lowering and operations are the core's (section 2). The
+"Owns" column below was written before that, so its operations are the
+core's now:
 
 | Feature | Owns |
 | --- | --- |
@@ -377,7 +392,8 @@ features! { numbers, bools, structs, arrays, /* one line per feature */ }
 **Decided (2026-11-13): B.** It keeps the type checking that v4 lost with
 `Any`, and its costs fall where the priorities say they may. B covers the
 syntax tree (`ast::Expr::Feature`, `ast::Type::Feature`); the checked
-types stay closed (5.2).
+types and the checked program stay closed (section 2, 5.2), so lowering
+stays core and a feature needs only the THIR builder's helpers.
 
 Both options need the same thing from the core: the THIR and lowering
 builders' helpers (`add_expr`, `resolve`, `report`, `temporary`, `store`,
@@ -388,16 +404,16 @@ v4's `gateway::lower` had this API (`emit`, `temporary`, `new_block`,
 **Built (step 19, piece 2).** Each phase names what it asks of a feature
 in its own trait, so a phase depends on no later one:
 `syntax::ast::Language` (the feature nodes, `precedence`, `fields`,
-`methods`),
+`methods`, `pointee`),
 `parser::Grammar` (the rule table) and `check::Checked` (`check_expr`,
 `resolve_type`, `declare_type`). The table is built by `const` code in the
 top crate, so two rules for one token fail the build. A feature claims a
 declaration keyword, a type keyword (`Rules::keyword_type`), an expression
 prefix, or what continues a path (`Rules::after_path`: `Point.{`). There is
 no `features!` macro: `Peeper` lists its features by hand in
-`driver/compile/src/language.rs`, a written type as the enum
-`FeatureType` over the struct and interface crates' own, and an
-expression as the struct literal, the one feature expression so far. A
+`driver/compile/src/language.rs`: a written type as the enum
+`FeatureType` and an expression as the enum `FeatureExpr`, each over the
+feature crates' own, with a `From` impl per feature for its parse rows. A
 field and a field's value stay core nodes (`ast::Field`,
 `ast::FieldValue`), since the core reads fields too (`point.x`, the field
 names `model::program::field_names` gives); an interface's methods stay
@@ -512,7 +528,13 @@ For every step from 18 on:
   Interfaces came second (`features/interfaces`): the `iface` declaration
   and type rows and the declaration's checking; interface references,
   owned interfaces, the conversion and the method tables read the core's
-  checked type and stay core.
+  checked type and stay core. Raw pointers came third
+  (`features/raw_pointers`): `rawptr` and `*T` as keyword types, `@x`, and
+  each where a value could go (`g(*Node)`); `Peeper`'s expression became
+  an enum over the features too. The core reads a written pointer's target
+  through `Language::pointee` (the type-parameter walk, the "write `p.*`"
+  help); `none`, `.*`, `==` and `rawptr + usize` read the checked type and
+  stay core.
 - **20.** Removal: the closed syntax enums and every per-phase match of
   section 3.1 on them are gone (`semantic_types::Type` stays, 5.2); no
   half-moved state outlives this step.
@@ -521,10 +543,12 @@ For every step from 18 on:
 
 1. Node representation: decided 2026-11-13, B (generic core, list in a top
    crate; section 7) for the syntax tree; checked types stay one closed
-   list of shapes (decided 2026-11-13, step 19; 5.2).
+   list of shapes (decided 2026-11-13, step 19; 5.2), and so does the
+   checked program (THIR; section 2).
 2. Crates or modules: decided 2026-11-13, a crate per feature (section 9).
 3. `rawptr + n`: decided 2026-11-13, the raw pointer feature's own
-   registered `+` (5.3).
+   registered `+` (5.3); reversed the same day with 5.3: it stays a core
+   operation on the checked `rawptr`.
 4. Core concepts: decided 2026-11-13, numbers (floats included), views
    and elements (5.1).
 5. The speed limit: decided 2026-11-13, 1% more instructions (section 10).

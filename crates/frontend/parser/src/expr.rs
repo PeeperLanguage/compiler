@@ -87,10 +87,6 @@ pub(crate) const fn expression_rows<L: Grammar>(rules: &mut Rules<L>) {
     rules.prefix(TokenKind::Bang, unary);
     rules.prefix(TokenKind::Tilde, unary);
     rules.prefix(TokenKind::Ampersand, reference);
-    rules.prefix(TokenKind::At, raw_address);
-    // types that cannot be values
-    rules.prefix(TokenKind::Asterisk, type_value);
-    rules.prefix(TokenKind::Rawptr, type_value);
     rules.prefix(TokenKind::Print, print);
     rules.prefix(TokenKind::Println, print);
 
@@ -422,21 +418,6 @@ fn reference<L: Grammar>(p: &mut Parser<L>) -> Id<Expr<L>> {
     }
     let value = p.expr(Precedence::Prefix);
     p.add(start, Expr::Reference { mutable, value })
-}
-
-/// Reads a type that cannot be a value (`*T`, `rawptr`) where a value could
-/// go.
-fn type_value<L: Grammar>(p: &mut Parser<L>) -> Id<Expr<L>> {
-    let start = p.tok().span.start;
-    let ty = p.type_expr();
-    p.add(start, Expr::Type(ty))
-}
-
-/// Reads `@x`.
-fn raw_address<L: Grammar>(p: &mut Parser<L>) -> Id<Expr<L>> {
-    let start = p.next().span.start;
-    let value = p.expr(Precedence::Prefix);
-    p.add(start, Expr::RawAddress(value))
 }
 
 /// Reads `print(values)` or `println(values)`, which take any number of

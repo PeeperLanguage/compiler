@@ -30,6 +30,7 @@ literal = { path = "crates/base/literal" }
 syntax = { path = "crates/core/syntax" }
 structs = { path = "crates/features/structs" }
 interfaces = { path = "crates/features/interfaces" }
+raw_pointers = { path = "crates/features/raw_pointers" }
 model = { path = "crates/middle/model" }
 eval = { path = "crates/middle/eval" }
 check = { path = "crates/middle/check" }

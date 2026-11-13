@@ -630,7 +630,7 @@ impl<L: Checked> Checker<'_, L> {
     /// reference, slice or interface reference, as nothing follows a pointer
     /// to say what they point into. A struct or an array holding one is
     /// refused only where it is reached (`reached_through_pointer`).
-    fn written_pointer_target(&mut self, target: TypeId, span: Span) -> Option<TypeId> {
+    pub fn written_pointer_target(&mut self, target: TypeId, span: Span) -> Option<TypeId> {
         self.pointer_target(target, span, |types, target| types[target].borrows())
     }
 
@@ -914,7 +914,7 @@ impl<L: Checked> Checker<'_, L> {
     /// its declaration is checked; a value's type is `resolve_value_type`. A
     /// local never names a type
     /// (`ThirBuilder::declare`), so only top-level names are looked up.
-    fn resolve_type(&mut self, ty: Id<ast::Type<L>>) -> TypeId {
+    pub fn resolve_type(&mut self, ty: Id<ast::Type<L>>) -> TypeId {
         // Types written in types, `& & ... i32`, are a deep recursion.
         source::grow_stack(|| {
             let tree = &self.module().ast;
@@ -981,21 +981,6 @@ impl<L: Checked> Checker<'_, L> {
                     return self.reference_to(mutable, resolved, tree.types.span(target));
                 }
                 ast::Type::Optional(_) => "optional types",
-                ast::Type::RawPointer => return TypeId::RAWPTR,
-                // A pointer only names its target, so a struct can point to itself.
-                // shortcut: `*[2]Node` or `*Alias` of `Node` in `Node` is a cycle, as
-                // an array's element and an alias's target are complete, and so is
-                // any cycle through such a pointer; let them stay names too if a
-                // program needs it.
-                ast::Type::Pointer(target) => {
-                    let pointee = self.resolve_type(target);
-                    return match self.written_pointer_target(pointee, span) {
-                        Some(target) => self.types.intern(Type::RawPointer {
-                            target: Some(target),
-                        }),
-                        None => TypeId::INVALID,
-                    };
-                }
                 ast::Type::FixedArray {
                     length: ast::Length::Number(number),
                     element,
@@ -1059,7 +1044,6 @@ fn names_type_parameter<L: Language>(
         | ast::Type::Reference {
             target: written, ..
         }
-        | ast::Type::Pointer(written)
         | ast::Type::FixedArray {
             element: written, ..
         }
@@ -1069,15 +1053,17 @@ fn names_type_parameter<L: Language>(
         ast::Type::Path(_)
         | ast::Type::Generic { .. }
         | ast::Type::Optional(_)
-        | ast::Type::RawPointer
         | ast::Type::Function(_)
         | ast::Type::Enum(_)
         | ast::Type::Owner
         | ast::Type::Type
         | ast::Type::Invalid => false,
-        // shortcut: a feature's type is taken to name no type parameter, as
-        // a struct or interface type does not; ask the feature when one can.
-        ast::Type::Feature(_) => false,
+        // shortcut: of a feature's types, only a pointer's target is looked
+        // into; a struct's fields and an interface's methods are taken to
+        // name no type parameter, as a written one is not supported yet.
+        ast::Type::Feature(ty) => {
+            L::pointee(&ty).is_some_and(|target| names_type_parameter(tree, target, parameters))
+        }
     })
 }
 

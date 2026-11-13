@@ -994,3 +994,26 @@
   `crates/features`, so a new feature crate is covered). Dropping the
   interface rows from `Peeper`
   failed 2 lower tests.
+
+- **Step 19, THIR decision and raw pointers, the third feature (uncommitted,
+  2026-11-13).** Fuad said "next" to the proposal: the checked program
+  (`thir::ExprKind`, `StmtKind`) stays one closed list of operations on
+  core shapes, as the checked types do; lowering, operations and folding
+  stay core, which reverses the feature-registered operations of design
+  page 5.3 (recorded there, with question 3). New crate
+  `features/raw_pointers`: `PointerType<L> { target }` (`*T`, or `rawptr`
+  without one), `RawAddress<L> { place }`, the `*`/`rawptr` keyword-type
+  and value rows and `@`, `resolve_type` and `check_address` (moved from
+  the checker unchanged). The core's `ast::Type::Pointer`, `RawPointer`
+  and `ast::Expr::RawAddress` are gone; the two core readers of a written
+  pointer (the type-parameter walk, the "write `p.*`" help) ask the new
+  `Language::pointee`. `Peeper`'s expression is now the enum `FeatureExpr`.
+  Made pub: `Checker::resolve_type`, `written_pointer_target`,
+  `ThirBuilder::check_address`. Tests 308 -> 311: three new raw pointer
+  tests; `parses_the_prelude` moved to `driver/compile/tests` (the prelude
+  writes `*u8`); `temporaries_cannot_be_written_or_addressed` moved to
+  `checks_through_features.rs` (renamed from `checks_through_structs.rs`);
+  pointer parts left the core parser tests for the feature's. Gate 2,501
+  files, 0 differ; benchmark +0.31% against da5356c9 (all three runs
+  higher, under the 1% limit); `check.sh` all ok. Dropping the pointer rows
+  from `Peeper` failed 2 compile tests.

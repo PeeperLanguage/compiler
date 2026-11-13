@@ -525,28 +525,6 @@ fn temporaries() {
 }
 
 #[test]
-fn temporaries_cannot_be_written_or_addressed() {
-    let (_, found) = bodies(
-        "fn make() -> [2]i32 { return [2]i32{1, 2}; }
-            fn f() {
-                make()[0] = 5;
-                let p = @make()[0];
-                let q = @5;
-            }",
-    );
-    let expected = reported(&[
-        ("T0007", "cannot assign to a temporary value", "make()[0]"),
-        (
-            "T0004",
-            "cannot take address of a temporary value",
-            "@make()[0]",
-        ),
-        ("T0004", "cannot take address of a temporary value", "@5"),
-    ]);
-    assert_eq!(found, expected);
-}
-
-#[test]
 fn a_constant_cannot_be_lent_as_writable() {
     let (_, found) = bodies(
         "const LIMIT: i32 = 5;

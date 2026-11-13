@@ -292,7 +292,7 @@ fn slice_type_with_values() {
 /// for an argument that takes a type; `[N]T` is a type when no `{` follows.
 #[test]
 fn type_expressions() {
-    let text = "fn f() { g(*Node, rawptr, [4]i32, &[]i32, &mut []u8, &x); }\n";
+    let text = "fn f() { g([4]i32, &[]i32, &mut []u8, &x); }\n";
     let want = r#"module
   function declaration
     declared name f
@@ -300,11 +300,6 @@ fn type_expressions() {
       expression statement
         call expression
           name reference g
-          type expression
-            pointer type
-              type name Node
-          type expression
-            raw pointer type rawptr
           type expression
             fixed array type
               number literal 4

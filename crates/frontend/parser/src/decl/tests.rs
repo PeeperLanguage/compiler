@@ -76,7 +76,7 @@ fn Counter::Get(&self) {}
 fn Counter::Into(self) {}
 fn Counter::Doubled(mut self) {}
 fn exit(code: i32);
-fn Use(callback: fn(value: &Box, i32) -> &Box in value, view: &[]u8, edit: &mut []u8, grid: [4]rawptr, cell: **u8, untyped: *rawptr) -> ?a::Box<Box<T>>;
+fn Use(callback: fn(value: &Box, i32) -> &Box in value, view: &[]u8, edit: &mut []u8, grid: [4]u8) -> ?a::Box<Box<T>>;
 ";
     let want = "module
   function declaration
@@ -156,16 +156,7 @@ fn Use(callback: fn(value: &Box, i32) -> &Box in value, view: &[]u8, edit: &mut 
       declared name grid
       fixed array type
         number literal 4
-        raw pointer type rawptr
-    parameter
-      declared name cell
-      pointer type
-        pointer type
-          type name u8
-    parameter
-      declared name untyped
-      pointer type
-        raw pointer type rawptr
+        type name u8
     optional type
       path
         type name a
@@ -282,17 +273,6 @@ fn Pair::new() {}
 "#;
     assert!(messages(text).is_empty());
     assert_eq!(dump_of(text), want);
-}
-
-/// The real prelude, the first file of every program, parses cleanly.
-#[test]
-fn parses_the_prelude() {
-    let path = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../../_builtin_library/core/src/global.peep"
-    );
-    let text = std::fs::read_to_string(path).unwrap();
-    assert!(messages(&text).is_empty());
 }
 
 #[test]

@@ -1,13 +1,16 @@
-//! The checker's tests that need a struct. The checker's own tests are
-//! written in a language with no feature, as `structs` depends on `check`;
-//! these are written in Peeper, through the checker's public calls.
+//! The checker's tests that need a feature to reach core behaviour. The
+//! checker's own tests are written in a language with no feature, as each
+//! feature depends on `check`; these are written in Peeper, through the
+//! checker's public calls.
 
 use std::sync::Arc;
 
 use check::Checker;
 use check::scope::collect;
 use compile::language::Peeper;
+use model::ConstArguments;
 use model::DefId;
+use model::FunctionCopy;
 use model::ModuleId;
 use model::machine::Machine;
 use model::program::Import;
@@ -15,6 +18,7 @@ use model::program::ImportKind;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
 use model::semantic_types::Types;
+use model::thir::Body;
 use model::thir::Symbol;
 use source::SourceFile;
 use syntax::ast;
@@ -293,4 +297,54 @@ fn a_type_function_needs_a_struct_of_its_module() {
             "`i32` is not a struct declared in this module",
         ]
     );
+}
+
+// From `check::statement`.
+
+/// The diagnostics of checking every function body of `text`.
+fn body_reports(text: &str) -> Vec<Reported> {
+    let ((), _, reported) = with_checker(text, |checker, main| {
+        let tree = &checker.modules[main.index()].ast;
+        for (index, declaration) in tree.declarations().enumerate() {
+            let ast::Decl::Function(function) = tree.decls[declaration] else {
+                continue;
+            };
+            let definition = DefId {
+                module: main,
+                index: index as u32,
+            };
+            checker.check_body(
+                FunctionCopy {
+                    definition,
+                    arguments: ConstArguments::NONE,
+                },
+                function.name.span,
+                &mut Body::default(),
+                true,
+            );
+        }
+    });
+    reported
+}
+
+#[test]
+fn temporaries_cannot_be_written_or_addressed() {
+    let found = body_reports(
+        "fn make() -> [2]i32 { return [2]i32{1, 2}; }
+            fn f() {
+                make()[0] = 5;
+                let p = @make()[0];
+                let q = @5;
+            }",
+    );
+    let expected = reported(&[
+        ("T0007", "cannot assign to a temporary value", "make()[0]"),
+        (
+            "T0004",
+            "cannot take address of a temporary value",
+            "@make()[0]",
+        ),
+        ("T0004", "cannot take address of a temporary value", "@5"),
+    ]);
+    assert_eq!(found, expected);
 }

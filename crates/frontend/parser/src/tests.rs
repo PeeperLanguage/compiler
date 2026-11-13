@@ -2,6 +2,7 @@ use std::convert::Infallible;
 
 use syntax::ast::Decl;
 use syntax::ast::Field;
+use syntax::ast::Type;
 use syntax::operators::Precedence;
 
 use super::*;
@@ -24,6 +25,10 @@ impl Language for Bare {
     }
 
     fn methods(ty: &Infallible) -> Option<List<Decl<Bare>>> {
+        match *ty {}
+    }
+
+    fn pointee(ty: &Infallible) -> Option<Id<Type<Bare>>> {
         match *ty {}
     }
 }

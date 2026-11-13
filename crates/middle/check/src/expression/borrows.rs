@@ -60,7 +60,7 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
     /// `@place`, written at `span`: the address of the checked place
     /// `place`, which must be a place that can be written and not in a
     /// temporary's own storage.
-    pub(super) fn check_address(&mut self, place: Id<Expr>, span: Span) -> Expr {
+    pub fn check_address(&mut self, place: Id<Expr>, span: Span) -> Expr {
         let target = self.body.exprs[place].ty;
         let Some(target) = self.checker.reached_through_pointer(target, span) else {
             return Expr::INVALID;

@@ -193,7 +193,7 @@ and has one job:
 - The tables are one `Rules` value per language, built by `const` code:
   `Rules::core()` adds the core's rows, and the top crate
   (`driver/compile`) adds each feature's (`structs::parse::rows`,
-  `interfaces::parse::rows`). A feature's
+  `interfaces::parse::rows`, `raw_pointers::parse::rows`). A feature's
   rule lives in its crate (`crates/features/`), and calls the parser's
   public reading methods.
 - Rules in a table are plain functions taking `p: &mut Parser`; shared helpers

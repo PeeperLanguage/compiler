@@ -17,6 +17,7 @@ lower.workspace = true
 parser.workspace = true
 structs.workspace = true
 interfaces.workspace = true
+raw_pointers.workspace = true
 runtime_abi.workspace = true
 source.workspace = true
 

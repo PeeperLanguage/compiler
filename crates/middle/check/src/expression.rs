@@ -250,7 +250,8 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
                         .label(&tree.file, span, "");
                     // `*p` of a variable `p` reads as C's dereference, which
                     // is written `p.*`.
-                    if let ast::Type::Pointer(target) = tree.types[ty]
+                    if let ast::Type::Feature(written) = tree.types[ty]
+                        && let Some(target) = L::pointee(&written)
                         && let ast::Type::Name = tree.types[target]
                         && let name = tree.file.slice(tree.types.span(target))
                         && self.innermost.contains_key(name)
@@ -285,10 +286,6 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
                 }
                 ast::Expr::Cast { value, ty } => self.check_cast(value, ty, span),
                 ast::Expr::None => self.check_none(span, expected),
-                ast::Expr::RawAddress(value) => {
-                    let place = self.add_expr(value, None);
-                    self.check_address(place, span)
-                }
                 ast::Expr::Print { newline, values } => self.check_print(newline, values),
                 ast::Expr::Char { .. } => self.unsupported_expr(span, "character literals"),
                 ast::Expr::VariantLiteral { .. } => self.unsupported_expr(span, "variant literals"),

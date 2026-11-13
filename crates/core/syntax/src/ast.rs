@@ -40,6 +40,10 @@ pub trait Language: Copy + Debug + 'static {
     /// The methods of the feature type `ty`, if it is an interface:
     /// `Decl::Function`s without bodies.
     fn methods(ty: &Self::Type) -> Option<List<Decl<Self>>>;
+
+    /// The written type the feature type `ty` points to, if it is a typed
+    /// pointer (`*T`).
+    fn pointee(ty: &Self::Type) -> Option<Id<Type<Self>>>;
 }
 
 nodes! {
@@ -316,12 +320,8 @@ pub enum Type<L: Language> {
     Bracketed { name: Ident, inner: Id<Type<L>> },
     /// `&T` or `&mut T`
     Reference { mutable: bool, target: Id<Type<L>> },
-    /// `*T`, a raw pointer to a `T`
-    Pointer(Id<Type<L>>),
     /// `?T`
     Optional(Id<Type<L>>),
-    /// `rawptr`
-    RawPointer,
     /// `[4]T`, or `[_]T` in an array literal
     FixedArray {
         length: Length,
@@ -476,8 +476,6 @@ pub enum Expr<L: Language> {
     Unary { op: UnaryOp, value: Id<Expr<L>> },
     /// `&x` or `&mut x`
     Reference { mutable: bool, value: Id<Expr<L>> },
-    /// `@x`
-    RawAddress(Id<Expr<L>>),
     /// `print(values)`, or `println(values)` when `newline`
     Print {
         newline: bool,
@@ -557,10 +555,7 @@ impl<L: Language> Expr<L> {
         match self {
             Expr::Binary { op, .. } => op.precedence(),
             // A pipe reads its call at prefix precedence.
-            Expr::Unary { .. }
-            | Expr::Reference { .. }
-            | Expr::RawAddress(_)
-            | Expr::Pipe { .. } => Precedence::Prefix,
+            Expr::Unary { .. } | Expr::Reference { .. } | Expr::Pipe { .. } => Precedence::Prefix,
             Expr::Cast { .. } => Precedence::Cast,
             Expr::Is { .. } => Precedence::Equality,
             // These end in an expression read at the lowest precedence.

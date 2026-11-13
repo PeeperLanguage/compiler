@@ -301,9 +301,7 @@ impl<'t> Dumper<'t> {
                 vec![Item::Leaf("type name", name.span), Item::Type(inner)],
             ),
             Type::Reference { mutable: m, target } => ("reference type", mutable(m), one(target)),
-            Type::Pointer(target) => ("pointer type", None, one(target)),
             Type::Optional(inner) => ("optional type", None, one(inner)),
-            Type::RawPointer => ("raw pointer type", None, vec![]),
             Type::Owner => ("self type", None, vec![]),
             Type::Type => ("type of a type", None, vec![]),
             Type::FixedArray { length, element } => {
@@ -462,7 +460,6 @@ impl<'t> Dumper<'t> {
             Expr::Reference { mutable: m, value } => {
                 ("reference expression", mutable(m), one(value))
             }
-            Expr::RawAddress(value) => ("raw address expression", None, one(value)),
             Expr::Print { newline, values } => (
                 "print expression",
                 Some(if newline {
