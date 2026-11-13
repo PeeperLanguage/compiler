@@ -34,6 +34,7 @@ structs = { path = "crates/features/structs" }
 text = { path = "crates/features/text" }
 interfaces = { path = "crates/features/interfaces" }
 ranges = { path = "crates/features/ranges" }
+arrays = { path = "crates/features/arrays" }
 raw_pointers = { path = "crates/features/raw_pointers" }
 model = { path = "crates/middle/model" }
 eval = { path = "crates/middle/eval" }

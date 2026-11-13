@@ -257,9 +257,6 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
                 }
                 ast::Expr::Call { callee, arguments } => self.check_call(callee, arguments, span),
                 ast::Expr::Selector { value, field } => self.check_field(value, field),
-                ast::Expr::ArrayLiteral { ty, entries } => {
-                    self.check_array_literal(ty, entries, span)
-                }
                 ast::Expr::Spread(values) => {
                     self.add_expr(values, None); // for its own errors
                     let message = "`...` spreads into an array literal or a `...` parameter";

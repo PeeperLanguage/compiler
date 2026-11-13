@@ -45,6 +45,10 @@ pub trait Language: Copy + Debug + 'static {
     /// pointer (`*T`).
     fn pointee(ty: &Self::Type) -> Option<Id<Type<Self>>>;
 
+    /// The written element type of the feature type `ty`, if it is an
+    /// array type (`[N]T`).
+    fn element(ty: &Self::Type) -> Option<Id<Type<Self>>>;
+
     /// The kind of string literal the feature expression `expr` is, if it
     /// is one.
     fn string_kind(expr: &Self::Expr) -> Option<StringKind>;
@@ -353,11 +357,6 @@ pub enum Type<L: Language> {
     Reference { mutable: bool, target: Id<Type<L>> },
     /// `?T`
     Optional(Id<Type<L>>),
-    /// `[4]T`, or `[_]T` in an array literal
-    FixedArray {
-        length: Length,
-        element: Id<Type<L>>,
-    },
     /// `&[]T`, or `&mut []T` when `mutable`
     Slice { mutable: bool, element: Id<Type<L>> },
     /// `...T`, or `...mut T` when `mutable`: a variadic parameter's type, the
@@ -376,14 +375,6 @@ pub enum Type<L: Language> {
     Feature(L::Type),
     /// a type that could not be parsed
     Invalid,
-}
-
-/// The length of a fixed array type.
-#[derive(Clone, Copy, Debug)]
-pub enum Length {
-    Number(Span),
-    /// `_`: the number of values in the array literal
-    Inferred(Span),
 }
 
 /// `{ statements }`
@@ -530,11 +521,6 @@ pub enum Expr<L: Language> {
         case: Id<Type<L>>,
         payload: Id<Expr<L>>,
     },
-    /// `[N]T{ entries }`; the type is a fixed array or slice type
-    ArrayLiteral {
-        ty: Id<Type<L>>,
-        entries: List<Expr<L>>,
-    },
     /// `values...`, an entry of an array literal or an argument of a call:
     /// each value of the array, slice or range `values` in order
     Spread(Id<Expr<L>>),
@@ -589,7 +575,6 @@ impl<L: Language> Expr<L> {
             | Expr::Selector { .. }
             | Expr::Dereference(_)
             | Expr::Index { .. }
-            | Expr::ArrayLiteral { .. }
             | Expr::Spread(_)
             | Expr::Block(_)
             | Expr::Parentheses(_)

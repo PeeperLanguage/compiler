@@ -18,7 +18,6 @@ use token::TokenKind;
 use crate::Grammar;
 use crate::Parser;
 use crate::Rules;
-use crate::literals::array_literal;
 use crate::literals::character_literal;
 use crate::literals::none_literal;
 use crate::literals::number_literal;
@@ -73,7 +72,6 @@ pub(crate) const fn expression_rows<L: Grammar>(rules: &mut Rules<L>) {
     rules.prefix(TokenKind::ByteChar, character_literal);
     rules.prefix(TokenKind::None, none_literal);
     rules.prefix(TokenKind::LeftParen, parentheses);
-    rules.prefix(TokenKind::LeftBracket, array_literal);
 
     // prefix operators and built-in calls
     rules.prefix(TokenKind::Plus, leading_plus);
@@ -122,7 +120,7 @@ pub(crate) const fn expression_rows<L: Grammar>(rules: &mut Rules<L>) {
 }
 
 /// Whether an expression can begin with `kind`.
-pub(crate) fn starts_expression<L: Grammar>(kind: TokenKind) -> bool {
+pub fn starts_expression<L: Grammar>(kind: TokenKind) -> bool {
     L::rules().prefix[kind as usize].is_some()
 }
 
@@ -288,7 +286,7 @@ fn call<L: Grammar>(p: &mut Parser<L>, callee: Id<Expr<L>>) -> Id<Expr<L>> {
 
 /// Reads an entry of an array literal or an argument of a call: `value` or
 /// `value...`.
-pub(crate) fn spreadable<L: Grammar>(p: &mut Parser<L>) -> Id<Expr<L>> {
+pub fn spreadable<L: Grammar>(p: &mut Parser<L>) -> Id<Expr<L>> {
     let start = p.tok().span.start;
     let value = p.expr(Precedence::Lowest);
     if !p.at(TokenKind::Ellipsis) {

@@ -163,8 +163,7 @@ fn parses_expressions() {
     b'y';
     none;
     Shape::Line with Box<i32>::new(1);
-    [_]u8{ 1, 2, (b)..., a... };
-    sum(1, a..., &mut b...);
+    sum(1, (a)..., &mut b...);
     println(items[n]);
 }
 "#;
@@ -191,23 +190,12 @@ fn parses_expressions() {
               type name new
             number literal 1
       expression statement
-        array literal
-          fixed array type
-            inferred length _
-            type name u8
-          number literal 1
-          number literal 2
-          spread
-            parentheses
-              name reference b
-          spread
-            name reference a
-      expression statement
         call expression
           name reference sum
           number literal 1
           spread
-            name reference a
+            parentheses
+              name reference a
           spread
             reference expression mut
               name reference b
@@ -227,13 +215,7 @@ fn expression_errors() {
         ("a is b;", "enum case must use a fully named path"),
         ("a |> b;", "pipe target must be a free-function call"),
         ("a |> b.c();", "pipe cannot call a method"),
-        ("[x]i32{};", "expected array length"),
-        (
-            "[]i32{};",
-            "`[]i32` is any number of `i32`s, so it has no fixed size",
-        ),
         ("a.;", "expected `identifier`, found `;`"),
-        ("[_]i32;", "expected `{`, found `;`"),
     ] {
         one_error(&format!("fn f() {{ {text} }}"), message, None);
     }
@@ -250,10 +232,10 @@ fn slice_type_with_values() {
 }
 
 /// A spelling that can only be a type is read as one where a value could go,
-/// for an argument that takes a type; `[N]T` is a type when no `{` follows.
+/// for an argument that takes a type.
 #[test]
 fn type_expressions() {
-    let text = "fn f() { g([4]i32, &[]i32, &mut []u8, &x); }\n";
+    let text = "fn f() { g(&[]i32, &mut []u8, &x); }\n";
     let want = r#"module
   function declaration
     declared name f
@@ -261,10 +243,6 @@ fn type_expressions() {
       expression statement
         call expression
           name reference g
-          type expression
-            fixed array type
-              number literal 4
-              type name i32
           type expression
             slice type
               type name i32

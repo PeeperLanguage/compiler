@@ -40,6 +40,10 @@ impl Language for Structs {
         None
     }
 
+    fn element(_: &StructType<Structs>) -> Option<Id<ast::Type<Structs>>> {
+        None
+    }
+
     fn string_kind(_: &StructLiteral<Structs>) -> Option<ast::StringKind> {
         None
     }

@@ -39,6 +39,10 @@ impl Language for Casts {
         match *ty {}
     }
 
+    fn element(ty: &Infallible) -> Option<Id<ast::Type<Casts>>> {
+        match *ty {}
+    }
+
     fn string_kind(_: &Cast<Casts>) -> Option<ast::StringKind> {
         None
     }

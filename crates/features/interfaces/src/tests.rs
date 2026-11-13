@@ -41,6 +41,10 @@ impl Language for Interfaces {
         None
     }
 
+    fn element(_: &InterfaceType<Interfaces>) -> Option<Id<ast::Type<Interfaces>>> {
+        None
+    }
+
     fn string_kind(expr: &Infallible) -> Option<ast::StringKind> {
         match *expr {}
     }

@@ -1,10 +1,9 @@
-//! Checking literals that build a value: strings, `none`, arrays, their
-//! spreads, and ranges.
+//! Checking literals that build a value: strings, `none`, and the entries
+//! and spreads of arrays.
 
 use std::num::NonZeroU32;
 
 use arena::Id;
-use arena::List;
 use diagnostics::Diagnostic;
 use diagnostics::fix::Fix;
 use model::constant::Value;
@@ -61,57 +60,13 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
         }
     }
 
-    /// `[N]T{ entries }`, written at `span`, or `[_]T{ entries }`, whose
-    /// length is the number of values its entries give: each entry a `T`, or
-    /// a spread of a range, an array or a slice (`count_spread`). They must
-    /// give exactly its length. A slice, or a range whose count is not known
-    /// now, is counted when the program runs, so its literal needs a written
-    /// length, which the entries known now must not already pass.
-    pub(super) fn check_array_literal(
-        &mut self,
-        written: Id<ast::Type<L>>,
-        entries: List<ast::Expr<L>>,
-        span: Span,
-    ) -> Expr {
-        let tree = &self.checker.module().ast;
-        let (element, length) = match tree.types[written] {
-            ast::Type::FixedArray {
-                length: ast::Length::Inferred(_),
-                element,
-            } => (self.checker.resolve_value_type(element), None),
-            _ => match self.checker.resolve_value_type(written) {
-                ty if ty == TypeId::INVALID => (TypeId::INVALID, None),
-                ty => match self.checker.types[ty] {
-                    Type::Array {
-                        element, length, ..
-                    } => (element, Some((ty, length))),
-                    _ => unreachable!("an array literal's written type is an array type"),
-                },
-            },
-        };
-        let (parts, known, later) =
-            self.check_entries(tree.children.lists.items(entries), element, None);
-        let Some(known) = known.filter(|_| element != TypeId::INVALID) else {
-            return Expr::INVALID;
-        };
-        let written = tree.types.span(written);
-        let Some(ty) = self.array_literal_type(written, element, length, (known, later), span)
-        else {
-            return Expr::INVALID;
-        };
-        Expr {
-            ty,
-            kind: ExprKind::ArrayLiteral(self.body.children.lists.add(&parts)),
-        }
-    }
-
     /// The `entries` of an array of `element`s, each a value or a spread
     /// (`count_spread`), checked: with how many values are known now, `None`
     /// after an error in a spread, and the first spread not counted until the
     /// program runs, with why. A value that mismatches is reported, with how
     /// to spread it when it holds `element`s (`help_spread`, given `alone_in`).
     /// Without an element type, each entry is checked for its own errors.
-    fn check_entries(
+    pub fn check_entries(
         &mut self,
         entries: impl Iterator<Item = Id<ast::Expr<L>>>,
         element: TypeId,
@@ -296,8 +251,8 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
     /// entries give `known` values now and more when the program runs if a
     /// spread, first at `later` with why `[_]` cannot count it, is counted
     /// then; `None` after reporting that they do not fit it
-    /// (`check_array_literal`).
-    pub(super) fn array_literal_type(
+    /// (`arrays::check::check_literal`).
+    pub fn array_literal_type(
         &mut self,
         written: Span,
         element: TypeId,

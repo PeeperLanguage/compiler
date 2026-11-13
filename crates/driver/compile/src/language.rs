@@ -4,6 +4,8 @@
 
 use arena::Id;
 use arena::List;
+use arrays::ArrayLiteral;
+use arrays::ArrayType;
 use bools::BoolLiteral;
 use casts::Cast;
 use check::Checked;
@@ -40,6 +42,13 @@ pub enum FeatureExpr {
     RawAddress(RawAddress<Peeper>),
     String(StringLiteral),
     Range(WrittenRange<Peeper>),
+    ArrayLiteral(ArrayLiteral<Peeper>),
+}
+
+impl From<ArrayLiteral<Peeper>> for FeatureExpr {
+    fn from(expr: ArrayLiteral<Peeper>) -> FeatureExpr {
+        FeatureExpr::ArrayLiteral(expr)
+    }
 }
 
 impl From<BoolLiteral> for FeatureExpr {
@@ -84,6 +93,13 @@ pub enum FeatureType {
     Struct(StructType<Peeper>),
     Interface(InterfaceType<Peeper>),
     Pointer(PointerType<Peeper>),
+    Array(ArrayType<Peeper>),
+}
+
+impl From<ArrayType<Peeper>> for FeatureType {
+    fn from(ty: ArrayType<Peeper>) -> FeatureType {
+        FeatureType::Array(ty)
+    }
 }
 
 impl From<StructType<Peeper>> for FeatureType {
@@ -111,9 +127,10 @@ impl Language for Peeper {
     fn precedence(expr: &FeatureExpr) -> Precedence {
         match expr {
             // A struct literal ends with its `}`.
-            FeatureExpr::Bool(_) | FeatureExpr::String(_) | FeatureExpr::StructLiteral(_) => {
-                Precedence::Call
-            }
+            FeatureExpr::Bool(_)
+            | FeatureExpr::String(_)
+            | FeatureExpr::StructLiteral(_)
+            | FeatureExpr::ArrayLiteral(_) => Precedence::Call,
             FeatureExpr::Cast(_) => Precedence::Cast,
             FeatureExpr::Range(_) => Precedence::Range,
             // `@` reads its place at prefix precedence.
@@ -124,21 +141,28 @@ impl Language for Peeper {
     fn fields(ty: &FeatureType) -> Option<List<ast::Field<Peeper>>> {
         match ty {
             FeatureType::Struct(ty) => Some(ty.fields),
-            FeatureType::Interface(_) | FeatureType::Pointer(_) => None,
+            FeatureType::Interface(_) | FeatureType::Pointer(_) | FeatureType::Array(_) => None,
         }
     }
 
     fn methods(ty: &FeatureType) -> Option<List<ast::Decl<Peeper>>> {
         match ty {
             FeatureType::Interface(ty) => Some(ty.methods),
-            FeatureType::Struct(_) | FeatureType::Pointer(_) => None,
+            FeatureType::Struct(_) | FeatureType::Pointer(_) | FeatureType::Array(_) => None,
         }
     }
 
     fn pointee(ty: &FeatureType) -> Option<Id<ast::Type<Peeper>>> {
         match ty {
             FeatureType::Pointer(ty) => ty.target,
-            FeatureType::Struct(_) | FeatureType::Interface(_) => None,
+            FeatureType::Struct(_) | FeatureType::Interface(_) | FeatureType::Array(_) => None,
+        }
+    }
+
+    fn element(ty: &FeatureType) -> Option<Id<ast::Type<Peeper>>> {
+        match ty {
+            FeatureType::Array(ty) => Some(ty.element),
+            FeatureType::Struct(_) | FeatureType::Interface(_) | FeatureType::Pointer(_) => None,
         }
     }
 
@@ -149,6 +173,7 @@ impl Language for Peeper {
             | FeatureExpr::Cast(_)
             | FeatureExpr::Range(_)
             | FeatureExpr::StructLiteral(_)
+            | FeatureExpr::ArrayLiteral(_)
             | FeatureExpr::RawAddress(_) => None,
         }
     }
@@ -160,6 +185,7 @@ impl Language for Peeper {
             | FeatureExpr::Cast(_)
             | FeatureExpr::String(_)
             | FeatureExpr::StructLiteral(_)
+            | FeatureExpr::ArrayLiteral(_)
             | FeatureExpr::RawAddress(_) => None,
         }
     }
@@ -173,6 +199,7 @@ static RULES: Rules<Peeper> = {
     structs::parse::rows(&mut rules);
     interfaces::parse::rows(&mut rules);
     ranges::parse::rows(&mut rules);
+    arrays::parse::rows(&mut rules);
     raw_pointers::parse::rows(&mut rules);
     text::parse::rows(&mut rules);
     rules
@@ -198,6 +225,9 @@ impl Checked for Peeper {
                 structs::check::check_literal(builder, literal, span, expected)
             }
             FeatureExpr::Range(range) => ranges::check::check_range(builder, range, span, expected),
+            FeatureExpr::ArrayLiteral(literal) => {
+                arrays::check::check_literal(builder, literal, span)
+            }
             FeatureExpr::String(literal) => text::check::check_literal(builder, literal, span),
             FeatureExpr::RawAddress(address) => {
                 raw_pointers::check::check_address(builder, address, span)
@@ -210,6 +240,7 @@ impl Checked for Peeper {
             FeatureType::Struct(_) => structs::check::resolve_type(checker, span),
             FeatureType::Interface(_) => interfaces::check::resolve_type(checker, span),
             FeatureType::Pointer(ty) => raw_pointers::check::resolve_type(checker, ty, span),
+            FeatureType::Array(ty) => arrays::check::resolve_type(checker, ty, span),
         }
     }
 
@@ -222,7 +253,7 @@ impl Checked for Peeper {
         match ty {
             FeatureType::Struct(ty) => structs::check::declare(checker, definition, written, ty),
             FeatureType::Interface(_) => interfaces::check::declare(checker, definition),
-            FeatureType::Pointer(_) => {
+            FeatureType::Pointer(_) | FeatureType::Array(_) => {
                 unreachable!("only `struct` and `iface` begin a feature's type declaration")
             }
         }

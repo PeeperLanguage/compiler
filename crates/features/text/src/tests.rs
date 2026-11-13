@@ -53,6 +53,10 @@ impl Language for Texts {
         match *ty {}
     }
 
+    fn element(ty: &Infallible) -> Option<Id<ast::Type<Texts>>> {
+        match *ty {}
+    }
+
     fn string_kind(expr: &StringLiteral) -> Option<StringKind> {
         Some(expr.kind)
     }

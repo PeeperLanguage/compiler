@@ -54,6 +54,10 @@ impl Language for Ranges {
         match *ty {}
     }
 
+    fn element(ty: &Infallible) -> Option<Id<ast::Type<Ranges>>> {
+        match *ty {}
+    }
+
     fn string_kind(_: &WrittenRange<Ranges>) -> Option<StringKind> {
         None
     }

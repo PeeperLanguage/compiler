@@ -15,7 +15,6 @@ use syntax::ast::Decl;
 use syntax::ast::Expr;
 use syntax::ast::Ident;
 use syntax::ast::Import;
-use syntax::ast::Length;
 use syntax::ast::MatchArm;
 use syntax::ast::Metadata;
 use syntax::ast::Param;
@@ -304,13 +303,6 @@ impl<'t> Dumper<'t> {
             Type::Optional(inner) => ("optional type", None, one(inner)),
             Type::Owner => ("self type", None, vec![]),
             Type::Type => ("type of a type", None, vec![]),
-            Type::FixedArray { length, element } => {
-                let length = match length {
-                    Length::Number(span) => Item::Leaf("number literal", span),
-                    Length::Inferred(span) => Item::Leaf("inferred length", span),
-                };
-                ("fixed array type", None, vec![length, Item::Type(element)])
-            }
             Type::Variadic {
                 mutable: m,
                 element,
@@ -486,11 +478,6 @@ impl<'t> Dumper<'t> {
                 None,
                 vec![Item::Type(case), Item::Expr(payload)],
             ),
-            Expr::ArrayLiteral { ty, entries } => {
-                let mut nested = vec![Item::Type(ty)];
-                nested.extend(t.children.lists.items(entries).map(Item::Expr));
-                ("array literal", None, nested)
-            }
             Expr::Spread(values) => ("spread", None, one(values)),
             Expr::Is { value, case } => ("is expression", None, two(value, Item::Type(case))),
             Expr::OrElse { value, fallback } => {

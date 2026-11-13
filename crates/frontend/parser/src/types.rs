@@ -5,7 +5,6 @@ use arena::Id;
 use arena::List;
 use diagnostics::Diagnostic;
 use source::Span;
-use syntax::ast::Length;
 use syntax::ast::Param;
 use syntax::ast::Type;
 use syntax::ast::Variant;
@@ -36,7 +35,6 @@ pub(crate) const fn starts_core_type(kind: TokenKind) -> bool {
             | TokenKind::AndAnd
             | TokenKind::Question
             | TokenKind::QuestionQuestion
-            | TokenKind::LeftBracket
             | TokenKind::Fn
     )
 }
@@ -72,7 +70,6 @@ impl<L: Grammar> Parser<L> {
                     self.add(t.span.start, Type::Reference { mutable, target })
                 }
                 TokenKind::Question | TokenKind::QuestionQuestion => self.optional_type(),
-                TokenKind::LeftBracket => self.array_type(),
                 TokenKind::Fn => self.function_type(),
                 _ => {
                     if let Some(read) = L::rules().keyword_types[t.kind as usize] {
@@ -180,51 +177,6 @@ impl<L: Grammar> Parser<L> {
             inner = self.add(start, Type::Optional(inner));
         }
         inner
-    }
-
-    /// Reads `[N]T`; a `[]T` alone is reported, as it has no fixed size.
-    pub(crate) fn array_type(&mut self) -> Id<Type<L>> {
-        let open = self.next();
-        let t = self.tok();
-        // `[]T` alone, read whole so the message names it and parsing goes on.
-        if t.kind == TokenKind::RightBracket {
-            self.next();
-            let element = self.type_expr();
-            let ty = self.add(open.span.start, Type::Invalid);
-            // An element reported already, as `[]i32` in `[][]i32`, is the
-            // one mistake: its fix fixes the whole.
-            if let Type::Invalid = self.tree.types[element] {
-                return ty;
-            }
-            let element = self.tree.file.slice(self.tree.types.span(element));
-            let message =
-                format!("`[]{element}` is any number of `{element}`s, so it has no fixed size");
-            let label =
-                format!("use `[N]{element}` for a fixed array or `&[]{element}` for a slice");
-            let span = self.tree.types.span(ty);
-            self.repair(Diagnostic::new(diagnostics::INVALID_TYPE, message).label(
-                &self.tree.file,
-                span,
-                label,
-            ));
-            return ty;
-        }
-        if t.kind != TokenKind::Number {
-            self.fail(
-                Diagnostic::new(diagnostics::INVALID_TYPE, "expected array length").label(
-                    &self.tree.file,
-                    t.span,
-                    "use `[N]T` for fixed arrays or `&[]T` for slices",
-                ),
-            );
-            return self.add(open.span.start, Type::Invalid);
-        }
-        self.next();
-        self.check_number(t);
-        self.close(TokenKind::RightBracket, open);
-        let element = self.type_expr();
-        let length = Length::Number(t.span);
-        self.add(open.span.start, Type::FixedArray { length, element })
     }
 
     /// Reads `fn(name: T, U) -> R in name`; parameter names are optional.

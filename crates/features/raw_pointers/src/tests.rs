@@ -40,6 +40,10 @@ impl Language for RawPointers {
         ty.target
     }
 
+    fn element(_: &PointerType<RawPointers>) -> Option<Id<ast::Type<RawPointers>>> {
+        None
+    }
+
     fn string_kind(_: &RawAddress<RawPointers>) -> Option<ast::StringKind> {
         None
     }
@@ -75,7 +79,7 @@ fn shape(tree: &Tree, ty: Id<ast::Type<RawPointers>>) -> String {
             target: Some(target),
         }) => format!("*{}", shape(tree, target)),
         ast::Type::Feature(PointerType { target: None }) => "rawptr".to_string(),
-        ast::Type::FixedArray { element, .. } => format!("[_]{}", shape(tree, element)),
+        ast::Type::Reference { target, .. } => format!("&{}", shape(tree, target)),
         _ => tree.file.slice(tree.types.span(ty)).to_string(),
     }
 }
@@ -113,11 +117,11 @@ fn statements(tree: &Tree) -> Vec<Id<ast::Expr<RawPointers>>> {
 /// pointer is any type's part.
 #[test]
 fn parses_types() {
-    let (tree, errors) = parse_text("fn f(a: *u8, b: **u8, c: *rawptr, d: rawptr, e: [4]rawptr);");
+    let (tree, errors) = parse_text("fn f(a: *u8, b: **u8, c: *rawptr, d: rawptr, e: &*rawptr);");
     assert!(errors.is_empty(), "{errors:?}");
     assert_eq!(
         parameter_types(&tree),
-        ["*u8", "**u8", "*rawptr", "rawptr", "[_]rawptr"]
+        ["*u8", "**u8", "*rawptr", "rawptr", "&*rawptr"]
     );
 }
 

@@ -687,7 +687,7 @@ impl<L: Checked> Checker<'_, L> {
 
     /// `[length]element`, written at `span` (`element_type`), holding at
     /// most `MOST_HOLDERS` references and slices.
-    pub(crate) fn array_type(&mut self, element: TypeId, length: u64, span: Span) -> TypeId {
+    pub fn array_type(&mut self, element: TypeId, length: u64, span: Span) -> TypeId {
         let Some(element) = self.element_type(element) else {
             return TypeId::INVALID;
         };
@@ -742,7 +742,7 @@ impl<L: Checked> Checker<'_, L> {
 
     /// Whether an array may have `length` elements, as its `len` is a
     /// `usize` (`check_field`); reported at `span` when not.
-    pub(crate) fn length_fits(&mut self, length: &[u64], span: Span) -> bool {
+    pub fn length_fits(&mut self, length: &[u64], span: Span) -> bool {
         let usize = Integer {
             signed: false,
             bits: self.target.pointer_bits,
@@ -982,26 +982,6 @@ impl<L: Checked> Checker<'_, L> {
                     return self.reference_to(mutable, resolved, tree.types.span(target));
                 }
                 ast::Type::Optional(_) => "optional types",
-                ast::Type::FixedArray {
-                    length: ast::Length::Number(number),
-                    element,
-                } => {
-                    let literal = literal::numeric::split(tree.file.slice(number));
-                    let value = literal.integer_value();
-                    if !literal.suffix.is_empty() || literal.is_float() {
-                        let message = "an array length is a whole number without a suffix";
-                        return self.error(diagnostics::INVALID_TYPE, message, number);
-                    }
-                    if !self.length_fits(&value, number) {
-                        return TypeId::INVALID;
-                    }
-                    let element = self.resolve_value_type(element);
-                    return self.array_type(element, value[0], span);
-                }
-                ast::Type::FixedArray {
-                    length: ast::Length::Inferred(_),
-                    ..
-                } => unreachable!("the parser reads `[_]` only in an array literal, checked there"),
                 ast::Type::Slice { mutable, element }
                 | ast::Type::Variadic { mutable, element } => {
                     let element = self.resolve_value_type(element);
@@ -1046,9 +1026,6 @@ fn names_type_parameter<L: Language>(
         | ast::Type::Reference {
             target: written, ..
         }
-        | ast::Type::FixedArray {
-            element: written, ..
-        }
         | ast::Type::Slice {
             element: written, ..
         }
@@ -1063,12 +1040,12 @@ fn names_type_parameter<L: Language>(
         | ast::Type::Owner
         | ast::Type::Type
         | ast::Type::Invalid => false,
-        // shortcut: of a feature's types, only a pointer's target is looked
-        // into; a struct's fields and an interface's methods are taken to
-        // name no type parameter, as a written one is not supported yet.
-        ast::Type::Feature(ty) => {
-            L::pointee(&ty).is_some_and(|target| names_type_parameter(tree, target, parameters))
-        }
+        // shortcut: of a feature's types, only a pointer's target and an
+        // array's element are looked into; a struct's fields and an
+        // interface's methods are taken to name no type parameter, as a
+        // written one is not supported yet.
+        ast::Type::Feature(ty) => (L::pointee(&ty).or_else(|| L::element(&ty)))
+            .is_some_and(|written| names_type_parameter(tree, written, parameters)),
     })
 }
 

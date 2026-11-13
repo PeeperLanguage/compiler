@@ -21,6 +21,7 @@ structs.workspace = true
 text.workspace = true
 interfaces.workspace = true
 ranges.workspace = true
+arrays.workspace = true
 raw_pointers.workspace = true
 runtime_abi.workspace = true
 source.workspace = true

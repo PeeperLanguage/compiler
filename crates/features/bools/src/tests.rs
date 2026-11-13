@@ -39,6 +39,10 @@ impl Language for Bools {
         match *ty {}
     }
 
+    fn element(ty: &Infallible) -> Option<Id<ast::Type<Bools>>> {
+        match *ty {}
+    }
+
     fn string_kind(_: &BoolLiteral) -> Option<ast::StringKind> {
         None
     }

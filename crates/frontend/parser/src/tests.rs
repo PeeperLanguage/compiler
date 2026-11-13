@@ -34,6 +34,10 @@ impl Language for Bare {
         match *ty {}
     }
 
+    fn element(ty: &Infallible) -> Option<Id<Type<Bare>>> {
+        match *ty {}
+    }
+
     fn string_kind(expr: &Infallible) -> Option<StringKind> {
         match *expr {}
     }
@@ -171,12 +175,11 @@ fn underscore_binds_nothing() {
         A::B with _ => {}
         _ => {}
     }
-    let a = [_]i32{1};
     let .{ b, _ } = s;
 }";
     assert_eq!(messages(text), Vec::<String>::new());
     let dump = dump_of(text);
-    for node in ["wildcard pattern", "rest pattern", "inferred length"] {
+    for node in ["wildcard pattern", "rest pattern"] {
         assert!(dump.contains(node), "no {node} in\n{dump}");
     }
     assert!(!dump.contains("declared name _"), "{dump}");
@@ -462,8 +465,7 @@ fn missing_token_place() {
 }
 
 /// What the parser accepts and repairs between items: extra commas,
-/// trailing commas, empty statements and `??` are style, left to a lint; a
-/// `;` for a `,` in a `{ }` list is repaired with one error per list.
+/// trailing commas, empty statements and `??` are style, left to a lint.
 #[test]
 fn separators() {
     for text in [
@@ -473,17 +475,6 @@ fn separators() {
     ] {
         assert!(messages(text).is_empty(), "{text:?}");
     }
-    one_error(
-        "fn f() { let v = [2]i32{1; 2}; }",
-        "expected `,` between items, found `;`",
-        Some("fn f() { let v = [2]i32{1, 2}; }"),
-    );
-    // A `;` after an unclosed literal ends the statement: the `}` is missing.
-    one_error(
-        "fn f() {\n    let v = [3]i32{4, 5, 6;\n    return;\n}",
-        "expected `}`, found `;`",
-        None,
-    );
 }
 
 /// Nesting far deeper than the thread's stack would hold still parses:

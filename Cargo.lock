@@ -25,6 +25,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "arrays"
+version = "0.3.1"
+dependencies = [
+ "arena",
+ "check",
+ "diagnostics",
+ "literal",
+ "model",
+ "parser",
+ "source",
+ "syntax",
+ "token",
+]
+
+[[package]]
 name = "bigint"
 version = "0.3.1"
 
@@ -124,6 +139,7 @@ name = "compile"
 version = "0.3.1"
 dependencies = [
  "arena",
+ "arrays",
  "bools",
  "casts",
  "check",

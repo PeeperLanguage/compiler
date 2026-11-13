@@ -467,16 +467,14 @@ fn unknown_names_get_suggestions() {
 #[test]
 fn temporaries() {
     let (bodies, reported) = bodies(
-        "fn make() -> [2]i32 { return [2]i32{1, 2}; }
+        "fn make() -> i32 { return 1; }
             fn id(r: &mut i32) -> &mut i32 in r { return r; }
-            fn sum(values: &[]i32) -> i32 { return values[0]; }
+            fn read(value: &i32) -> i32 { return value.*; }
             fn f() {
-                let total = sum(&make());
+                let total = read(&make());
                 let kept = &make();
-                let first = make()[0];
                 let mut x = 1;
                 id(&mut x).* = 2;
-                for v in &make() { }
             }",
     );
     assert!(reported.is_empty(), "{reported:?}");
@@ -484,17 +482,10 @@ fn temporaries() {
     // value makes is marked to last with it; one in a plain statement is not.
     assert_eq!(
         bodies[3],
-        "    let total.1 = call f2(&(kept _.0 = call f0():[2]i32)):i32
-    let kept.3 = &(kept _.2 = call f0():[2]i32)
-    let first.5 = (kept _.4 = call f0():[2]i32)[at 0:u64]
-    let mut x.6 = 1:i32
-    (_.7 = call f1(&mut x.6):&mut i32).* = 2:i32
-    {
-        let _.9 = &(kept _.8 = call f0():[2]i32)
-        for _.10 in 0:u64..2:u64 by 1:u64 {
-            let v.11 = &_.9.*[at _.10]
-        }
-    }
+        "    let total.1 = call f2(&(kept _.0 = call f0():i32)):i32
+    let kept.3 = &(kept _.2 = call f0():i32)
+    let mut x.4 = 1:i32
+    (_.5 = call f1(&mut x.4):&mut i32).* = 2:i32
 "
     );
 }

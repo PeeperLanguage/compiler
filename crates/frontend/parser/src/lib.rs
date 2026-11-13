@@ -16,7 +16,7 @@
 //! stack.
 
 pub mod decl;
-mod expr;
+pub mod expr;
 mod literals;
 mod pattern;
 mod stmt;
@@ -199,7 +199,7 @@ impl<L: Grammar> Parser<L> {
 
     /// The token `n` tokens after the current one, or the end of file past the
     /// end.
-    fn ahead(&self, mut n: usize) -> Token {
+    pub fn ahead(&self, mut n: usize) -> Token {
         let mut i = self.current();
         while n > 0 && self.tokens[i].kind != TokenKind::Eof {
             i += 1;
@@ -258,7 +258,7 @@ impl<L: Grammar> Parser<L> {
     /// Nothing is reported while recovering already, or when a lexical error lies
     /// between the last token read and the current one: an illegal character
     /// makes no token, so the parser's error would only repeat it.
-    fn fail(&mut self, d: Diagnostic) {
+    pub fn fail(&mut self, d: Diagnostic) {
         if !self.recovering && !self.after_lexical_error() {
             self.errors.push(d);
         }
@@ -342,7 +342,7 @@ impl<L: Grammar> Parser<L> {
     /// at this depth, what stands before it cannot be in the list: that is
     /// reported, and parsing skips to the closer. Otherwise the closer is
     /// missing, and the error also marks `open` if it is on an earlier line.
-    fn close(&mut self, kind: TokenKind, open: Token) {
+    pub fn close(&mut self, kind: TokenKind, open: Token) {
         if self.at(kind) {
             self.next();
             return;

@@ -50,6 +50,10 @@ impl Language for Bare {
         match *ty {}
     }
 
+    fn element(ty: &Infallible) -> Option<Id<ast::Type<Bare>>> {
+        match *ty {}
+    }
+
     fn string_kind(expr: &Infallible) -> Option<ast::StringKind> {
         match *expr {}
     }
