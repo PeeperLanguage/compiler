@@ -512,7 +512,6 @@ impl<'t> Dumper<'t> {
                 ("array literal", None, nested)
             }
             Expr::Spread(values) => ("spread", None, one(values)),
-            Expr::Cast { value, ty } => ("cast expression", None, two(value, Item::Type(ty))),
             Expr::Is { value, case } => ("is expression", None, two(value, Item::Type(case))),
             Expr::OrElse { value, fallback } => {
                 ("orelse expression", None, two(value, Item::Expr(fallback)))

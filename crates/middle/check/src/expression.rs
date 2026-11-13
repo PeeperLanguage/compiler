@@ -108,7 +108,7 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
     /// `conversion` (`Types::conversion`): given the type, converted (folded
     /// when it is a constant), lent again as a `&`, or made an interface.
     /// `None` when it never converts.
-    fn convert(
+    pub fn convert(
         &mut self,
         expr: Expr,
         span: Span,
@@ -214,11 +214,7 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
     /// operation leaves no nodes for its operands. `expected` is the type a
     /// number literal without a suffix takes, if any; the value may have
     /// another type.
-    pub(crate) fn check_expr(
-        &mut self,
-        expression: Id<ast::Expr<L>>,
-        expected: Option<TypeId>,
-    ) -> Expr {
+    pub fn check_expr(&mut self, expression: Id<ast::Expr<L>>, expected: Option<TypeId>) -> Expr {
         // A long chain of operators, calls or parentheses is a deep recursion.
         source::grow_stack(|| {
             let tree = &self.checker.module().ast;
@@ -279,7 +275,6 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
                 ast::Expr::Reference { mutable, value } => {
                     self.check_reference(mutable, value, span, expected)
                 }
-                ast::Expr::Cast { value, ty } => self.check_cast(value, ty, span),
                 ast::Expr::None => self.check_none(span, expected),
                 ast::Expr::Print { newline, values } => self.check_print(newline, values),
                 ast::Expr::Char { .. } => self.unsupported_expr(span, "character literals"),
@@ -364,7 +359,7 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
     /// reference to a value of a type `accepts` takes, it helps to read that
     /// value with `.*`. An error that a value's type is not one its place
     /// takes is made here, so each such error gets the same help.
-    fn type_error(
+    pub fn type_error(
         &self,
         code: Code,
         message: String,

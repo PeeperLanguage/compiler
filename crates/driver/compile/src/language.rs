@@ -5,6 +5,7 @@
 use arena::Id;
 use arena::List;
 use bools::BoolLiteral;
+use casts::Cast;
 use check::Checked;
 use check::Checker;
 use check::builder::ThirBuilder;
@@ -31,6 +32,7 @@ pub enum Peeper {}
 #[derive(Clone, Copy, Debug)]
 pub enum FeatureExpr {
     Bool(BoolLiteral),
+    Cast(Cast<Peeper>),
     StructLiteral(StructLiteral<Peeper>),
     RawAddress(RawAddress<Peeper>),
 }
@@ -38,6 +40,12 @@ pub enum FeatureExpr {
 impl From<BoolLiteral> for FeatureExpr {
     fn from(expr: BoolLiteral) -> FeatureExpr {
         FeatureExpr::Bool(expr)
+    }
+}
+
+impl From<Cast<Peeper>> for FeatureExpr {
+    fn from(expr: Cast<Peeper>) -> FeatureExpr {
+        FeatureExpr::Cast(expr)
     }
 }
 
@@ -87,6 +95,7 @@ impl Language for Peeper {
         match expr {
             // A struct literal ends with its `}`.
             FeatureExpr::Bool(_) | FeatureExpr::StructLiteral(_) => Precedence::Call,
+            FeatureExpr::Cast(_) => Precedence::Cast,
             // `@` reads its place at prefix precedence.
             FeatureExpr::RawAddress(_) => Precedence::Prefix,
         }
@@ -118,6 +127,7 @@ impl Language for Peeper {
 static RULES: Rules<Peeper> = {
     let mut rules = Rules::core();
     bools::parse::rows(&mut rules);
+    casts::parse::rows(&mut rules);
     structs::parse::rows(&mut rules);
     interfaces::parse::rows(&mut rules);
     raw_pointers::parse::rows(&mut rules);
@@ -139,6 +149,7 @@ impl Checked for Peeper {
     ) -> thir::Expr {
         match expr {
             FeatureExpr::Bool(literal) => bools::check::check_literal(literal),
+            FeatureExpr::Cast(cast) => casts::check::check_cast(builder, cast, span),
             FeatureExpr::StructLiteral(literal) => {
                 structs::check::check_literal(builder, literal, span, expected)
             }

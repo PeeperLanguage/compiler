@@ -121,7 +121,6 @@ pub(crate) const fn expression_rows<L: Grammar>(rules: &mut Rules<L>) {
     rules.binary_operator(TokenKind::Asterisk, BinaryOp::Multiply);
     rules.binary_operator(TokenKind::Slash, BinaryOp::Divide);
     rules.binary_operator(TokenKind::Percent, BinaryOp::Remainder);
-    rules.infix(TokenKind::As, Precedence::Cast, cast);
 
     // call, index and selector
     rules.infix(TokenKind::LeftParen, Precedence::Call, call);
@@ -170,7 +169,7 @@ impl<L: Grammar> Parser<L> {
     }
 
     /// The start of expression `id`, where an infix expression on it starts.
-    fn start_of(&self, id: Id<Expr<L>>) -> u32 {
+    pub fn start_of(&self, id: Id<Expr<L>>) -> u32 {
         self.tree.exprs.span(id).start
     }
 
@@ -451,13 +450,6 @@ fn selector<L: Grammar>(p: &mut Parser<L>, value: Id<Expr<L>>) -> Id<Expr<L>> {
     }
     let field = p.name();
     p.add(p.start_of(value), Expr::Selector { value, field })
-}
-
-/// Reads `as Type` after `value`.
-fn cast<L: Grammar>(p: &mut Parser<L>, value: Id<Expr<L>>) -> Id<Expr<L>> {
-    p.next();
-    let ty = p.type_expr();
-    p.add(p.start_of(value), Expr::Cast { value, ty })
 }
 
 /// Reads `is Enum::Case` after `value`; the case is a full path.

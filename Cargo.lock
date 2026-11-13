@@ -70,6 +70,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "casts"
+version = "0.3.1"
+dependencies = [
+ "arena",
+ "check",
+ "diagnostics",
+ "model",
+ "parser",
+ "source",
+ "syntax",
+ "token",
+]
+
+[[package]]
 name = "cc"
 version = "1.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -111,6 +125,7 @@ version = "0.3.1"
 dependencies = [
  "arena",
  "bools",
+ "casts",
  "check",
  "diagnostics",
  "eval",

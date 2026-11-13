@@ -4,7 +4,6 @@
 use arena::Id;
 use bigint::Limbs;
 use model::constant::Value;
-use model::semantic_types::Conversion;
 use model::semantic_types::Float;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
@@ -21,41 +20,6 @@ use crate::builder::ThirBuilder;
 use crate::expression::unsuffixed_literal;
 
 impl<L: Checked> ThirBuilder<'_, '_, L> {
-    /// `value as ty`: `value` as a value of the type `ty`, which its type
-    /// converts to with `as` or without it (`Types::conversion`). A number
-    /// literal takes the type `ty` if it can, so `300 as u8` is an error.
-    pub(super) fn check_cast(
-        &mut self,
-        value: Id<ast::Expr<L>>,
-        ty: Id<ast::Type<L>>,
-        span: Span,
-    ) -> Expr {
-        let to = self.checker.resolve_value_type(ty);
-        let checked = self.check_expr(value, Some(to));
-        if checked.ty == TypeId::INVALID || to == TypeId::INVALID {
-            return Expr::INVALID;
-        }
-        let value_span = self.checker.module().ast.exprs.span(value);
-        let found = checked.ty;
-        let conversion = self.checker.types.conversion(found, to);
-        if let Some(converted) = self.convert(checked, value_span, to, conversion) {
-            return converted;
-        }
-        let (found_text, to_text) = self.checker.type_texts(found, to);
-        let message = format!("`{found_text}` cannot be converted to `{to_text}`");
-        let types = &self.checker.types;
-        let diagnostic = self.type_error(
-            diagnostics::INVALID_CAST,
-            message,
-            span,
-            value,
-            found,
-            |ty| types.conversion(ty, to) != Conversion::Never,
-        );
-        self.checker.report(diagnostic);
-        Expr::INVALID
-    }
-
     /// The number literal at `number`, or its negation written at `negated`
     /// (`-128`, which fits `i8` where `128` does not). It takes its suffix's
     /// type, else the type `expected` if it can (`takes_type`), else `i32` or

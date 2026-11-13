@@ -82,9 +82,6 @@ fn grouped(t: &Tree<Bare>, id: Id<Expr<Bare>>) -> String {
                 grouped(t, right)
             )
         }
-        Expr::Cast { value, ty } => {
-            format!("({} as {})", grouped(t, value), text(t.types.span(ty)))
-        }
         Expr::Is { value, case } => {
             format!("({} is {})", grouped(t, value), text(t.types.span(case)))
         }
@@ -155,20 +152,16 @@ fn precedence() {
         ("-a.b(c)[d]", "-a.b(c)[d]"),
         ("!a && b", "(!a && b)"),
         ("&mut a + b", "(&mut a + b)"),
-        ("a + b as i64", "(a + (b as i64))"),
-        ("a as i32 * b", "((a as i32) * b)"),
         ("a is E::B && c", "((a is E::B) && c)"),
         ("a orelse b orelse c", "(a orelse (b orelse c))"),
         ("a || b orelse c", "((a || b) orelse c)"),
         ("a |> f(b) |> g()", "((a |> f(b)) |> g())"),
-        ("a |> len() as i32", "((a |> len()) as i32)"),
         ("a + b |> f()", "((a + b) |> f())"),
         ("x.y.z[0][i..j]", "x.y.z[0][i..j]"),
         ("a + b..c * d", "((a + b)..(c * d))"),
         ("a orelse b..c", "(a orelse (b..c))"),
         ("a..b orelse c", "(a..(b orelse c))"),
         ("a..=b:c + d", "(a..=b:(c + d))"),
-        ("..b as i64", "(..(b as i64))"),
         ("a..b..c", "((a..b)..c)"),
         ("-r.* * r.x.*", "(-r.* * r.x.*)"),
         ("&mut r.*.x", "&mut r.*.x"),

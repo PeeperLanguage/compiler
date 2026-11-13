@@ -29,6 +29,7 @@ parser = { path = "crates/frontend/parser" }
 literal = { path = "crates/base/literal" }
 syntax = { path = "crates/core/syntax" }
 bools = { path = "crates/features/bools" }
+casts = { path = "crates/features/casts" }
 structs = { path = "crates/features/structs" }
 interfaces = { path = "crates/features/interfaces" }
 raw_pointers = { path = "crates/features/raw_pointers" }

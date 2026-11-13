@@ -368,7 +368,7 @@ impl<'p, L: Checked> Checker<'p, L> {
 
     /// Both types as a message names them, with each one's module when two
     /// different declarations in them read the same: `a::Point`, `[1]b::Point`.
-    pub(crate) fn type_texts(&self, first: TypeId, second: TypeId) -> (String, String) {
+    pub fn type_texts(&self, first: TypeId, second: TypeId) -> (String, String) {
         let name = |definition: DefId| model::program::declared_text(self.modules, definition);
         // `Types::text` needs a closure it can copy, so this one cannot own the list.
         let written = RefCell::new(Vec::new());

@@ -514,8 +514,6 @@ pub enum Expr<L: Language> {
     /// `values...`, an entry of an array literal or an argument of a call:
     /// each value of the array, slice or range `values` in order
     Spread(Id<Expr<L>>),
-    /// `x as T`
-    Cast { value: Id<Expr<L>>, ty: Id<Type<L>> },
     /// `x is Enum::Variant`
     Is {
         value: Id<Expr<L>>,
@@ -554,7 +552,6 @@ impl<L: Language> Expr<L> {
             Expr::Binary { op, .. } => op.precedence(),
             // A pipe reads its call at prefix precedence.
             Expr::Unary { .. } | Expr::Reference { .. } | Expr::Pipe { .. } => Precedence::Prefix,
-            Expr::Cast { .. } => Precedence::Cast,
             Expr::Is { .. } => Precedence::Equality,
             // These end in an expression read at the lowest precedence.
             Expr::OrElse { .. } | Expr::VariantLiteral { .. } => Precedence::Lowest,
