@@ -23,7 +23,7 @@ where
     L: Grammar<Expr: From<StructLiteral<L>>, Type: From<StructType<L>>>,
 {
     rules.declaration(TokenKind::Struct, type_decl);
-    rules.keyword_type(TokenKind::Struct, struct_type);
+    rules.type_start(TokenKind::Struct, struct_type);
     rules.prefix(TokenKind::Dot, anonymous_literal);
     rules.after_path(TokenKind::Dot, TokenKind::LeftBrace, typed_literal);
 }

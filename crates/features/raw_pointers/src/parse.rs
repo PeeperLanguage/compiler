@@ -17,8 +17,8 @@ pub const fn rows<L>(rules: &mut Rules<L>)
 where
     L: Grammar<Expr: From<RawAddress<L>>, Type: From<PointerType<L>>>,
 {
-    rules.keyword_type(TokenKind::Asterisk, typed_pointer);
-    rules.keyword_type(TokenKind::Rawptr, raw_pointer);
+    rules.type_start(TokenKind::Asterisk, typed_pointer);
+    rules.type_start(TokenKind::Rawptr, raw_pointer);
     rules.prefix(TokenKind::At, raw_address);
     // types that cannot be values
     rules.prefix(TokenKind::Asterisk, type_value);

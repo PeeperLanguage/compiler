@@ -16,13 +16,13 @@ use crate::Parser;
 use crate::Rules;
 use crate::is_name;
 
-/// Reads the type a keyword begins, after the keyword, as one starting at
+/// Reads the type a token begins, after the token, as one starting at
 /// `start`.
-pub type KeywordTypeRule<L> = fn(&mut Parser<L>, u32) -> Id<Type<L>>;
+pub type TypeStartRule<L> = fn(&mut Parser<L>, u32) -> Id<Type<L>>;
 
-/// Adds the core's types a keyword begins to `rules`.
-pub(crate) const fn keyword_type_rows<L: Grammar>(rules: &mut Rules<L>) {
-    rules.keyword_type(TokenKind::Enum, Parser::enum_type);
+/// Adds the core's types a token begins to `rules`.
+pub(crate) const fn type_start_rows<L: Grammar>(rules: &mut Rules<L>) {
+    rules.type_start(TokenKind::Enum, Parser::enum_type);
 }
 
 /// Whether `kind` begins one of the types `Parser::type_expr` has an arm
@@ -41,7 +41,7 @@ pub(crate) const fn starts_core_type(kind: TokenKind) -> bool {
 
 /// Whether a type can begin with `kind`.
 pub(crate) fn starts_type<L: Grammar>(kind: TokenKind) -> bool {
-    starts_core_type(kind) || L::rules().keyword_types[kind as usize].is_some()
+    starts_core_type(kind) || L::rules().type_starts[kind as usize].is_some()
 }
 
 impl<L: Grammar> Parser<L> {
@@ -72,7 +72,7 @@ impl<L: Grammar> Parser<L> {
                 TokenKind::Question | TokenKind::QuestionQuestion => self.optional_type(),
                 TokenKind::Fn => self.function_type(),
                 _ => {
-                    if let Some(read) = L::rules().keyword_types[t.kind as usize] {
+                    if let Some(read) = L::rules().type_starts[t.kind as usize] {
                         self.next();
                         return read(self, t.span.start);
                     }

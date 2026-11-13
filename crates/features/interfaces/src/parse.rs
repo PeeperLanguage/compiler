@@ -20,7 +20,7 @@ where
     L: Grammar<Type: From<InterfaceType<L>>>,
 {
     rules.declaration(TokenKind::Iface, type_decl);
-    rules.keyword_type(TokenKind::Iface, interface_type);
+    rules.type_start(TokenKind::Iface, interface_type);
 }
 
 /// Reads `{ fn name(parameters) -> Result, ... }`, the methods of an

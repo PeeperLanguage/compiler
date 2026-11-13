@@ -48,7 +48,7 @@ use crate::expr::AfterPathRule;
 use crate::expr::InfixRule;
 use crate::expr::PrefixRule;
 use crate::stmt::StatementRule;
-use crate::types::KeywordTypeRule;
+use crate::types::TypeStartRule;
 
 /// What the parser asks of a language: the rules of each token
 /// (docs/feature-front.md, section 4.1).
@@ -72,10 +72,10 @@ pub struct Rules<L: Language> {
     binary: [Option<BinaryOp>; 256],
     statements: [Option<StatementRule<L>>; 256],
     declarations: [Option<DeclarationRule<L>>; 256],
-    /// The type each keyword begins (`struct { ... }`), read after the
-    /// keyword; a declaration of one (`struct Name { ... }`) reads it after
-    /// the name (`type_decl`).
-    keyword_types: [Option<KeywordTypeRule<L>>; 256],
+    /// The type each token begins (`struct { ... }`, `[4]T`), read after the
+    /// token; a declaration of one by its keyword (`struct Name { ... }`)
+    /// reads it after the name (`type_decl`).
+    type_starts: [Option<TypeStartRule<L>>; 256],
 }
 
 impl<L: Grammar> Rules<L> {
@@ -88,12 +88,12 @@ impl<L: Grammar> Rules<L> {
             binary: [None; 256],
             statements: [None; 256],
             declarations: [None; 256],
-            keyword_types: [None; 256],
+            type_starts: [None; 256],
         };
         expr::expression_rows(&mut rules);
         stmt::statement_rows(&mut rules.statements);
         decl::declaration_rows(&mut rules);
-        types::keyword_type_rows(&mut rules);
+        types::type_start_rows(&mut rules);
         rules
     }
 
@@ -106,15 +106,15 @@ impl<L: Grammar> Rules<L> {
         self.declarations[kind as usize] = Some(read);
     }
 
-    /// Reads the type the keyword `kind` begins with `read`. A token the
+    /// Reads the type the token `kind` begins with `read`. A token the
     /// core's types begin with cannot be one: `Parser::type_expr` reads
     /// those first.
-    pub const fn keyword_type(&mut self, kind: TokenKind, read: KeywordTypeRule<L>) {
+    pub const fn type_start(&mut self, kind: TokenKind, read: TypeStartRule<L>) {
         assert!(
-            !types::starts_core_type(kind) && self.keyword_types[kind as usize].is_none(),
+            !types::starts_core_type(kind) && self.type_starts[kind as usize].is_none(),
             "two rules begin a type with one token"
         );
-        self.keyword_types[kind as usize] = Some(read);
+        self.type_starts[kind as usize] = Some(read);
     }
 
     /// Reads with `read` what a path continues with when the token after it

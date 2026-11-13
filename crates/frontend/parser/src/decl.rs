@@ -530,7 +530,7 @@ pub fn type_decl<L: Grammar>(p: &mut Parser<L>, metadata: Metadata<L>) -> Id<Dec
     let name = p.name();
     let type_parameters = p.type_parameters();
     let start = p.tok().span.start;
-    let ty = if let Some(read) = L::rules().keyword_types[keyword.kind as usize] {
+    let ty = if let Some(read) = L::rules().type_starts[keyword.kind as usize] {
         read(p, start)
     } else {
         p.expect(TokenKind::Assign);

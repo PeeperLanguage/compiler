@@ -409,7 +409,7 @@ in its own trait, so a phase depends on no later one:
 `parser::Grammar` (the rule table) and `check::Checked` (`check_expr`,
 `resolve_type`, `declare_type`). The table is built by `const` code in the
 top crate, so two rules for one token fail the build. A feature claims a
-declaration keyword, a type keyword (`Rules::keyword_type`), an expression
+declaration keyword, a type's first token (`Rules::type_start`), an expression
 prefix, or what continues a path (`Rules::after_path`: `Point.{`). There is
 no `features!` macro: `Peeper` lists its features by hand in
 `driver/compile/src/language.rs`: a written type as the enum
@@ -530,7 +530,7 @@ For every step from 18 on:
   and type rows and the declaration's checking; interface references,
   owned interfaces, the conversion and the method tables read the core's
   checked type and stay core. Raw pointers came third
-  (`features/raw_pointers`): `rawptr` and `*T` as keyword types, `@x`, and
+  (`features/raw_pointers`): `rawptr` and `*T` as type starts, `@x`, and
   each where a value could go (`g(*Node)`); `Peeper`'s expression became
   an enum over the features too. The core reads a written pointer's target
   through `Language::pointee` (the type-parameter walk, the "write `p.*`"

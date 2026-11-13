@@ -22,7 +22,7 @@ pub const fn rows<L>(rules: &mut Rules<L>)
 where
     L: Grammar<Expr: From<ArrayLiteral<L>>, Type: From<ArrayType<L>>>,
 {
-    rules.keyword_type(TokenKind::LeftBracket, array_type);
+    rules.type_start(TokenKind::LeftBracket, array_type);
     rules.prefix(TokenKind::LeftBracket, array_literal);
 }
 
