@@ -210,7 +210,7 @@ impl<'t> Dumper<'t> {
                 nested.push(Item::Type(p.ty));
                 nested.extend(p.default.map(Item::Expr));
                 (
-                    if p.variadic {
+                    if let Type::Variadic { .. } = t.types[p.ty] {
                         "variadic parameter"
                     } else if p.constant {
                         "const parameter"
@@ -311,6 +311,10 @@ impl<'t> Dumper<'t> {
                 };
                 ("fixed array type", None, vec![length, Item::Type(element)])
             }
+            Type::Variadic {
+                mutable: m,
+                element,
+            } => ("variadic type", mutable(m), one(element)),
             Type::Slice {
                 mutable: m,
                 element,

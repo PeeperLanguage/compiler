@@ -13,12 +13,12 @@ fn parses_variadic_parameters() {
       type name i32
     variadic parameter
       declared name rest
-      slice type mut
+      variadic type mut
         type name i32
   function declaration
     declared name g
     variadic parameter
-      slice type
+      variadic type
         type name i32
 ";
     assert!(messages(text).is_empty());

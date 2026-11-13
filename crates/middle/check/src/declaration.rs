@@ -213,8 +213,9 @@ impl<L: Checked> Checker<'_, L> {
                 return self.not_supported(tree.exprs.span(default), "default parameters");
             }
             let span = tree.types.span(parameter.ty);
+            let is_variadic = matches!(tree.types[parameter.ty], ast::Type::Variadic { .. });
             if parameter.constant {
-                if parameter.mutable || parameter.variadic {
+                if parameter.mutable || is_variadic {
                     let message = "a `const` parameter is one value known when compiling, so it takes no `mut` or `...`";
                     return self.error(diagnostics::INVALID_DECLARATION, message, span);
                 }
@@ -239,11 +240,11 @@ impl<L: Checked> Checker<'_, L> {
                 }
                 return TypeId::INVALID;
             }
-            if parameter.variadic && external {
+            if is_variadic && external {
                 let message = "an `extern` function cannot have a `...` parameter";
                 return self.error(diagnostics::INVALID_DECLARATION, message, span);
             }
-            if parameter.variadic && position + 1 != signature.parameters.len() {
+            if is_variadic && position + 1 != signature.parameters.len() {
                 let message = "a `...` parameter must be the last one";
                 return self.error(diagnostics::INVALID_DECLARATION, message, span);
             }
@@ -259,7 +260,7 @@ impl<L: Checked> Checker<'_, L> {
                     return self.error(diagnostics::INVALID_DECLARATION, message, span);
                 }
             }
-            variadic |= parameter.variadic;
+            variadic |= is_variadic;
             parameters.push(self.resolve_signature_type(parameter.ty, external));
         }
         let result = signature.result.map_or(TypeId::VOID, |result| {
@@ -1001,7 +1002,8 @@ impl<L: Checked> Checker<'_, L> {
                     length: ast::Length::Inferred(_),
                     ..
                 } => unreachable!("the parser reads `[_]` only in an array literal, checked there"),
-                ast::Type::Slice { mutable, element } => {
+                ast::Type::Slice { mutable, element }
+                | ast::Type::Variadic { mutable, element } => {
                     let element = self.resolve_value_type(element);
                     return match self.element_type(element) {
                         Some(element) => self.types.intern(Type::Slice { mutable, element }),
@@ -1048,6 +1050,9 @@ fn names_type_parameter<L: Language>(
             element: written, ..
         }
         | ast::Type::Slice {
+            element: written, ..
+        }
+        | ast::Type::Variadic {
             element: written, ..
         } => names_type_parameter(tree, written, parameters),
         ast::Type::Path(_)

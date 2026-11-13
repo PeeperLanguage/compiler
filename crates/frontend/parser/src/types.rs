@@ -244,7 +244,6 @@ impl<L: Grammar> Parser<L> {
                         mutable: false,
                         name,
                         ty,
-                        variadic: false,
                         default: None,
                     },
                 )

@@ -317,9 +317,6 @@ pub struct Param<L: Language> {
     pub mutable: bool,
     pub name: Option<Ident>,
     pub ty: Id<Type<L>>,
-    /// `name: ...T` or `name: ...mut T`: `ty` is the slice `&[]T` or `&mut []T`
-    /// that holds the call's last arguments.
-    pub variadic: bool,
     pub default: Option<Id<Expr<L>>>,
 }
 
@@ -363,6 +360,9 @@ pub enum Type<L: Language> {
     },
     /// `&[]T`, or `&mut []T` when `mutable`
     Slice { mutable: bool, element: Id<Type<L>> },
+    /// `...T`, or `...mut T` when `mutable`: a variadic parameter's type, the
+    /// slice `&[]T` or `&mut []T` that holds the call's last arguments
+    Variadic { mutable: bool, element: Id<Type<L>> },
     /// `fn(T) -> R in a`
     Function(Signature<L>),
     /// `enum { variants }`

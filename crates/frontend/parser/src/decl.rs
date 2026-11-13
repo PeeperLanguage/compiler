@@ -315,7 +315,6 @@ impl<L: Grammar> Parser<L> {
                     mutable: mutable && !reference,
                     name: Some(name),
                     ty,
-                    variadic: false,
                     default: None,
                 },
             );
@@ -343,15 +342,14 @@ impl<L: Grammar> Parser<L> {
             }
         }
         let name = self.parameter_name();
-        let variadic = self.at(TokenKind::Ellipsis);
-        let ty = if variadic {
+        let ty = if self.at(TokenKind::Ellipsis) {
             let start = self.next().span.start;
             let mutable = self.at(TokenKind::Mut);
             if mutable {
                 self.next();
             }
             let element = self.type_expr();
-            self.add(start, Type::Slice { mutable, element })
+            self.add(start, Type::Variadic { mutable, element })
         } else if self.at(TokenKind::Type) {
             let start = self.next().span.start;
             self.add(start, Type::Type)
@@ -385,7 +383,6 @@ impl<L: Grammar> Parser<L> {
                 mutable: keyword.is_some(),
                 name,
                 ty,
-                variadic,
                 default,
             },
         )
