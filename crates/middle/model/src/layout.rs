@@ -79,9 +79,7 @@ pub fn in_memory(types: &Types, ty: TypeId) -> bool {
 /// (`StructInternals`); a range's two or three fields are laid out here.
 pub fn field_placed(types: &Types, ty: TypeId, index: usize, target: &Machine) -> (u64, TypeId) {
     match &types[ty] {
-        Type::Struct {
-            fields, internals, ..
-        } => (internals.offsets[index], fields[index]),
+        ty if let Some(members) = ty.members() => (members.offsets[index], members.fields[index]),
         Type::Range { element, step } => {
             let fields = range_fields(*element, *step).map(|(_, ty)| ty);
             let (offsets, ..) = struct_layout(types, &fields, target);

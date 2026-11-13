@@ -6,6 +6,7 @@ use diagnostics::Diagnostic;
 use diagnostics::suggest::nearest_name;
 use model::constant::Value;
 use model::semantic_types::Integer;
+use model::semantic_types::Members;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
 use model::thir::Expr;
@@ -82,20 +83,19 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
         }
         let value = self.through_pointer(value, self.body.exprs.span(value));
         let ty = self.body.exprs[value].ty;
-        let Type::Struct { fields, .. } = &self.checker.types[ty] else {
+        if self.checker.types[ty].members().is_none() {
             if ty != TypeId::INVALID {
                 let message = format!("`{}` has no fields", self.checker.type_text(ty));
                 self.checker
                     .error(diagnostics::INVALID_OPERATION, message, field.span);
             }
             return Expr::INVALID;
-        };
-        let fields = fields.clone();
-        let Some(index) = self.field_index(ty, field) else {
+        }
+        let Some((index, field_type)) = self.field_index(ty, field) else {
             return Expr::INVALID;
         };
         Expr {
-            ty: fields[index],
+            ty: field_type,
             kind: ExprKind::Field {
                 value,
                 index: index as u32,
@@ -395,18 +395,22 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
         }
     }
 
-    /// The index of the field `name` of the struct type `ty`, in declaration
-    /// order; `None` after reporting that the struct has no such field, with
-    /// its nearest field name.
-    pub fn field_index(&mut self, ty: TypeId, name: Ident) -> Option<usize> {
-        let Type::Struct { definition, .. } = self.checker.types[ty] else {
-            unreachable!("only a struct type has fields")
+    /// The index of the field `name` of the type `ty`, in declaration order,
+    /// and its type; `None` after reporting that the type has no such field,
+    /// with its nearest field name.
+    pub fn field_index(&mut self, ty: TypeId, name: Ident) -> Option<(usize, TypeId)> {
+        let Some(Members {
+            definition, fields, ..
+        }) = self.checker.types[ty].members()
+        else {
+            unreachable!("only a type with members has fields")
         };
         let file = &self.checker.module().ast.file;
         let text = name.text(file);
         let modules = self.checker.modules;
-        let found =
-            model::program::field_names(modules, definition).position(|field| field == text);
+        let found = model::program::field_names(modules, definition)
+            .position(|field| field == text)
+            .map(|index| (index, fields[index]));
         if found.is_none() {
             let message = format!("`{}` has no field `{text}`", self.checker.type_text(ty));
             let fields = model::program::field_names(modules, definition).map(|field| (field, 0));

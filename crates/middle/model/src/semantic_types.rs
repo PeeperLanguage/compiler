@@ -336,6 +336,44 @@ impl Type {
     pub fn is_number(&self) -> bool {
         matches!(self, Type::Integer(_) | Type::Float(_))
     }
+
+    /// The declaration that names the type, for a type with one: a struct,
+    /// an interface, or a declared name not checked yet.
+    pub fn definition(&self) -> Option<DefId> {
+        match *self {
+            Type::Named(definition)
+            | Type::Struct { definition, .. }
+            | Type::Interface { definition, .. } => Some(definition),
+            _ => None,
+        }
+    }
+
+    /// What a name after `.` can mean on the type (docs/feature-front.md,
+    /// 5.1): its fields, for a struct. A type with members can also have
+    /// functions with it as owner.
+    pub fn members(&self) -> Option<Members<'_>> {
+        match self {
+            Type::Struct {
+                definition,
+                fields,
+                internals,
+            } => Some(Members {
+                definition: *definition,
+                fields,
+                offsets: &internals.offsets,
+            }),
+            _ => None,
+        }
+    }
+}
+
+/// A type's fields (`Type::members`): the declaration that names them, and
+/// each field's type and offset from the value's start, in field order.
+#[derive(Clone, Copy, Debug)]
+pub struct Members<'t> {
+    pub definition: DefId,
+    pub fields: &'t [TypeId],
+    pub offsets: &'t [u64],
 }
 
 /// How a value of one type becomes a value of another (`Types::conversion`).
@@ -848,10 +886,10 @@ impl Types {
                     target,
                 },
                 &Type::InterfaceReference { mutable, .. },
-            ) if (from_mutable || !mutable) && matches!(self[target], Type::Struct { .. }) => {
+            ) if (from_mutable || !mutable) && self[target].members().is_some() => {
                 Conversion::ToInterface
             }
-            (Type::Struct { .. }, Type::Interface { .. }) => Conversion::ToInterface,
+            (from, Type::Interface { .. }) if from.members().is_some() => Conversion::ToInterface,
             (Type::RawPointer { target: Some(_) }, Type::RawPointer { target: None }) => {
                 Conversion::Same
             }

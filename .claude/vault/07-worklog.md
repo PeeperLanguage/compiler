@@ -936,3 +936,27 @@
   identical to 745b61ce (run twice: after the move and after the path
   lookahead change); instructions +0.04% against 3ae1d4ec (stage 1
   alone: -0.14%).
+- Step 19 pieces 3 and 4 merged (2026-11-13, Fuad: "go with 1, merge
+  piece 3 into 4"). `.name` (`ast::Expr::Selector`) is read by field
+  access, method calls (`calls.rs::method`), assignment targets
+  (`assigned_place`), the `&mut a.len` refusal and the parser's `|>`
+  check, which section 6 gives to different features; a members crate
+  would need hooks in each or a "method of a value" in the THIR. So
+  `.name` stays core syntax and members is a core concept (design page
+  5.1), asked as the `members` view once the core no longer names the
+  struct type. Docs and plan only.
+
+- **Step 19, piece 3, first of two commits (uncommitted, 2026-11-13).**
+  `Type::definition` and `Type::members` (`Members { definition, fields,
+  offsets }`) added in `model::semantic_types`; the core readers that
+  matched `Type::Struct` ask them instead: `layout::field_placed`,
+  `Types::conversion` (both arms), check `places.rs` (`check_field`,
+  `field_index`), `calls.rs::method`, `declaration.rs::implementation`,
+  `lib.rs::resolve_path`, `lower::add_holders`, `compile::interface`.
+  `constant_refusal` got a `shortcut:` comment. After the review,
+  `field_index` gives the field's type with its index, so `.name` and the
+  struct literal no longer copy the field list. Byte-identical gate 2,501
+  files, 0 differ; benchmark +0.01% against 5b29f226; `check.sh` all ok.
+  Not done: the struct type itself still lives in `model` (the second
+  commit), and Fuad asked whether the type list should stay closed, as
+  Zig's does, before that commit.

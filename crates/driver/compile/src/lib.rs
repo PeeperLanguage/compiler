@@ -591,14 +591,9 @@ fn interface(checker: &Checker<Peeper>, module: ModuleId, done: &[ModuleResults]
             // `hash_type` stops at the name, so a struct's fields and an
             // interface's methods are hashed here.
             match (decl, &checker.types[ty]) {
-                (
-                    ast::Decl::Type(_),
-                    Type::Struct {
-                        definition, fields, ..
-                    },
-                ) => {
+                (ast::Decl::Type(_), ty) if let Some(members) = ty.members() => {
                     for (name, &field) in
-                        model::program::field_names(modules, *definition).zip(fields)
+                        model::program::field_names(modules, members.definition).zip(members.fields)
                     {
                         name.hash(&mut hasher);
                         hash_type(checker, field, &mut hasher);

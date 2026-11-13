@@ -201,6 +201,15 @@ it without a feature:
   already has borrows and holders.
 - **elements**: a run of values of one type, with a length known now or
   when the program runs (arrays, slices, text, ranges' integers).
+- **members** (decided 2026-11-13, step 19): what a name after `.` means on
+  a type, a field or a function with the type as owner. `.name` stays core
+  syntax (`ast::Expr::Selector`), as `ast::Field` and `ast::FieldValue`
+  do: a method call (`p.m()`), an assignment target (`p.x = 1`) and
+  `&mut a.len` all read it, and they belong to other features, which
+  cannot name a members feature. A call would also need a "method of a
+  value" in the THIR, which does not exist. The core's `.name` check asks
+  the type's `members` (5.2) once the core no longer names the struct
+  type.
 
 ### 5.2 What a type answers
 
@@ -288,7 +297,8 @@ measured first (section 10).
 
 ## 6. Features
 
-The list, from today's syntax (decided 2026-11-13: all 22 kept). Each owns
+The list, from today's syntax (decided 2026-11-13: all 22 kept; members
+became a core concept in step 19, 5.1). Each owns
 its rows in the parser tables, its node kinds, its checking and its
 lowering:
 
@@ -304,7 +314,6 @@ lowering:
 | slices | `&[]T`, `&x[a..b]` |
 | ranges | `range[T]`, `a..b`, steps |
 | indexing | `x[i]`, `.len`, through `elements` |
-| members | `.name`, through `members` |
 | structs | `struct` declarations, literals |
 | interfaces | `interface` declarations, interface references, owned interfaces |
 | methods | `Owner::f`, `x.m()`, receivers |
@@ -486,10 +495,10 @@ For every step from 18 on:
      parser table in the top crate (`driver/compile`), the struct rows and
      nodes, and the checking of a struct declaration and literal into the
      core's struct type and value. Speed measured.
-  3. The rest of the checker and THIR side: fields (`point.x`) and
-     `members`.
-  4. The type and lowering: `Type::Struct` becomes the feature's type, with
-     the rest of the trait. Speed measured again.
+  3. The type and lowering: `Type::Struct` becomes the feature's type,
+     with the rest of the trait; `.name` asks the `members` view (5.1).
+     Speed measured again. (Was two pieces; the checker side of fields
+     needed no crate of its own once members became a core concept.)
 
   Then one feature per step; each adds the views of 5.2 it needs (`number`
   and `operation` with numbers, `view` with references, `elements` with

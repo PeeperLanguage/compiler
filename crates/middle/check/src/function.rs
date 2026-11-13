@@ -375,6 +375,10 @@ pub(crate) fn function_declaration<L: Language>(
 
 /// Why a constant cannot hold a value of the type `ty`.
 pub(crate) fn constant_refusal(ty: &Type) -> &'static str {
+    // shortcut: names the struct, array and range types, which the core is
+    // to stop naming (docs/feature-front.md 5.2: `class` decides what a
+    // constant holds); ask `class` and the type's own word when arrays and
+    // ranges move to their features with structs.
     match ty {
         Type::Struct { .. } => "a constant cannot hold a struct yet",
         Type::Array { .. } => "a constant cannot hold an array yet",

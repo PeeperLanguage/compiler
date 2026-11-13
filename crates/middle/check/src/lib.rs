@@ -595,13 +595,8 @@ impl<'p, L: Checked> Checker<'p, L> {
             let owner = match symbol {
                 Symbol::Type(definition) => {
                     let named = self.named_type(definition, head_span);
-                    match self.types[self.types.real(named)] {
-                        Type::Named(owner)
-                        | Type::Struct {
-                            definition: owner, ..
-                        } => Some(owner).filter(|&owner| scope::has_functions(self.modules, owner)),
-                        _ => None,
-                    }
+                    let owner = self.types[self.types.real(named)].definition();
+                    owner.filter(|&owner| scope::has_functions(self.modules, owner))
                 }
                 _ => None,
             };

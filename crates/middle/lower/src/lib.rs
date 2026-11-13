@@ -613,10 +613,8 @@ impl<L: Language> Lowering<'_, L> {
                     words: &REFERENCE_WORDS,
                 });
             }
-            Type::Struct {
-                fields, internals, ..
-            } => {
-                for (&field, &offset) in fields.iter().zip(&internals.offsets) {
+            ty if let Some(members) = ty.members() => {
+                for (&field, &offset) in members.fields.iter().zip(members.offsets) {
                     self.add_holders(field, at + offset, holders);
                 }
             }

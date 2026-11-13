@@ -124,13 +124,13 @@ pub fn check_literal<L: Checked>(
         }
         return Expr::INVALID;
     };
-    let (definition, field_types) = (*definition, field_types.clone());
+    let definition = *definition;
     // Where each field is set, by its index.
     let mut set: Vec<Option<Span>> = vec![None; field_types.len()];
     let mut checked: Vec<NonZeroU32> = Vec::with_capacity(fields.len());
     for field in tree.children.lists.items(fields) {
         let ast::FieldValue { name, value } = tree.children.field_values[field];
-        let Some(index) = builder.field_index(ty, name) else {
+        let Some((index, field_type)) = builder.field_index(ty, name) else {
             builder.add_expr(value, None); // for its own errors
             continue;
         };
@@ -148,7 +148,7 @@ pub fn check_literal<L: Checked>(
             continue;
         }
         set[index] = Some(name.span);
-        let value = builder.add_required(value, field_types[index]);
+        let value = builder.add_required(value, field_type);
         let index = index as u32;
         checked.push(
             builder

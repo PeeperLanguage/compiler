@@ -13,6 +13,7 @@ use model::semantic_types::ConstArgument;
 use model::semantic_types::Constant;
 use model::semantic_types::ImplementationId;
 use model::semantic_types::Integer;
+use model::semantic_types::Members;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
 use model::semantic_types::Types;
@@ -364,11 +365,13 @@ impl<L: Checked> Checker<'_, L> {
             return Some(found);
         }
         let modules = self.modules;
-        let Type::Struct {
+        let Some(Members {
             definition: owner, ..
-        } = self.types[structure]
+        }) = self.types[structure].members()
         else {
-            unreachable!("only a struct's reference converts to an interface reference")
+            unreachable!(
+                "only a reference to a type with members converts to an interface reference"
+            )
         };
         let (Type::Named(definition) | Type::Interface { definition, .. }) = self.types[interface]
         else {

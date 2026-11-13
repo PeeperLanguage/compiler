@@ -14,6 +14,7 @@ use model::constant::Value;
 use model::layout::layout;
 use model::semantic_types::ConstArgument;
 use model::semantic_types::Constant;
+use model::semantic_types::Members;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
 use model::semantic_types::Types;
@@ -380,7 +381,7 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
         }
         let place = self.through_pointer(value, self.body.exprs.span(value));
         let ty = self.body.exprs[place].ty;
-        let Type::Struct { definition, .. } = self.checker.types[ty] else {
+        let Some(Members { definition, .. }) = self.checker.types[ty].members() else {
             if ty != TypeId::INVALID {
                 let message = format!("`{}` has no functions", self.checker.type_text(ty));
                 self.checker
