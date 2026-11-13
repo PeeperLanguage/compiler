@@ -960,3 +960,17 @@
   Not done: the struct type itself still lives in `model` (the second
   commit), and Fuad asked whether the type list should stay closed, as
   Zig's does, before that commit.
+
+- **Step 19, piece 3 closed (2026-11-13).** Committed the members view as
+  `3759987e` (gate 2,501 files, 0 differ; +0.01%). Mapping the readers left
+  of `Type::Struct` (layout, `in_memory`, `holds_loans`, `holders_in`,
+  `is_copy`, the type's text, `class`, `debug_type`, the interface hash)
+  showed each only reads back a fact `define_struct` stores once. Moving
+  the type into `structs` would have made about 37 files generic over the
+  language to hand those facts back through a trait. Fuad chose the Zig
+  shape: `semantic_types::Type` stays one closed list of shapes; a
+  feature builds a shape and owns its syntax and checking. No `TypeShape`
+  trait. Design page sections 2, 5.2, 7, 11 and 12 updated; the
+  `shortcut:` comment on `constant_refusal` removed, as the core naming
+  the struct type is no longer a shortcut. Not decided: whether
+  `thir::ExprKind` follows the same shape.

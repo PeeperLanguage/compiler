@@ -44,6 +44,10 @@ Decided 2026-11-11 (Fuad):
   `i32` and its literals, `true` and `&&`, `struct` and its literals.
 - **Features plug in through core traits**, not through enums the core
   lists (this reverses the 2026-11-10 closed-enum choice for the front).
+- **Checked types stay one closed list** (decided 2026-11-13, step 19):
+  `semantic_types::Type` names shapes (a struct, an array, a range, a
+  reference), as Zig's type table does. A feature builds a shape when it
+  checks its syntax; it owns no checked type of its own (5.2).
 - **Features never depend on each other.** The test: delete one feature's
   folder, and everything else still builds.
 
@@ -213,38 +217,30 @@ it without a feature:
 
 ### 5.2 What a type answers
 
-A sketch; names and exact signatures are settled in step 19:
+Decided 2026-11-13 (step 19, Fuad): checked types stay one closed list,
+`semantic_types::Type`, whose variants are shapes, not features. A
+feature builds a shape when it checks its declaration or literal (the
+struct crate calls `Types::define_struct`). There is no `TypeShape`
+trait, and `Types` is not generic over the language.
 
-```rust
-/// What a type is, asked by the core and by any feature.
-pub trait TypeShape {
-    // Facts every type has.
-    fn text(&self, types: &Types, out: &mut String);
-    fn layout(&self, types: &Types, target: &Machine) -> (u64, u64);
-    fn class(&self, types: &Types, target: &Machine) -> Option<Class>;
-    fn debug_type(&self, types: &Types, debug: &mut DebugTypes) -> DebugTypeId;
-    fn is_copy(&self, types: &Types) -> bool;
-    fn holders(&self, types: &Types, found: &mut Vec<Holder>);
+Why: once the core readers asked `members()` and `definition()`
+(`3759987e`), every reader left of the struct type (`layout`, `in_memory`,
+`holds_loans`, `holders_in`, `is_copy`, the type's text, `class`,
+`debug_type`, the interface hash) only read back a fact `define_struct`
+stores once: size, align, offsets, holders, the declaration and the field
+types. Moving the type into the struct crate would have made about 37
+files generic over the language to hand the same facts back through a
+trait.
 
-    // Views; `None` when the type is not one.
-    fn number(&self) -> Option<Number> { None }      // Integer { bits, signed } or Float (5.1)
-    fn elements(&self) -> Option<Elements> { None }  // element type, length now or later
-    fn members(&self) -> Option<&[Member]> { None }  // name -> offset and type, or a function
-    fn view(&self) -> Option<View> { None }          // target, mutable, loans followed
+What a type answers are methods on `Type` and `Types`, each a concept the
+MIR or the core already has, added with its first caller (`RULES.md` 1.1):
+`definition()` and `members()` (step 19); `number()` (5.1), elements and
+views when a caller needs them. The full matches over `Type` (`layout`,
+`class`, `is_copy`, `debug_type`, the text, the hash) keep no `_` arm, so
+a new shape fails the build until each handles it.
 
-    // The operations its feature registered (5.3); `None`: not supported.
-    fn operation(&self, op: Operation) -> Option<&dyn OperationLogic> { None }
-}
-```
-
-This trait is about as long as v4's `TypeKind`. The difference is what
-makes it grow: every method is a concept the MIR or the core already has,
-so new syntax never adds one.
-
-Constant values (`eval::constant_of`) and printing (`printable`,
-`print_value`) are left out on purpose: a constant holds only what has a
-register class, which `class` and `number` answer; and printing becomes a
-library function (decided earlier), so its per-type match goes then.
+The cost: a feature that needs a new shape (enums) adds a variant here and
+an arm to each full match, as a new type kind does in Zig's `Sema`.
 
 ### 5.3 Operations (decided 2026-11-13)
 
@@ -333,7 +329,8 @@ line in the token list, plus its feature.
 
 The decision that matters most. `ast::Expr`, `thir::ExprKind` and
 `semantic_types::Type` are closed enums in `model` that name every feature;
-something must replace them. Two options:
+something must replace them. Two options (for the syntax tree; the
+checked types stay closed, 5.2):
 
 **A. A core handle, the feature's node behind a trait object.**
 
@@ -360,7 +357,7 @@ crate.**
 
 ```rust
 // core
-pub trait Language: 'static { type Expr: ExprFeature<Self>; type Type: TypeShape; /* ... */ }
+pub trait Language: 'static { type Expr: ExprFeature<Self>; type Type; /* ... */ }
 pub enum Expr<L: Language> { Name, Path(Id<Path>), Call { .. }, Feature(L::Expr) }
 pub struct ThirBuilder<'c, L: Language> { /* ... */ }
 
@@ -378,7 +375,9 @@ features! { numbers, bools, structs, arrays, /* one line per feature */ }
   there is one `Language`). Building the compiler is the lower priority.
 
 **Decided (2026-11-13): B.** It keeps the type checking that v4 lost with
-`Any`, and its costs fall where the priorities say they may.
+`Any`, and its costs fall where the priorities say they may. B covers the
+syntax tree (`ast::Expr::Feature`, `ast::Type::Feature`); the checked
+types stay closed (5.2).
 
 Both options need the same thing from the core: the THIR and lowering
 builders' helpers (`add_expr`, `resolve`, `report`, `temporary`, `store`,
@@ -486,35 +485,33 @@ For every step from 18 on:
 - **18a.** The leaks of section 8 and the boundary check.
 - **18b.** The syntax tree (`ast`, `operators`) out of `model` into its
   own crate (section 9); a pure move, byte-identical.
-- **19.** Structs as the pilot: the `Language` generic (section 7), the
-  `TypeShape` trait with only what the core must ask of a struct type, its
-  syntax rows, nodes, checking and lowering into `features/structs`, then
-  the speed gate. One commit per piece, each byte-identical:
+- **19.** Structs as the pilot: the `Language` generic (section 7), its
+  syntax rows, nodes and checking into `features/structs`, then the speed
+  gate. One commit per piece, each byte-identical:
   1. `llvm` takes the files and names it reads, not `Program`.
   2. The syntax side and struct checking: `Language`, the generic tree, the
      parser table in the top crate (`driver/compile`), the struct rows and
      nodes, and the checking of a struct declaration and literal into the
      core's struct type and value. Speed measured.
-  3. The type and lowering: `Type::Struct` becomes the feature's type,
-     with the rest of the trait; `.name` asks the `members` view (5.1).
-     Speed measured again. (Was two pieces; the checker side of fields
-     needed no crate of its own once members became a core concept.)
+  3. The members view: the core readers ask `members()` and
+     `definition()` instead of matching the struct type (`3759987e`);
+     speed measured again. `Type::Struct` stays a core shape (5.2), and
+     the struct literal's THIR node stays core, as its lowering only
+     stores each value at its field's place. (Was two pieces, then the
+     type's move was dropped by the closed-list decision of 5.2.)
 
-  Then one feature per step; each adds the views of 5.2 it needs (`number`
-  and `operation` with numbers, `view` with references, `elements` with
-  arrays).
-
-The traits of 5.2 are not added ahead of the pilot: while every type is a
-variant of one enum, a view only renames a match, and a method with no
-caller breaks `RULES.md` 1.1. A view arrives with the first feature whose
-type the core can no longer name.
-- **20.** Removal: the closed enums and every per-phase match of section
-  3.1 are gone; no half-moved state outlives this step.
+  Then one feature per step; each adds the questions on `Type` it needs
+  (`number` and `operation` with numbers, a view with references,
+  elements with arrays), with their first caller (`RULES.md` 1.1).
+- **20.** Removal: the closed syntax enums and every per-phase match of
+  section 3.1 on them are gone (`semantic_types::Type` stays, 5.2); no
+  half-moved state outlives this step.
 
 ## 12. Open questions
 
 1. Node representation: decided 2026-11-13, B (generic core, list in a top
-   crate; section 7).
+   crate; section 7) for the syntax tree; checked types stay one closed
+   list of shapes (decided 2026-11-13, step 19; 5.2).
 2. Crates or modules: decided 2026-11-13, a crate per feature (section 9).
 3. `rawptr + n`: decided 2026-11-13, the raw pointer feature's own
    registered `+` (5.3).
