@@ -40,6 +40,10 @@ impl Language for Interfaces {
     fn pointee(_: &InterfaceType<Interfaces>) -> Option<Id<ast::Type<Interfaces>>> {
         None
     }
+
+    fn string_kind(expr: &Infallible) -> Option<ast::StringKind> {
+        match *expr {}
+    }
 }
 
 static RULES: Rules<Interfaces> = {

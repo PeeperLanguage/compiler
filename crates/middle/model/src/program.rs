@@ -108,9 +108,12 @@ pub fn extern_symbol<L: Language>(
         let (None, Some(argument), None) = (&symbol, arguments.next(), arguments.next()) else {
             return Err(span);
         };
-        let ast::Expr::String { .. } = tree.exprs[argument] else {
+        let ast::Expr::Feature(expr) = tree.exprs[argument] else {
             return Err(span);
         };
+        if L::string_kind(&expr).is_none() {
+            return Err(span);
+        }
         let text = tree.file.slice(tree.exprs.span(argument));
         symbol = Some(String::from_utf8_lossy(&literal::value(text)).into_owned());
     }

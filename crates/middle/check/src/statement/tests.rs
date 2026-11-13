@@ -227,21 +227,6 @@ fn a_block_declares_a_name_once() {
     assert!(shown.is_empty(), "{shown:?}");
 }
 
-/// A C string a compile-time run gives back is its text, read up to the
-/// zero byte that ends it, as C reads it.
-#[test]
-fn a_run_gives_back_a_c_string_without_its_end() {
-    let (bodies, reported) = bodies(
-        "fn hello() -> &cstr { return c\"hello\"; }
-            fn g() {
-                const Greeting = hello();
-                let greeting = Greeting;
-            }",
-    );
-    assert!(reported.is_empty(), "{reported:?}");
-    assert_eq!(bodies[1], "    let greeting.0 = c\"hello\"\n");
-}
-
 #[test]
 fn constants_fold() {
     let (bodies, reported) = bodies(

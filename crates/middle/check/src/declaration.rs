@@ -1085,7 +1085,6 @@ mod tests {
     use syntax::ast;
 
     use crate::testing::Reported;
-    use crate::testing::reported;
     use crate::testing::with_checker;
 
     /// The type of every function and type declaration of `text`, as type
@@ -1132,29 +1131,5 @@ mod tests {
         assert_eq!(found[0], format!("fn[{i32}, {i32}] -> {i32}"));
         assert_eq!(found[1], format!("fn[] -> {void}"));
         assert_eq!(found[2], format!("fn[{:?}] -> {void}", TypeId::CSTR));
-    }
-
-    /// An `extern` function is C's, so it has no body here, and any other
-    /// function has one; their calls are not lowered.
-    #[test]
-    fn only_an_extern_function_has_no_body() {
-        let (found, found_reported) =
-            declared_types("#[extern(\"f\")]\nfn f(a: i8) -> i8 { return a; }\nfn g();\n");
-        assert_eq!(
-            found_reported,
-            reported(&[
-                (
-                    "P0005",
-                    "an `extern` function is defined in C, so it has no body",
-                    "f"
-                ),
-                (
-                    "P0005",
-                    "a function needs a body, or `#[extern(\"name\")]` when C defines it",
-                    "g"
-                ),
-            ])
-        );
-        assert_eq!(found, ["Invalid", "Invalid"]);
     }
 }

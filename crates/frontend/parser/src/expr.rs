@@ -22,7 +22,6 @@ use crate::literals::array_literal;
 use crate::literals::character_literal;
 use crate::literals::none_literal;
 use crate::literals::number_literal;
-use crate::literals::string_literal;
 
 /// Reads the expression the current token begins.
 pub type PrefixRule<L> = fn(&mut Parser<L>) -> Id<Expr<L>>;
@@ -70,8 +69,6 @@ pub(crate) const fn expression_rows<L: Grammar>(rules: &mut Rules<L>) {
     rules.prefix(TokenKind::Ident, name_or_path);
     rules.prefix(TokenKind::SelfValue, self_name);
     rules.prefix(TokenKind::Number, number_literal);
-    rules.prefix(TokenKind::String, string_literal);
-    rules.prefix(TokenKind::CString, string_literal);
     rules.prefix(TokenKind::Char, character_literal);
     rules.prefix(TokenKind::ByteChar, character_literal);
     rules.prefix(TokenKind::None, none_literal);

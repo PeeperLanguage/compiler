@@ -39,6 +39,10 @@ impl Language for Structs {
     fn pointee(_: &StructType<Structs>) -> Option<Id<ast::Type<Structs>>> {
         None
     }
+
+    fn string_kind(_: &StructLiteral<Structs>) -> Option<ast::StringKind> {
+        None
+    }
 }
 
 static RULES: Rules<Structs> = {

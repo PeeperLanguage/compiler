@@ -18,6 +18,7 @@ parser.workspace = true
 bools.workspace = true
 casts.workspace = true
 structs.workspace = true
+text.workspace = true
 interfaces.workspace = true
 raw_pointers.workspace = true
 runtime_abi.workspace = true

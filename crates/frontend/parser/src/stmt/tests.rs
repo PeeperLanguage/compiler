@@ -35,7 +35,7 @@ fn parses_statements() {
         Shape::Wrap with Inner::Leaf with value => { }
         _ => { }
     }
-    panic \"stop\";
+    panic message;
     { }
 }
 ";
@@ -147,7 +147,7 @@ fn parses_statements() {
           wildcard pattern _
           block { }
       panic statement
-        string literal \"stop\"
+        name reference message
       block { }
 ";
     assert!(messages(text).is_empty());

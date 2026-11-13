@@ -39,6 +39,10 @@ impl Language for RawPointers {
     fn pointee(ty: &PointerType<RawPointers>) -> Option<Id<ast::Type<RawPointers>>> {
         ty.target
     }
+
+    fn string_kind(_: &RawAddress<RawPointers>) -> Option<ast::StringKind> {
+        None
+    }
 }
 
 static RULES: Rules<RawPointers> = {

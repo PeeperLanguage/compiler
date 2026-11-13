@@ -175,7 +175,6 @@ fn precedence() {
 #[test]
 fn parses_expressions() {
     let text = r#"fn f() {
-    c"c";
     'x';
     b'y';
     none;
@@ -189,8 +188,6 @@ fn parses_expressions() {
   function declaration
     declared name f
     block
-      expression statement
-        string literal c string c"c"
       expression statement
         character literal 'x'
       expression statement

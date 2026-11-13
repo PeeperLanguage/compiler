@@ -44,6 +44,17 @@ pub trait Language: Copy + Debug + 'static {
     /// The written type the feature type `ty` points to, if it is a typed
     /// pointer (`*T`).
     fn pointee(ty: &Self::Type) -> Option<Id<Type<Self>>>;
+
+    /// The kind of string literal the feature expression `expr` is, if it
+    /// is one.
+    fn string_kind(expr: &Self::Expr) -> Option<StringKind>;
+}
+
+/// A string literal's kind: `"..."` is a `str`, `c"..."` a `cstr`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StringKind {
+    Plain,
+    C,
 }
 
 nodes! {
@@ -458,8 +469,6 @@ pub enum Expr<L: Language> {
     Path(Id<Type<L>>),
     /// the number is its text
     Number,
-    /// `"..."`, or `c"..."` when `c_string`; `literal::value` decodes the text
-    String { c_string: bool },
     /// `'x'`, or `b'x'` when `byte`; `literal::value` decodes the text
     Char { byte: bool },
     /// `none`
@@ -559,7 +568,6 @@ impl<L: Language> Expr<L> {
             Expr::Name
             | Expr::Path(_)
             | Expr::Number
-            | Expr::String { .. }
             | Expr::Char { .. }
             | Expr::None
             | Expr::Print { .. }

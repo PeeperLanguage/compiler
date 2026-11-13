@@ -226,8 +226,6 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
                     self.check_symbol_value(symbol, span)
                 }
                 ast::Expr::Number => self.check_number(span, None, expected),
-                ast::Expr::String { c_string: true } => self.string_literal(span, TypeId::CSTR),
-                ast::Expr::String { c_string: false } => self.string_literal(span, TypeId::STR),
                 ast::Expr::Parentheses(inner) => self.check_expr(inner, expected),
                 ast::Expr::Unary { op, value } => self.check_unary(op, value, span, expected),
                 ast::Expr::Binary { op, left, right } => {

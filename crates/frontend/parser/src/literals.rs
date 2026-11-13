@@ -42,12 +42,6 @@ impl<L: Grammar> Parser<L> {
     }
 }
 
-/// Reads `"text"` or `c"text"`.
-pub(crate) fn string_literal<L: Grammar>(p: &mut Parser<L>) -> Id<Expr<L>> {
-    let c_string = p.is_either(TokenKind::CString, TokenKind::String);
-    p.leaf(Expr::String { c_string })
-}
-
 /// Reads `'x'` or `b'x'`.
 pub(crate) fn character_literal<L: Grammar>(p: &mut Parser<L>) -> Id<Expr<L>> {
     let byte = p.is_either(TokenKind::ByteChar, TokenKind::Char);

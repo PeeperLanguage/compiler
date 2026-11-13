@@ -49,6 +49,10 @@ impl Language for Bare {
     fn pointee(ty: &Infallible) -> Option<Id<ast::Type<Bare>>> {
         match *ty {}
     }
+
+    fn string_kind(expr: &Infallible) -> Option<ast::StringKind> {
+        match *expr {}
+    }
 }
 
 static RULES: Rules<Bare> = Rules::core();

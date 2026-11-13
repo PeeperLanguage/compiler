@@ -439,11 +439,6 @@ impl<'t> Dumper<'t> {
             Expr::Feature(feature) => match feature {},
             Expr::Name => ("name reference", None, vec![]),
             Expr::Number => ("number literal", None, vec![]),
-            Expr::String { c_string } => (
-                "string literal",
-                c_string.then_some(TokenKind::CString.text()),
-                vec![],
-            ),
             Expr::Char { byte } => (
                 "character literal",
                 byte.then_some(TokenKind::ByteChar.text()),

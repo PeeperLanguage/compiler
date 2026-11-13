@@ -38,6 +38,10 @@ impl Language for Casts {
     fn pointee(ty: &Infallible) -> Option<Id<ast::Type<Casts>>> {
         match *ty {}
     }
+
+    fn string_kind(_: &Cast<Casts>) -> Option<ast::StringKind> {
+        None
+    }
 }
 
 static RULES: Rules<Casts> = {

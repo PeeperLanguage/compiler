@@ -26,6 +26,7 @@ use model::thir::Variable;
 use source::Span;
 use syntax::ast;
 use syntax::ast::Ident;
+use syntax::ast::StringKind;
 
 use crate::Checked;
 use crate::Checker;
@@ -354,7 +355,8 @@ impl<'a, 'p, L: Checked> ThirBuilder<'a, 'p, L> {
                     let span = tree.exprs.span(message);
                     // shortcut: a plain string literal only, as there are no
                     // run-time strings; take a string value once there are.
-                    if !matches!(tree.exprs[message], ast::Expr::String { c_string: false }) {
+                    let plain = |expr| L::string_kind(&expr) == Some(StringKind::Plain);
+                    if !matches!(tree.exprs[message], ast::Expr::Feature(expr) if plain(expr)) {
                         let checked = self.add_expr(message, None);
                         if self.body.exprs[checked].ty != TypeId::INVALID {
                             let what = "`panic` messages other than string literals";

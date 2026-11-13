@@ -225,7 +225,7 @@ fn parses_declarations() {
 /// Twice checked.
 const Answer: i32 = 42;
 const Untyped = 1;
-#[extern("rt_exit")]
+#[extern(rt_exit)]
 fn exit(code: i32);
 enum Status { Ready, Waiting: Pair<i32>, }
 type Alias<T> = ?T;
@@ -246,7 +246,7 @@ fn Pair::new() {}
     metadata
       attribute
         name reference extern
-        string literal "rt_exit"
+        name reference rt_exit
     declared name exit
     parameter
       declared name code

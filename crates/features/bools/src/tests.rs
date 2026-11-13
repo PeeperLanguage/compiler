@@ -38,6 +38,10 @@ impl Language for Bools {
     fn pointee(ty: &Infallible) -> Option<Id<ast::Type<Bools>>> {
         match *ty {}
     }
+
+    fn string_kind(_: &BoolLiteral) -> Option<ast::StringKind> {
+        None
+    }
 }
 
 static RULES: Rules<Bools> = {

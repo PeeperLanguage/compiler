@@ -2,6 +2,7 @@ use std::convert::Infallible;
 
 use syntax::ast::Decl;
 use syntax::ast::Field;
+use syntax::ast::StringKind;
 use syntax::ast::Type;
 use syntax::operators::Precedence;
 
@@ -30,6 +31,10 @@ impl Language for Bare {
 
     fn pointee(ty: &Infallible) -> Option<Id<Type<Bare>>> {
         match *ty {}
+    }
+
+    fn string_kind(expr: &Infallible) -> Option<StringKind> {
+        match *expr {}
     }
 }
 
@@ -85,7 +90,7 @@ fn add(a: i32, b: i32) -> i32 {
 
 fn main() {
     let x = add(1, (2 + 3)) == 7;
-    log("hi");
+    log(x);
     return;
 }
 "#;
@@ -135,7 +140,7 @@ fn parses_a_program() {
       expression statement
         call expression
           name reference log
-          string literal "hi"
+          name reference x
       return statement return;
 "#;
     assert!(messages(PROGRAM).is_empty());
