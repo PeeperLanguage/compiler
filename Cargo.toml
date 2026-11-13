@@ -71,6 +71,9 @@ single_match_else = "warn"
 uninlined_format_args = "warn"
 
 [profile.release]
+# The phases and the features are separate crates that call each other often;
+# this lets those calls be inlined (one compile ran 3% fewer instructions).
+lto = "thin"
 debug = "line-tables-only"
 
 # What a web page downloads: no debug info and no symbols.
