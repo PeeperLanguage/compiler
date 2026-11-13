@@ -1017,3 +1017,25 @@
   files, 0 differ; benchmark +0.31% against da5356c9 (all three runs
   higher, under the 1% limit); `check.sh` all ok. Dropping the pointer rows
   from `Peeper` failed 2 compile tests.
+
+- **Step 19 closed: the feature moves stop at three (2026-11-13).**
+  Committed raw pointers as `7d8af6c4` (from the reviewed snapshot tree
+  `946d5514`). Counting the core tests that write each remaining feature's
+  syntax showed every move would be mostly test rewriting: reserved about
+  86 lines (parser dumps), text 32, ranges 26, arrays 24, slices 10; bools
+  7 checker tests and 2 parser tests; numbers, bindings, conditionals,
+  loops and operators nearly every checker test. With types and THIR
+  closed, a feature crate holds only parse rows and a check function.
+  Fuad chose to stop: structs, interfaces and raw pointers stay feature
+  crates, the rest stay core syntax, and new syntax comes as a feature
+  from its first line. Design page section 11 (19, 20) and question 6
+  updated. Not done: nothing.
+- **Plan items closed (2026-11-13).** Layout facts: reading `layout`,
+  `is_copy`, `holders_in` and `holds_loans` shows no walk left: a struct
+  answers from `StructInternals`, an array goes one step to its `base`
+  (never an array), so each is two calls deep; the 2026-11-10 note
+  predated those. A struct- and array-heavy probe
+  (`target/step12-probes/layout/heavy`, 60 nested structs, 3,000
+  functions) checks cleanly; perf sampling is refused here
+  (`perf_event_paranoid` 2). Build-each-body-once and `program` out of
+  `model` dropped, as recommended.

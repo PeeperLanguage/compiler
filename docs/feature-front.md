@@ -307,7 +307,8 @@ measured first (section 10).
 ## 6. Features
 
 The list, from today's syntax (decided 2026-11-13: all 22 kept; members
-became a core concept in step 19, 5.1). Each owns
+became a core concept in step 19, 5.1; only structs, interfaces and raw
+pointers moved, the rest stay core syntax, section 11). Each owns
 its rows in the parser tables, its node kinds and its checking into core
 THIR nodes; lowering and operations are the core's (section 2). The
 "Owns" column below was written before that, so its operations are the
@@ -535,9 +536,22 @@ For every step from 18 on:
   through `Language::pointee` (the type-parameter walk, the "write `p.*`"
   help); `none`, `.*`, `==` and `rawptr + usize` read the checked type and
   stay core.
-- **20.** Removal: the closed syntax enums and every per-phase match of
-  section 3.1 on them are gone (`semantic_types::Type` stays, 5.2); no
-  half-moved state outlives this step.
+
+  **Stopped here (decided 2026-11-13, step 19, Fuad).** No other feature
+  moves. With the checked types and the checked program closed (section
+  2), a feature crate holds only its parse rows and a check function, while
+  each move takes its syntax away from the core's own tests, written in a
+  language with no feature (section 9). The three moved features were
+  optional syntax that one to three core tests wrote. Every other one is
+  written by many: reserved syntax in about 86 lines of core tests (mostly
+  parser dumps, since the parser is the only code that reads it), text in
+  32, ranges in 26, arrays in 24, slices in 10, and bools, numbers,
+  bindings, conditionals, loops and operators in nearly every checker
+  test. Those stay core syntax. The hooks stay: new syntax (enums and
+  `match` with real checking, a future `vec`) comes as a feature crate from
+  its first line, so no core test ever writes it.
+- **20.** Dropped with the stop above: the closed syntax enums keep the
+  core's syntax, and a feature adds its own through `Feature` kinds.
 
 ## 12. Open questions
 
@@ -554,4 +568,5 @@ For every step from 18 on:
 5. The speed limit: decided 2026-11-13, 1% more instructions (section 10).
 6. The feature list: decided 2026-11-13, all 22 kept (section 6). A merge
    such as `indexing` into `arrays` would make slices and text depend on
-   arrays.
+   arrays. Then decided 2026-11-13 (step 19): only structs, interfaces and
+   raw pointers moved; the rest stay core syntax (section 11).
