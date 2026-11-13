@@ -1,0 +1,30 @@
+// A range holds integers, and its type names them: `range[T]`. Only `range`
+// takes a type in brackets. A spread of a range that is not written in place
+// has no length the checker can count, a range does not print, and a range
+// value cannot be made at compile time yet, as an array cannot.
+#[extern("walk")]
+fn walk(r: range[i32]); //~ error[T0043]: struct, array, range, slice and `&str` parameters and results of `extern` functions are not supported yet
+
+fn floats(r: range[f32]) {} //~ error[P0011]: a range's values must be integers, found `f32`
+
+fn bare(r: range) {} //~ error[P0011]: `range` needs the type of its values: `range[T]`
+
+// One error: the unknown name, not also a non-integer range.
+fn unknown(r: range[Nope]) {} //~ error[T0002]: unknown type `Nope`
+
+fn bracketed(n: i32[u8]) {} //~ error[P0011]: `i32` takes no type in brackets
+
+fn first(r: range[i32]) -> i32 {
+    return 0;
+}
+
+const FIRST = first(0..3); //~ error[T0004]: this value cannot be worked out at compile time yet
+
+fn main() {
+    let r = 0..3;
+    let open = ..5; //~ error[T0043]: ranges without both ends are not supported yet
+    let values = [_]i32{r...}; //~ error[T0001]: a range needs constant ends and step; write the length
+    println(r); //~ error[T0004]: `range[i32]` cannot be printed
+    let mixed: range[u8] = 0..3;
+    let wrong: range[i64] = mixed; //~ error[T0001]: mismatched types: expected `range[i64]`, found `range[u8]`
+}

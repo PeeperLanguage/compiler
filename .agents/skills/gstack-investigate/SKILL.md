@@ -45,7 +45,7 @@ This skill needs only repository tools; no global gstack scripts or services.
 - Change the existing owner rather than scattering caller workarounds or writing
   a parallel implementation. Preserve each owned behavior or explain its change.
 - Keep the diff scoped to the reproduced defect and necessary coverage.
-- Language changes need positive and applicable negative `x_test/` coverage,
+- Language changes need positive and applicable negative `test_programs/` coverage,
   executed with a rebuilt `build/bin/peeper`.
 - Stop at the approved step boundary unless multiple steps were explicitly requested.
 

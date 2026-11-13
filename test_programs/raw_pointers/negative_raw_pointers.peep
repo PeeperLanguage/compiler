@@ -1,0 +1,59 @@
+// What raw pointers do not allow.
+
+// `rawptr` does not say what it points to.
+fn untyped_read(p: rawptr) -> i32 { return p.*; } //~ error[T0004]: `.*` needs a reference or a typed raw pointer, found `rawptr`
+
+// Addresses compare only for equality.
+fn ordering(a: *i32, b: *i32) -> bool { return a < b; } //~ error[T0004]: operator `<` cannot be applied to `*i32`
+
+fn literal_address() { let p = @5; } //~ error[T0004]: cannot take address of a temporary value
+
+// `@x` can write `x`, so `x` must be `mut`; and a shared reference's.
+fn immutable() { let x = 1; let p = @x; } //~ error[T0007]: cannot take the address of immutable `x`
+
+fn shared(r: &i32) { let p = @r.*; } //~ error[T0007]: cannot take the address of `r.*` through shared reference `r`
+
+// Without `as`, only a typed pointer converts, and only to `rawptr`.
+fn typed_from_untyped(p: rawptr) { let q: *i32 = p; } //~ error[T0001]: mismatched types: expected `*i32`, found `rawptr`
+
+fn other_type(p: *i32) { let q: *i64 = p; } //~ error[T0001]: mismatched types: expected `*i64`, found `*i32`
+
+// `none` is a pointer, and takes its type from where it is used.
+fn none_number() { let x: i32 = none; } //~ error[T0001]: mismatched types: expected `i32`, found `none`
+
+fn untyped_none() { let p = none; } //~ error[P0007]: `none` needs its type from where it is used: write `let p: *T = none`
+
+// No loan follows a reference behind a raw pointer.
+fn reference_target(r: &i32) { let mut s = r; let p = @s; } //~ error[T0043]: raw pointers to references are not supported yet
+
+// Nor a slice, taken or written.
+fn slice_target(s: &[]i32) { let mut t = s; let p = @t; } //~ error[T0043]: raw pointers to slices are not supported yet
+
+fn slice_pointer(p: *&[]i32) {} //~ error[T0043]: raw pointers to slices are not supported yet
+
+// `@x` can write `x`, so no reference to it may be in use then.
+fn while_lent(r: &mut [3]i32) {
+    for v in r {
+        let p = @r.*[0]; //~ error[T0037]: address of `r` is being taken while a `&mut` reference to it is still in use
+        v.* = 1;
+    }
+}
+
+fn while_shared() -> i32 {
+    let mut x = 1;
+    let shared = &x;
+    let p = @x; //~ error[T0037]: address of `x` is being taken while a reference to it is still in use
+    return shared.*;
+}
+
+fn escape() -> *i32 {
+    let mut local = 1; //~ label: `local` is gone once the function returns
+    return @local; //~ error[T0036]: cannot return pointer to local storage
+}
+
+fn untyped_escape() -> rawptr {
+    let mut kept = 1; //~ label: `kept` is gone once the function returns
+    return @kept; //~ error[T0036]: cannot return pointer to local storage
+}
+
+fn main() {}

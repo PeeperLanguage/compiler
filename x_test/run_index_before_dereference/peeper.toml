@@ -1,7 +1,0 @@
-name = "run_index_before_dereference"
-build = "program"
-
-[test]
-mode = "run"
-outcome = "exit_code"
-exit_code = 22

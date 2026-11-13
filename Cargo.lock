@@ -81,7 +81,7 @@ dependencies = [
  "model",
  "project",
  "serde_json",
- "toml_edit",
+ "test_programs",
 ]
 
 [[package]]
@@ -621,7 +621,7 @@ dependencies = [
  "lsp",
  "model",
  "project",
- "toml_edit",
+ "test_programs",
 ]
 
 [[package]]
@@ -886,6 +886,10 @@ dependencies = [
  "filetime",
  "libc",
 ]
+
+[[package]]
+name = "test_programs"
+version = "0.3.1"
 
 [[package]]
 name = "text"

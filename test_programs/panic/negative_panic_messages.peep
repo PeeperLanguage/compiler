@@ -1,0 +1,8 @@
+// A panic's message is a plain string literal; any other value is rejected,
+// and a message with its own error reports only that.
+fn main() {
+    let n = 3;
+    panic n; //~ error[T0043]: `panic` messages other than string literals are not supported yet
+    panic c"c string"; //~ error[T0043]: `panic` messages other than string literals are not supported yet
+    panic (missing); //~ error[T0002]: unknown name `missing`
+}

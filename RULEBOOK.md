@@ -96,7 +96,7 @@ Architecture changes should compare at least two viable options. Prefer smallest
 
 Useful tests prove observable runtime results, diagnostics, cleanup, phase evidence, stable identity, concurrency behavior, or backend representation. Avoid tests that only mirror implementation structure unless that structure is itself required invariant.
 
-Language behavior changes need source fixtures in `x_test/` plus focused subsystem tests. Architecture-only refactors should keep existing behavior and validate every affected producer and consumer.
+Language behavior changes need test programs in `test_programs/` plus focused subsystem tests. Architecture-only refactors should keep existing behavior and validate every affected producer and consumer.
 
 ## Final review questions
 

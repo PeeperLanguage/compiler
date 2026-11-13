@@ -1,6 +1,0 @@
-name = "mir_branches"
-build = "program"
-
-[test]
-mode = "mir"
-outcome = "success"

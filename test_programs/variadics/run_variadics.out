@@ -1,0 +1,62 @@
+1. no arguments:
+0
+2. listed:
+6
+3. mixed with arrays and ranges:
+36
+12
+10
+10
+4. a lone array is copied, like `c = a`:
+1
+5. a `&mut` of the array writes to it:
+2
+6. a slice writes through:
+5
+7. listed variables are copied:
+5
+8. a shared slice:
+5
+6
+9. fixed and variadic parameters:
+1
+5
+9
+10. structs move in, as into a plain argument:
+7
+11. a slice of structs, which do not copy, passes as it is:
+3
+1
+12. forwarded:
+9
+13. a result borrowing from the arguments, in one statement:
+8
+14. a result kept from a slice that outlives it:
+9
+15. a slice lent again in a call of itself:
+10
+16. a parameter that takes another slice:
+100
+17. arrays of arrays:
+4
+3
+18. arguments run in order:
+1
+2
+3
+19
+19. a `&mut` to an array in a variable:
+3
+7
+20. in a condition:
+greater
+21. a `for` keeps the array of its call to the loop's end:
+30
+40
+3
+4
+22. a `&mut []` read by `...T` is usable after:
+7
+9
+23. a `let` keeps the array a result borrows from:
+8 6

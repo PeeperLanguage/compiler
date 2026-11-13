@@ -1,0 +1,41 @@
+// A struct moves when used by value: by `let`, into a call, into a struct
+// literal, on one path or all. The variable is unusable until set again.
+struct Point { x: i32, y: i32 }
+struct Line { start: Point, end: Point }
+
+fn take(p: Point) {}
+fn poke(p: &mut Point) -> Point {
+    return Point.{ x = 0, y = 0 };
+}
+fn at(p: &mut Point) -> usize {
+    return 0;
+}
+
+fn main() {
+    let p = Point.{ x = 1, y = 2 };
+    let q = p; //~ label: `p` is moved here
+    let n = p.x; //~ error[T0034]: `p` is used after it was moved
+    //~ note: a value moves when used by value, unless its type copies
+
+    let a = Point.{ x = 1, y = 2 };
+    if n > 0 {
+        take(a);
+    }
+    take(a); //~ error[T0034]: `a` is used after it was moved
+
+    let mut b = Point.{ x = 1, y = 2 };
+    let line = Line.{ start = b, end = q };
+    b.x = 3; //~ error[T0034]: cannot set a field of `b` after `b` was moved
+
+    let c = Point.{ x = 1, y = 2 };
+    take(c);
+    let m = c.y; //~ error[T0034]: `c` is used after it was moved
+
+    // A literal's parts, and an assignment's value before its place, are
+    // taken in the order written: the borrow comes after the move.
+    let mut d = Point.{ x = 1, y = 2 };
+    let both = [2]Point{d, poke(&mut d)}; //~ error[T0034]: `d` is used after it was moved
+    let mut e = Point.{ x = 1, y = 2 };
+    let mut grid = [1]Point{Point.{ x = 0, y = 0 }};
+    grid[at(&mut e)] = e; //~ error[T0034]: `e` is used after it was moved
+}

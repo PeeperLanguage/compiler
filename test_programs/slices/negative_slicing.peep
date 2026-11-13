@@ -1,0 +1,69 @@
+// What `&a[i..j]` rejects: ends known at compile time outside the array or
+// out of order, a step, slicing without `&`, a range value, ends that are
+// not integers, slicing through a raw pointer, a writable
+// slice through `&` or of a `&[]`, ends outside every slice, `.*` on a
+// slice, two writable slices of one array at once, a slice's array used
+// while a slice of it is, and a slice of a local or of an array parameter
+// returned.
+fn bounds(x: f64, y: f64) {
+    let mut a = [4]i32{1, 2, 3, 4};
+    let past = &a[0..5]; //~ error[T0004]: slice `0..5` is outside `[4]i32`, whose length is 4
+    let inclusive_past = &a[1..=4]; //~ error[T0004]: slice `1..=4` is outside `[4]i32`, whose length is 4
+    let negative = &a[-1i32..2]; //~ error[T0004]: slice `-1i32..2` is outside `[4]i32`, whose length is 4
+    let start_past = &a[5..]; //~ error[T0004]: slice `5..` is outside `[4]i32`, whose length is 4
+    let no_end = &a[1..=]; // only the parser's error, not "outside" too //~ error[P0003]: inclusive range requires an end bound
+    let wide = &a[..18446744073709551616u128]; //~ error[T0004]: slice `..18446744073709551616u128` is outside `[4]i32`, whose length is 4
+    let backwards = &a[3..1]; //~ error[T0004]: slice `3..1` starts after it ends
+    let inclusive_backwards = &a[3..=1]; //~ error[T0004]: slice `3..=1` starts after it ends
+    let stepped = &a[0..4:2]; //~ error[T0004]: a slice has no step
+    let bare = a[1..3]; //~ error[T0004]: slicing borrows; write `&a[1..3]`
+    let r = 0..2;
+    let by_value = &a[r]; //~ error[T0043]: range values as indexes are not supported yet
+    let floats = &a[x..y]; //~ error[T0001]: an index must be an integer, found `f64`
+}
+
+fn through(r: &[4]i32, s: &[]i32, p: *[4]i32) {
+    let writable = &mut r[0..2]; //~ error[T0007]: cannot mutably borrow `r[0..2]` through shared reference `r`
+    let writable_slice = &mut s[0..1]; //~ error[T0007]: cannot mutably borrow the elements of shared slice `s`
+    let negative_end = &s[-1i32..]; //~ error[T0004]: slice `-1i32..` is outside every `&[]i32`
+    let past_usize = &s[..18446744073709551616u128]; //~ error[T0004]: slice `..18446744073709551616u128` is outside every `&[]i32`
+    let slice_backwards = &s[2..1]; //~ error[T0004]: slice `2..1` starts after it ends
+    let elements = &s.*; //~ error[T0004]: `.*` needs a reference or a typed raw pointer, found `&[]i32`
+    //~ help: a slice is lent again as it is (`f(s)`), or as `&s[..]` / `&mut s[..]`
+    let raw = &p[0..2]; //~ error[T0043]: slices taken through raw pointers are not supported yet
+}
+
+fn both_writable() {
+    let mut a = [4]i32{1, 2, 3, 4};
+    let left = &mut a[0..2];
+    let right = &mut a[2..4]; //~ error[T0037]: `a` is borrowed as `&mut []` while a `&mut []` slice of it is still in use
+    left[0] = right[0];
+}
+
+fn slice_loans(s: &mut []i32) {
+    let view = &s[0..2];
+    s[0] = 1; //~ error[T0037]: `s` is changed while a slice of it is still in use
+    let read = view[0];
+    let part = &mut s[1..];
+    let first = s[1]; //~ error[T0037]: `s` is read while a `&mut []` slice of it is still in use
+    part[0] = first;
+}
+
+// A slice's length is read for its ends; the error names the borrow written.
+fn slice_while_element_lent(s: &mut []i32) {
+    let x = &mut s[1];
+    let rest = &s[1..2]; //~ error[T0037]: `s` is borrowed while a `&mut` reference to it is still in use
+    x.* = rest[0];
+}
+
+fn escape(view: &[]i32) -> &[]i32 {
+    let a = [2]i32{1, 2};
+    return &a[0..1]; //~ error[T0036]: returns a slice of `a`, which is gone once the function returns
+}
+
+// The parameter is the caller's copy, gone once the function returns.
+fn from_parameter(values: [3]i32, view: &[]i32) -> &[]i32 {
+    return &values[0..1]; //~ error[T0036]: returns a slice of `values`, which is gone once the function returns
+}
+
+fn main() {}

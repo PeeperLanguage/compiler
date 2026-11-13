@@ -195,7 +195,7 @@ fn floats_compute_in_their_own_precision() {
         float(&f32, -0.0)
     );
     // Negating flips the sign, a NaN's too, so `NAN` and `-NAN` are two
-    // values (x_test/run_const_parameters makes a copy for each).
+    // values (test_programs/const_parameters/run_const_parameters makes a copy for each).
     for (ty, nan) in [(&f32, f64::from(f32::NAN)), (&f64, f64::NAN)] {
         for nan in [nan, -nan] {
             assert_eq!(

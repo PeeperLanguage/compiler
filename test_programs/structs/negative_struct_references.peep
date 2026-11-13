@@ -1,0 +1,76 @@
+// What a struct holding references cannot do yet, or ever. A reference stored
+// behind a reference would outlive what it borrows unseen, so it is refused
+// for now, however it is written.
+struct Pair { first: &i32, second: &i32 }
+struct Text { input: &[]u8 }
+struct Counter { value: &mut i32 }
+struct Grid { cells: &mut []i32 }
+struct Wrap { inner: &Pair }
+struct Link { next: &Link } //~ error[T0013]: `Link` holds itself
+
+fn set(p: &mut Pair, x: &i32) {
+    p.first = x; //~ error[T0043]: assignments of references through a reference are not supported yet
+}
+
+fn replace(p: &mut Pair, q: Pair) {
+    p.* = q; //~ error[T0043]: assignments of references through a reference are not supported yet
+}
+
+fn set_through_field(w: &mut Wrap, x: &i32) {
+    w.inner.first = x; //~ error[T0007]: cannot assign to `w.inner.first` through shared reference `w.inner`
+}
+
+// So a parser keeps its position next to an input that never changes.
+fn advance(text: &mut Text) {
+    text.input = &text.input[1..]; //~ error[T0043]: assignments of references through a reference are not supported yet
+}
+
+fn through_shared(c: &Counter) {
+    c.value.* = 1; //~ error[T0007]: cannot assign to `c.value.*` through shared reference `c`
+}
+
+fn lend_through_shared(c: &Counter) {
+    let r = &mut c.value.*; //~ error[T0007]: cannot mutably borrow `c.value.*` through shared reference `c`
+    r.* = 1;
+}
+
+// A `&mut []` field gives nothing writable through a shared reference.
+fn fill(cells: &mut []i32) {}
+
+fn lend_slice_through_shared(g: &Grid) {
+    fill(g.cells); //~ error[T0007]: cannot mutably borrow `g.cells` through shared reference `g`
+}
+
+fn walk_through_shared(g: &Grid) {
+    for cell in g.cells { //~ error[T0007]: cannot mutably borrow `g.cells` through shared reference `g`
+        println(cell.*);
+    }
+}
+
+fn slice_through_shared(g: &Grid) {
+    let part = &mut g.cells[0..1]; //~ error[T0007]: cannot mutably borrow `g.cells` through shared reference `g`
+    part[0] = 1;
+}
+
+// Nothing follows a raw pointer to say what it may point into.
+fn pointer(p: *Pair) {
+    let read = p.*.first; //~ error[T0043]: raw pointers to structs holding references are not supported yet
+}
+
+#[extern("takes")]
+fn takes(p: &Pair); //~ error[T0043]: references to structs holding references in `extern` functions are not supported yet
+
+#[extern("gives")]
+fn gives(p: Pair); //~ error[T0043]: struct, array, range, slice and `&str` parameters and results of `extern` functions are not supported yet
+
+// A struct of shared references lends no `&mut`.
+fn shared_only(p: Pair) -> &mut i32 in p { //~ error[T0016]: a `&mut` result cannot borrow from `p`, which holds only shared references
+    return p.first;
+}
+
+// Nothing to borrow from.
+fn made() -> Pair {} //~ error[T0016]: a result holding references needs a parameter that holds one
+
+const Held = Pair.{ first = &1, second = &2 }; //~ error[T0004]: a constant cannot hold a struct yet
+
+fn main() {}

@@ -1,7 +1,0 @@
-name = "negative_assigned_twice"
-build = "lib"
-
-[test]
-mode = "check"
-outcome = "failure"
-stderr_contains = ["cannot assign twice to immutable `a`", "`a` is already set here", "declared without `mut` here", "write `let mut a` to assign it more than once", "`b` may already be set here", "cannot assign to immutable `c`", "`d` is already set here", "Compilation failed with 4 error(s)"]

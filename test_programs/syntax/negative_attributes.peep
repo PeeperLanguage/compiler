@@ -1,0 +1,16 @@
+// `#[extern("name")]` is written once, with one string, and only on a
+// function: it is the one attribute there is. An attribute needs a
+// declaration after it.
+#[extern(123)] //~ error[P0005]: write `#[extern("name")]` once, with the C function's name
+fn Numbered(code: i32) -> i32;
+
+#[extern("puts", 1)] //~ error[P0005]: write `#[extern("name")]` once, with the C function's name
+fn Extra(text: &cstr) -> i32;
+
+#[extern("limit")] //~ error[P0005]: `extern` names a C function, so only a function has it
+const Limit: i32 = 1;
+
+#[inline] //~ error[P0005]: unknown attribute `inline`
+fn main() {}
+
+#[extern("puts")] //~ error[P0005]: an attribute needs a declaration after it

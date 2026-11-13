@@ -1,0 +1,20 @@
+// A spread range in an array literal needs the literal's (integer) element
+// type, a non-zero step, and constant ends under `[_]`; the entries must
+// give exactly `N` values.
+fn count(n: i32) -> i32 {
+    let unknown = [_]i32{(0..n)...}; //~ error[T0001]: a range needs constant ends and step; write the length
+    let over = [3]i32{(0..n)..., 1, 2, 3, 4, 5}; //~ error[T0001]: `[3]i32` needs 3 values, found at least 5
+    let floats = [_]f64{(0..3)...}; //~ error[T0001]: `...` here spreads a range, an array or a slice of `f64`, found `range[i32]`
+    let exact = [3]i32{(0..5)...}; //~ error[T0001]: `[3]i32` needs 3 values, found 5
+    let stopped = [_]i32{(0..5:0)...}; //~ error[T0004]: a range's step must not be zero
+    let wide = [_]u8{(0..=256)...}; //~ error[L0003]: literal `256` does not fit `u8`
+    let few = [2]i32{(0..2)..., 7}; //~ error[T0001]: `[2]i32` needs 2 values, found 3
+    let flags = [_]bool{(0..2)...}; //~ error[T0001]: `...` here spreads a range, an array or a slice of `bool`, found `range[i32]`
+    let huge = [_]u64{(0..=18446744073709551615)...}; //~ error[P0011]: an array length must fit `usize`, of 64 bits
+    let sum = [_]u64{(0..=9223372036854775807)..., (0..=9223372036854775807)...}; //~ error[P0011]: an array length must fit `usize`, of 64 bits
+    return n;
+}
+
+fn main() {
+    count(1);
+}

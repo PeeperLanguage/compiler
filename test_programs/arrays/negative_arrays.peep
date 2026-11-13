@@ -1,0 +1,18 @@
+// What check rejects in arrays.
+#[extern("takes")]
+fn takes(values: [2]i32); //~ error[T0043]: struct, array, range, slice and `&str` parameters and results of `extern` functions are not supported yet
+
+fn main() {
+    let a = [3]i32{1, 2}; //~ error[T0001]: `[3]i32` needs 3 values, found 2
+    let b = [2]i32{1, true}; //~ error[T0001]: mismatched types: expected `i32`, found `bool`
+    let c = [3]i32{1, 2, 3};
+    let d = c[3]; //~ error[T0004]: index `3` is outside `[3]i32`, whose length is 3
+    let negative = c[-1]; //~ error[L0003]: literal `-1` does not fit `u64`
+    let typed = c[-1i64]; //~ error[T0004]: index `-1i64` is outside `[3]i32`, whose length is 3
+    let e = c[true]; //~ error[T0001]: an index must be an integer, found `bool`
+    let number = 4;
+    let f = number[0]; //~ error[T0004]: `i32` cannot be indexed
+    let i: [2u8]i32 = [2]i32{1, 2}; //~ error[P0011]: an array length is a whole number without a suffix
+    c[0] = 5; //~ error[T0007]: cannot assign to `c[0]` of immutable `c`
+    takes(c);
+}

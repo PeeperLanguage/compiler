@@ -1,0 +1,15 @@
+//@ dump: ll
+
+// A struct parameter and result pass by address: the parameter is the
+// caller's copy, and the result is built where a first parameter points. The
+// debug info gives the parameter its struct type, and the function's type
+// says so too: no result, and an address for each.
+struct Point { x: i32, y: i32 }
+
+fn swap(p: Point) -> Point {
+    return Point.{ x = p.y, y = p.x };
+}
+
+fn main() {
+    let p = swap(Point.{ x = 1, y = 2 });
+}

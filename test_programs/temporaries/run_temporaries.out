@@ -1,0 +1,86 @@
+1. lend a call's result for the call:
+  make
+60
+2. a let keeps it:
+  make
+30
+3. run order:
+  first
+  make
+21
+  make
+  index
+20
+4. through a returned reference:
+5
+7
+5. index a returned slice:
+5
+6. &mut of a literal:
+101
+7. a length and a sum:
+2
+12
+8. for over a temporary:
+  make
+10
+20
+30
+  make
+11
+21
+31
+9. conditions:
+  make
+  look
+  then
+  make
+  look
+1
+  make
+  look
+2
+  make
+  look
+10. print an element of a temporary:
+3 4
+11. field of a kept temporary:
+1
+12. slice of a kept temporary:
+  make
+30
+13. a call's `&mut` result lent as shared:
+7
+6
+14. a loop's code keeps all its temporaries:
+  make
+10
+20
+  make
+0
+1
+2
+15. an argument a call's `in` names is kept too:
+  make
+10
+16. kept in each pass:
+  make
+10
+  make
+  make
+30
+17. a literal takes the type wanted:
+5000000000
+6000000000
+201
+18. an assignment keeps it too:
+  make
+30
+19. kept in a struct or an array:
+  make
+  make
+11 30
+20. kept through a method's self:
+1
+21. a field or element set keeps it too:
+42 3

@@ -1,0 +1,9 @@
+//@ dump: mir
+
+const Greeting = c"hello\tworld\n";
+
+fn main() {
+    let text: &cstr = c"bye\n";
+    Write(Stdout, Greeting, 12);
+    Write(Stderr, text, 4);
+}

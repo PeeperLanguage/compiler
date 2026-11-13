@@ -1,0 +1,2 @@
+panic: range step is zero
+  --> src/main.peep:7:20

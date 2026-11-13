@@ -1,0 +1,13 @@
+//@ run
+//@ exit-code: 101
+
+// An `i5` count cannot reach 32, but a negative one is still outside.
+fn shift(value: i32, count: i5) -> i32 {
+    return value << count;
+}
+
+fn main() {
+    println("before");
+    shift(1, -1);
+    println("after");
+}

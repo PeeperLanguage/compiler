@@ -1,0 +1,7 @@
+const Limit = 3;
+
+type Bound = Limit; //~ error[T0021]: `Limit` is a value, not a type
+type Same<T> = T; //~ error[T0043]: generic types are not supported yet
+type Lost = Missing; //~ error[T0002]: unknown type `Missing`
+
+fn main() {}

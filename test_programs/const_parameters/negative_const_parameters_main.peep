@@ -1,0 +1,5 @@
+//@ run
+//@ exit-code: 1
+
+// A program starts at one `main`, which takes no `const` parameter.
+fn main(const T: type) {} //~ error[M0006]: program entrypoint must be a local body-backed `fn main()` or `fn main() -> i32`

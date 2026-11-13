@@ -193,8 +193,8 @@ Behavior changes require focused tests near changed subsystem and regression cov
 
 Language behavior changes require:
 
-- positive Peeper source fixture under `x_test/`;
-- negative fixtures for rejected semantics when applicable;
+- positive test program under `test_programs/`;
+- test programs with marked errors for rejected semantics when applicable;
 - focused Rust unit tests for affected evidence and invariants;
 - validation with bundled `build/bin/peeper`.
 
@@ -260,7 +260,7 @@ Before completion, verify:
 - [ ] Error chains and diagnostic context remain intact.
 - [ ] Panics represent only internal invariant failures.
 - [ ] Tests prove behavior or invariant, not only absence of crash.
-- [ ] Language changes include required `x_test/` fixtures.
+- [ ] Language changes include required `test_programs/` programs.
 - [ ] Affected backends and target widths were validated.
 - [ ] Formatting and focused tests pass.
 - [ ] Bundle and executable fixture validation ran when required.

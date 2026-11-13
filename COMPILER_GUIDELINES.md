@@ -181,7 +181,7 @@ Use `RULES.md` for mandatory commands and fixture requirements. Compiler changes
 also need evidence proportional to boundary crossed:
 
 - bug fixes begin with focused regression reproducing old failure;
-- language behavior uses positive and applicable negative `x_test/` fixtures;
+- language behavior uses positive and applicable negative test programs in `test_programs/`;
 - traversal changes test completeness and newly reachable child nodes;
 - flow changes test branches, joins, loops, termination, and unreachable paths;
 - incremental changes test unchanged reuse and dependent invalidation;

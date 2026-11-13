@@ -17,7 +17,7 @@ llvm.workspace = true
 lsp.workspace = true
 
 [dev-dependencies]
-toml_edit.workspace = true
+test_programs.workspace = true
 
 [[bench]]
 name = "compile"

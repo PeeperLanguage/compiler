@@ -1,5 +1,0 @@
-type Bad = Missing;
-
-fn f(const n: Bad) {}
-
-fn main() {}

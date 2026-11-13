@@ -6,7 +6,7 @@ Peeper is "an experimental systems programming language and native
 compiler", pre-release, with no compatibility guarantees (`README.md`). This
 repository holds the compiler, being rebuilt in Rust, plus the bundled
 library (`_builtin_library`), package tooling, language server and fixtures
-(`x_test`). The Go compiler it replaces is on the `legacy` branch
+(`test_programs/`). The Go compiler it replaces is on the `legacy` branch
 (`PROGRESS.md`). Pre-stable: no deprecated syntax or compatibility paths are
 kept (`RULES.md` §6). One binary, `peeper` (`crates/driver/peeper`), with the
 commands `check`, `fix`, `build`, `run`, `run -interpret`, `-dump

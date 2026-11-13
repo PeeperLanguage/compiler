@@ -1,6 +1,0 @@
-name = "mir_array_length"
-build = "program"
-
-[test]
-mode = "mir"
-outcome = "success"

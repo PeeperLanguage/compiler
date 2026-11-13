@@ -1,0 +1,13 @@
+// Only a field of a `mut` variable can be set, by a name its struct declares,
+// to a value of the field's type.
+struct Point { x: i32, y: i32 }
+
+fn main() {
+    let p = Point.{ x = 1, y = 2 }; //~ label: declared without `mut` here
+    p.x = 3; //~ error[T0007]: cannot assign to `p.x` of immutable `p`
+    //~ help: write `let mut p`
+    let mut q = Point.{ x = 1, y = 2 };
+    q.z = 1; //~ error[T0010]: `Point` has no field `z`
+    q.x = true; //~ error[T0001]: mismatched types: expected `i32`, found `bool`
+    Point.{ x = 1, y = 2 }.x = 5; //~ error[T0007]: cannot assign to a temporary value
+}

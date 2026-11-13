@@ -1,0 +1,9 @@
+// There is no unary `+`, as it would change nothing. A leading one is
+// reported with a fix and read past, so the type checker still runs and
+// reports `nam`.
+fn main() {
+    let a: i32 = +5; //~ error[P0003]: `+` is not a prefix operator
+    //~ fix: remove it; `+x` is just `x`
+    let b = +nam; //~ error[P0003]: `+` is not a prefix operator
+    //~ error[T0002]: unknown name `nam`
+}

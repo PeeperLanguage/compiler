@@ -1,0 +1,20 @@
+// Each field of a struct literal is set once, by a name the struct declares,
+// and the literal has a struct type, written or from where it is used.
+struct Point {
+    x: i32,
+    y: i32,
+    z: i32,
+}
+
+fn main() {
+    let unknown = Point.{ x = 1, y = 2, z = 3, w = 4 }; //~ error[T0010]: `Point` has no field `w`
+    let misspelled = Point.{ x = 1, y = 2, zz = 3 }; //~ error[T0029]: missing field `z` in `Point`
+    //~ error[T0010]: `Point` has no field `zz`
+    //~ help: did you mean `z`?
+    let twice = Point.{ x = 1, y = 2, z = 3, x = 4 }; //~ error[T0040]: field `x` is set twice
+    //~ label: first set here
+    let missing = Point.{ x = 1 }; //~ error[T0029]: missing fields `y`, `z` in `Point`
+    let not_struct = i32.{ x = 1 }; //~ error[T0001]: expected a struct type, found `i32`
+    let untyped = .{ x = 1 }; //~ error[P0007]: this struct literal needs its type: write it before `.{`
+    let wrong_value = Point.{ x = true, y = 2, z = 3 }; //~ error[T0001]: mismatched types: expected `i32`, found `bool`
+}

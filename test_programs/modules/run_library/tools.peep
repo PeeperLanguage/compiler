@@ -1,0 +1,6 @@
+//@ run
+//@ library
+//@ exit-code: 1
+
+// A library is only checked: it has no `main` to run.
+fn Tool() {}

@@ -221,8 +221,8 @@ Do not overstate cleanup status. If duplication still exists in touched code, sa
 
 ### Peeper source fixture rule
 
-- Every new language feature or behavior change must add or update a Peeper source fixture under `x_test/`.
-- Go unit tests do not replace `x_test/` coverage.
+- Every new language feature or behavior change must add or update a test program under `test_programs/`.
+- Rust unit tests do not replace `test_programs/` coverage.
 - Add a positive type/runtime fixture and negative fixtures for rejected semantics when applicable.
 - Validate new fixtures with the bundled `build/bin/peeper` before closing the step.
 

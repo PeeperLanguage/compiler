@@ -1,0 +1,88 @@
+//@ library
+
+// The loan rules hold for slices as for references: one error per function.
+fn first(view: &[]i32) -> i32 {
+    return view[0];
+}
+
+fn fill(view: &mut []i32) {}
+
+fn both(edit: &mut []i32, view: &[]i32) {}
+
+fn ReturnsLocal(view: &[]i32) -> &[]i32 {
+    let values = [3]i32{1, 2, 3};
+    return &values; //~ error[T0036]: returns a slice of `values`, which is gone once the function returns
+}
+
+fn ReturnsParameter(values: [3]i32) -> &[]i32 in values { //~ error[T0016]: `values` is not a reference or a slice, so a result cannot borrow from it
+    return &values;
+}
+
+fn ReturnsCopiedArray(values: [3]i32, view: &[]i32) -> &[]i32 {
+    return &values; //~ error[T0036]: returns a slice of `values`, which is gone once the function returns
+}
+
+fn ElementOfLocal(view: &[]i32) -> &i32 {
+    let local = [1]i32{1};
+    let slice: &[]i32 = &local; //~ label: slice made here
+    return &slice[0]; //~ error[T0036]: returns a reference into `local`, which is gone once the function returns
+}
+
+fn ElementOfUnnamed(kept: &[]i32, other: &[]i32) -> &i32 in kept {
+    return &other[0]; //~ error[T0016]: returns a reference into `other`, which `in` does not name
+}
+
+fn KeptPastBlock() -> i32 {
+    let outer = [1]i32{0};
+    let mut view: &[]i32 = &outer;
+    {
+        let inner = [2]i32{1, 2};
+        view = &inner;
+    } //~ error[T0037]: `inner` is gone while a slice of it is still in use
+    return first(view); //~ label: slice used later here
+}
+
+fn ChangedWhileViewed() -> i32 {
+    let mut values = [2]i32{1, 2};
+    let view: &[]i32 = &values;
+    values[0] = 5; //~ error[T0037]: `values` is changed while a slice of it is still in use
+    return first(view);
+}
+
+fn ChangedWhileElementHeld() -> i32 {
+    let mut values = [2]i32{1, 2};
+    let view: &[]i32 = &values;
+    let element = &view[0];
+    values[1] = 5; //~ error[T0037]: `values` is changed while a slice of it is still in use
+    return element.*; //~ label: reference used later here
+}
+
+fn TwoEdits() {
+    let mut values = [2]i32{1, 2};
+    let a: &mut []i32 = &mut values;
+    let b: &mut []i32 = &mut values; //~ error[T0037]: `values` is borrowed as `&mut []` while a `&mut []` slice of it is still in use
+    fill(a);
+    fill(b);
+}
+
+fn EditAndView() {
+    let mut values = [2]i32{1, 2};
+    both(&mut values, &values); //~ error[T0037]: `values` is borrowed as `&mut []` while a slice of it is still in use
+    //~ note: a `&mut []` argument takes hold when the call starts
+}
+
+fn ReadWhileEdited() -> i32 {
+    let mut values = [2]i32{1, 2};
+    let edit: &mut []i32 = &mut values;
+    let read = values[0]; //~ error[T0037]: `values` is read while a `&mut []` slice of it is still in use
+    fill(edit);
+    return read;
+}
+
+// A slice views from its start to the array's end.
+fn ChangedInsideSlice() -> i32 {
+    let mut values = [3]i32{1, 2, 3};
+    let tail = &values[1..];
+    values[2] = 9; //~ error[T0037]: `values` is changed while a slice of it is still in use
+    return tail[0];
+}

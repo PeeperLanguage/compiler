@@ -1,7 +1,0 @@
-name = "warn_unreachable_code"
-build = "lib"
-
-[test]
-mode = "check"
-outcome = "success"
-stderr_contains = ["[W0001]: unreachable code", "this never runs", "7 |     let unused = 2;", "28 |         let later = 1;", "35 |     if ready {", "main.peep:43:9\n", "71 |     Work();", "Compilation succeeded with 7 warning(s)"]

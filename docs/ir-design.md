@@ -742,9 +742,9 @@ build/debug/dumps in the project folder or beside the file
 (`myapp:deep/x` to `myapp/deep/x.mir`), like the old `-keep-gen` and rustc's
 `-Zdump-mir`. The MIR shown is what the path checks and the backends read,
 with the globals each body names after its blocks. The printers are `thir::Body::text` and `mir::Body::text`, beside
-the data, and `llvm::Module::text` for `ll`. MIR tests are `x_test`
-folders with `mode = "mir"` and an `expected.mir` file, as in rustc's
-`tests/mir-opt`; `PEEPER_BLESS=1` rewrites the expected files.
+the data, and `llvm::Module::text` for `ll`. MIR tests are test programs
+with `//@ dump: mir` and a `.mir` file beside them; `PEEPER_BLESS=1`
+rewrites the expected files.
 
 ## LLVM
 

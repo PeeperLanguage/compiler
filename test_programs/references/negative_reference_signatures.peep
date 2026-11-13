@@ -1,0 +1,30 @@
+//@ library
+
+// What `in` and a reference result may not say: one error per function.
+fn Nothing(n: i32) -> &i32 { //~ error[T0016]: a reference or slice result needs a reference or slice parameter to borrow from
+    return &n;
+}
+
+fn NoMutableSource(a: &i32) -> &mut i32 { //~ error[T0016]: a `&mut` reference or slice result needs a `&mut` reference or slice parameter to borrow from
+    return a;
+}
+
+fn NotReferenceResult(a: &i32) -> i32 in a { //~ error[T0016]: `in` needs a reference or slice result
+    return a.*;
+}
+
+fn UnknownName(a: &i32) -> &i32 in c { //~ error[T0002]: `c` is not a parameter
+    return a;
+}
+
+fn ValueSource(a: &i32, n: i32) -> &i32 in n { //~ error[T0016]: `n` is not a reference or a slice, so a result cannot borrow from it
+    return a;
+}
+
+fn SharedSourceOfMut(a: &i32, b: &mut i32) -> &mut i32 in (a, b) { //~ error[T0016]: a `&mut` result cannot borrow from shared reference `a`
+    return b;
+}
+
+fn NamedTwice(a: &i32) -> &i32 in (a, a) { //~ error[T0016]: `a` is named twice in `in`
+    return a;
+}

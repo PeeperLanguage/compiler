@@ -1,0 +1,5 @@
+type Bad = Missing; //~ error[T0002]: unknown type `Missing`
+
+fn f(const n: Bad) {}
+
+fn main() {}

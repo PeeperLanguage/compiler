@@ -1,0 +1,16 @@
+// A field is read from a struct value by a name its struct declares; structs
+// have no operators.
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+fn main() {
+    let p = Point.{ x = 1, y = 2 };
+    let a = p.w; //~ error[T0010]: `Point` has no field `w`
+    let b = p.xx; //~ error[T0010]: `Point` has no field `xx`
+    //~ help: did you mean `x`?
+    let number = 3;
+    let c = number.x; //~ error[T0004]: `i32` has no fields
+    let same = p == p; //~ error[T0004]: operator `==` cannot be applied to `Point`
+}

@@ -1,6 +1,0 @@
-name = "mir_slicing"
-build = "program"
-
-[test]
-mode = "mir"
-outcome = "success"

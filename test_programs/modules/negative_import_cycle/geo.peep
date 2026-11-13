@@ -1,0 +1,2 @@
+import "negative_import_cycle:shapes"; //~ error[M0002]: modules import each other in a cycle
+//~ label: `negative_import_cycle:geo` imports `negative_import_cycle:shapes`

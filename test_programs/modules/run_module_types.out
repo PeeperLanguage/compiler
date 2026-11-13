@@ -1,0 +1,11 @@
+literal: 7
+field: 1 2 2.5
+alias: 2.5
+result: 4 5
+parameter: 9
+reference: 2
+slice: 3
+pointer: 4
+element: 6
+as: 3
+local alias: 5

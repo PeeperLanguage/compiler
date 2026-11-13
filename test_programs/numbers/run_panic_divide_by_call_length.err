@@ -1,0 +1,2 @@
+panic: division by zero
+  --> src/main.peep:13:13

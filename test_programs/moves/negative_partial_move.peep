@@ -1,0 +1,14 @@
+// A field whose type moves cannot be moved out of its struct, even a field
+// of a field; reading a field that copies is fine.
+struct Point { x: i32, y: i32 }
+struct Line { start: Point, end: Point }
+struct Shape { outline: Line }
+
+fn main() {
+    let line = Line.{ start = Point.{ x = 1, y = 2 }, end = Point.{ x = 3, y = 4 } };
+    let start = line.start; //~ error[T0035]: cannot move a field out of its struct
+    //~ help: move the whole struct, or read only parts that copy
+    let x = line.end.x;
+    let shape = Shape.{ outline = line };
+    let end = shape.outline.end; //~ error[T0035]: cannot move a field out of its struct
+}

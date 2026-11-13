@@ -1,0 +1,15 @@
+//@ run
+//@ exit-code: 101
+
+// A step known only when the program runs is checked as in `for`: zero would
+// never reach the end.
+fn make(step: u32) -> [2]i32 {
+    return [2]i32{(0..4:step)...};
+}
+
+fn main() {
+    let first = make(2);
+    println("first:", first[0], first[1]);
+    let second = make(0);
+    println("second:", second[0]);
+}

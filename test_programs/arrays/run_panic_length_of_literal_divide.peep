@@ -1,0 +1,10 @@
+//@ run
+//@ exit-code: 101
+
+// An array literal's length is known at compile time, but its parts are
+// still computed, so a division by zero in one fails.
+fn main() {
+    let zero: i32 = 0;
+    println("before");
+    println([2]i32{1, 7 / zero}.len);
+}

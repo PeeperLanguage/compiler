@@ -50,8 +50,8 @@ check "feature boundary" bash -c \
     ! grep -nE \"^(\$features)\\b\" crates/{base,core,frontend,middle,backend,features}/*/Cargo.toml"
 check "tests" cargo test --workspace --no-fail-fast
 check "bundle" bash scripts/build.sh
-check "fixtures on the bundle" env PEEPER="$PWD/build/bin/peeper" \
-    cargo test -p peeper --test fixtures
+check "test programs on the bundle" env PEEPER="$PWD/build/bin/peeper" \
+    cargo test -p peeper --test test_programs
 if [ "$(uname -s)" = Linux ]; then
     # shortcut: run on Linux only, where its `lli` (calling printf from the
     # JIT) was tried; move it out of this block once CI shows it on the others.

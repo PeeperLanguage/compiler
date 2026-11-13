@@ -26,7 +26,7 @@ them. Read the named section before acting on a line.
   internal invariants.
 - §8 `cargo fmt`, clippy clean with `-D warnings`, no global mutable state.
 - §9 Tests near the change and a regression test; language changes need
-  positive and negative `x_test` fixtures, validated with `build/bin/peeper`,
+  positive and negative test programs in `test_programs/`, validated with `build/bin/peeper`,
   on each affected target; run `bash scripts/check.sh`.
 - §10 Commit only with approval; imperative subject under 72 chars; one
   logical change per commit; `feature/` or `fix/` branches. §10.1: the README self-review marker is

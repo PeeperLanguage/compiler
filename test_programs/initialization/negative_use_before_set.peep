@@ -1,0 +1,49 @@
+//@ library
+
+fn NeverSet() -> i32 {
+    let a: i32; //~ label: declared here without a value
+    return a; //~ error[T0039]: `a` is used before it is set
+    //~ label: `a` is not set yet here
+}
+
+fn SetOnOnePath(flag: bool) -> i32 {
+    let b: i32;
+    if flag {
+        b = 1;
+    }
+    return b; //~ error[T0039]: `b` is used before it is set
+    //~ label: `b` is not set on every path to here
+    //~ help: set `b` on every path before this use, or give it a value where it is declared
+}
+
+// `c` is set on every path that reaches its uses, since the other path returns;
+// `d` is not.
+fn SetBeforeReturn(flag: bool) -> i32 {
+    let mut c: i32;
+    if flag {
+        c = 1;
+    } else {
+        return 0;
+    }
+    if flag {
+        return c;
+    }
+    let d: i32;
+    if flag {
+        d = 1;
+    } else {
+        Touch(c);
+    }
+    return d; //~ error[T0039]: `d` is used before it is set
+    //~ label: `d` is not set on every path to here
+}
+
+fn Touch(value: i32) {}
+
+// Each variable is reported once.
+fn ReportedOnce() -> i32 {
+    let e: i32;
+    Touch(e); //~ error[T0039]: `e` is used before it is set
+    Touch(e);
+    return e;
+}

@@ -66,7 +66,7 @@ Inspect baseline behavior when distinguishing a regression from an existing gap.
 Keep temporary probes outside tracked source; add no production instrumentation.
 Respect active plan's validation environment. Do not rerun unchanged expensive suites
 without new edits, failures or unresolved evidence. Clearly attribute inherited results.
-For language behavior, require appropriate `x_test/` coverage and bundled compiler;
+For language behavior, require appropriate `test_programs/` coverage and bundled compiler;
 for ABI/backend changes, distinguish target object validation from native execution.
 Verify docs/skill edits with links, discovery/ignore rules and diff checks as relevant.
 

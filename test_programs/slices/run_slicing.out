@@ -1,0 +1,9 @@
+constant: 5 9 3 11 21
+run time: 18 15 3 7
+empty: 0 0 0 0
+widths: 18 2 6
+written: 3 2 0 0 9 9
+as shared: 2 5
+of slices: 14 12 3 2 0 18
+through slices: 6 4 6
+resliced: 1 0 8 4 7 6

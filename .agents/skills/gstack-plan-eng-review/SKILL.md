@@ -51,7 +51,7 @@ This skill needs only repository tools; no global gstack scripts or services.
 
 ### Tests
 
-- Map acceptance and rejection cases to existing package tests and `x_test/`.
+- Map acceptance and rejection cases to existing package tests and `test_programs/`.
 - Include a red baseline for bugs, preserved neighboring syntax/diagnostics,
   source locations and bindings, and downstream lowerability/runtime evidence.
 - Distinguish native execution from cross-target object validation. Cover affected

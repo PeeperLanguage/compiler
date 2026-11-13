@@ -1,0 +1,90 @@
+// What `...` rejects: a `...` parameter not last or in an `extern` function,
+// a spread where no array or `...` parameter takes it, a slice spread beside
+// other arguments, an array or slice passed without `...`, a shared slice for
+// a `...mut T`, and what any argument rejects: a value moved twice, a result
+// that borrows from a temporary array returned past it, writing to
+// what a result borrows, and `&mut` of what cannot be written. A call does not
+// run in a constant, as building a slice does not run at compile time.
+struct Point { row: i32 }
+
+fn sum(values: ...i32) -> i32 {
+    return 0;
+}
+
+fn bump(values: ...mut i32) {}
+
+fn rows(points: ...Point) {}
+
+fn most(first: i32, rest: ...i32) -> i32 {
+    return first;
+}
+
+fn two(a: i32, b: i32) {}
+
+fn largest(values: ...i32) -> &i32 in values {
+    return &values[0];
+}
+
+fn not_last(values: ...i32, last: i32) {} //~ error[P0005]: a `...` parameter must be the last one
+
+fn twice(first: ...i32, second: ...i32) {} //~ error[P0005]: a `...` parameter must be the last one
+
+#[extern("printf")]
+fn printf(format: &cstr, values: ...i32); //~ error[P0005]: an `extern` function cannot have a `...` parameter
+
+fn spreads(a: [2]i32, s: &[]i32, r: range[i32]) {
+    two(a...); //~ error[T0006]: `two` takes 2 arguments, but 1 was given
+    //~ error[T0004]: `...` spreads into an array literal or a `...` parameter
+    let unknown = missing(a...); //~ error[T0002]: unknown name `missing`
+    let first = sum(s..., 2); //~ error[T0001]: a slice has a length known only when the program runs, so a call cannot build an array around it; pass a slice as the only argument for `...`
+    let mixed = sum(1, s...); //~ error[T0001]: a slice has a length known only when the program runs, so a call cannot build an array around it; pass a slice as the only argument for `...`
+    let runtime = sum(r...); //~ error[T0001]: a range needs constant ends and step
+    let other = sum(1, [2]i64{1, 2}...); //~ error[T0001]: `...` here spreads a range, an array or a slice of `i32`, found `[2]i64`
+    let wrong = sum(true...); //~ error[T0001]: `...` here spreads a range, an array or a slice of `i32`, found `bool`
+}
+
+fn without_spread(a: [2]i32, s: &[]i32) {
+    let by_array = sum(a); //~ error[T0001]: mismatched types: expected `i32`, found `[2]i32`
+    let by_slice = sum(s); //~ error[T0001]: mismatched types: expected `i32`, found `&[]i32`
+    let few = most(); //~ error[T0006]: `most` takes at least 1 argument, but 0 were given
+    bump(s...); //~ error[T0001]: mismatched types: expected `&mut []i32`, found `&[]i32`
+}
+
+fn moved() {
+    let p = Point.{ row = 1 };
+    rows(p, p); //~ error[T0034]: `p` is used after it was moved
+}
+
+fn array_moved() -> i32 {
+    let points = [2]Point{ .{ row = 1 }, .{ row = 2 } };
+    rows(points...);
+    return points[0].row; //~ error[T0034]: `points` is used after it was moved
+}
+
+fn slice_of_moved(points: &[]Point) {
+    rows(1, points...); //~ error[T0001]: mismatched types: expected `Point`, found `i32`
+    //~ error[T0035]: cannot move an element out of a slice
+}
+
+fn returned(kept: &i32) -> &i32 {
+    return largest(1, 2); //~ error[T0036]: returns a reference into a temporary value, which is gone once the function returns
+}
+
+fn returned_copy(a: [2]i32, kept: &i32) -> &i32 {
+    return largest(a...); //~ error[T0036]: returns a reference into a temporary value, which is gone once the function returns
+}
+
+fn changed_while_held() -> i32 {
+    let mut a = [2]i32{1, 2};
+    let r = largest(&a...);
+    a[0] = 5; //~ error[T0037]: `a` is changed while a slice of it is still in use
+    return r.*;
+}
+
+fn immutable(a: [2]i32) {
+    bump(&mut a...); //~ error[T0007]: cannot mutably borrow immutable `a`
+}
+
+const TOTAL: i32 = sum(1, 2); //~ error[T0004]: this value cannot be worked out at compile time yet
+
+fn main() {}

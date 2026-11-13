@@ -1,0 +1,14 @@
+type Meters = i64;
+type Flag = bool;
+
+fn measure(mut length: Meters) -> Meters {
+    length = true; //~ error[T0001]: mismatched types: expected `Meters (aka i64)`, found `bool`
+    return; //~ error[T0016]: `return` needs a value of type `Meters (aka i64)`
+}
+
+fn main() {
+    let mut ready: Flag = 1; //~ error[T0001]: mismatched types: expected `Flag (aka bool)`, found `i32`
+    let plain: bool = 2; //~ error[T0001]: mismatched types: expected `bool`, found `i32`
+    measure(true); //~ error[T0001]: mismatched types: expected `Meters (aka i64)`, found `bool`
+    ready = 5i64; //~ error[T0001]: mismatched types: expected `Flag (aka bool)`, found `i64`
+}

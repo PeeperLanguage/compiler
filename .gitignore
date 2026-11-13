@@ -9,8 +9,8 @@ a.out
 app
 *.hir
 *.mir
-!x_test/*/expected.mir
-!x_test/*/expected.ll
+!test_programs/**/*.mir
+!test_programs/**/*.ll
 *.
 *.ast.json
 _gen
@@ -47,5 +47,4 @@ test_local
 !.github/
 !.github/workflows/
 !.github/workflows/*.yml
-x_test/owned_pointer_carrier/main
 /target

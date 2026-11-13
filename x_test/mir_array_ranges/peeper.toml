@@ -1,6 +1,0 @@
-name = "mir_array_ranges"
-build = "program"
-
-[test]
-mode = "mir"
-outcome = "success"

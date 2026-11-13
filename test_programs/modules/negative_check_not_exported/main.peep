@@ -1,0 +1,5 @@
+import "negative_check_not_exported:tools";
+
+fn main() {
+    tools::helper(); //~ error[M0004]: `helper` is not exported from `tools`
+}

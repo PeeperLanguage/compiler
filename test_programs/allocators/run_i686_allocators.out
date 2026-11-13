@@ -1,0 +1,13 @@
+arena: true true true
+arena list: 21
+arena reset: true 28
+arena released: true
+pool: true true true
+pool reuse: true
+pool list: 6
+pool of a wrong align: 0
+pool of a huge chunk: true
+stack: true true
+stack list: 55
+heap list: 55 true
+freeing out of order

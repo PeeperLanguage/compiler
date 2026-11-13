@@ -1,0 +1,7 @@
+struct Point {
+    x: i32, //~ label: first declared here
+    y: i32,
+    x: i64, //~ error[T0003]: `x` is already declared in this struct
+}
+
+fn main() {}

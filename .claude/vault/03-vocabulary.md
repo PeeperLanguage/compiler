@@ -71,11 +71,13 @@ field). Loan: one `borrow`, then one parameter loan per parameter.
 Two-phase: a `&mut` used once, as a call argument, is reserved until the
 call.
 
-## Fixtures (`x_test/*/peeper.toml`)
+## Test programs (`test_programs/<subject>/`)
 
-Modes: `check` (95), `run` (90), `mir` (19, with `expected.mir`), `ll` (13,
-with `expected.ll`). `negative_*` fixtures expect errors; `warn_*` warnings;
-`run_i686_*` build for `i686-linux`. `PEEPER_BLESS=1` rewrites expected files.
+One `.peep` file (or folder) each; `//@` lines say the mode (`run`,
+`dump: mir`, `dump: ll`, else check), `library`, `target`, `release`,
+`exit-code`; `//~` marks each diagnostic on its line. Beside it: `.out`,
+`.err`, `.mir`, `.ll`, which `PEEPER_BLESS=1` rewrites. The
+`test_programs` crate's documentation is the reference.
 
 ## Words the code avoids (`RULES.md` §5)
 

@@ -1,0 +1,35 @@
+//@ library
+
+// A block declares each name once. The parameters are in the body's
+// outermost block, so a `let` there cannot reuse a parameter's name.
+
+fn SameBlock() -> i32 {
+    let mut total = 0; //~ label: first declared here
+    let total = total + 1; //~ error[T0003]: `total` is already declared in this block
+    //~ label: declared again here
+    return total;
+}
+
+fn ParameterAgain(mut limit: i32) -> i32 {
+    let limit = limit + 1; //~ error[T0003]: `limit` is already declared in this block
+    return limit;
+}
+
+fn ConstantAgain() -> u8 {
+    const Size: u8 = 1;
+    let Size: u8 = 2; //~ error[T0003]: `Size` is already declared in this block
+    return Size;
+}
+
+fn InnerBlockAgain(ready: bool) -> i32 {
+    if ready {
+        let inner = 1;
+        let inner = 2; //~ error[T0003]: `inner` is already declared in this block
+        return inner;
+    }
+    return 0;
+}
+
+fn ParametersTwice(value: i32, value: i64) -> i32 { //~ error[T0003]: `value` is already declared in this block
+    return value;
+}

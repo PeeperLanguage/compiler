@@ -1,0 +1,49 @@
+// What references cannot do yet, or ever: write or lend `&mut` through `&`,
+// or lend `&mut` of an immutable variable.
+struct Point { x: i32, y: i32 }
+
+fn first(point: &Point) -> &i32 {
+    return &point.x;
+}
+
+fn plus(count: &i32) -> i32 {
+    let negated = -count; //~ error[T0004]: operator `-` cannot be applied to `&i32`
+    //~ fixed: let negated = -count.*;
+    //~ fix: add `.*` to use the value it points to
+    return count + 1; //~ error[T0004]: operator `+` cannot be applied to `&i32`
+    //~ fixed: return count.* + 1;
+}
+
+fn take(value: i32) -> i32 {
+    return value;
+}
+
+fn reads(count: &i32) -> i32 {
+    let wide: i64 = count; //~ error[T0001]: mismatched types: expected `i64`, found `&i32`
+    //~ fixed: let wide: i64 = count.*;
+    let sum = 1 + count; //~ error[T0001]: mismatched types: expected `i32`, found `&i32`
+    //~ fixed: let sum = 1 + count.*;
+    let called = take(count); //~ error[T0001]: mismatched types: expected `i32`, found `&i32`
+    //~ fixed: let called = take(count.*);
+    let shifted = 1 << count; //~ error[T0004]: a shift count must be an integer, found `&i32`
+    //~ fixed: let shifted = 1 << count.*;
+    return count; //~ error[T0001]: mismatched types: expected `i32`, found `&i32`
+    //~ fixed: return count.*;
+}
+
+fn main() {
+    let p = Point.{ x = 1, y = 2 };
+    let r = &p;
+    r.x = 3; //~ error[T0007]: cannot assign to `r.x` through shared reference `r`
+    //~ help: make `r` a `&mut` reference
+    let m = &mut r.y; //~ error[T0007]: cannot mutably borrow `r.y` through shared reference `r`
+    let q = &mut p; //~ error[T0007]: cannot mutably borrow immutable `p`
+    let n = 5;
+    let not_a_reference = n.*; //~ error[T0004]: `.*` needs a reference or a typed raw pointer, found `i32`
+    let later: i32;
+    later = 1;
+    let set_later = &mut later; //~ error[T0007]: cannot mutably borrow immutable `later`
+    let sum = &n + 1; //~ error[T0004]: operator `+` cannot be applied to `&i32`
+    //~ fixed: let sum = (&n).* + 1;
+    let shifted = &p + 1; //~ error[T0004]: operator `+` cannot be applied to `&Point`
+}

@@ -1,6 +1,0 @@
-name = "check_discard_parameter"
-build = "program"
-
-[test]
-mode = "check"
-outcome = "success"

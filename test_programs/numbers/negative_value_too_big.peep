@@ -1,0 +1,14 @@
+//@ target: x86_64-linux
+
+// A value takes at most `isize::MAX` bytes: no copy of a bigger one could
+// count its bytes.
+struct Halves { //~ error[P0011]: `Halves` is too big for x86_64-linux, where a value takes at most 9223372036854775807 bytes
+    a: [4611686018427387904]u8,
+    b: [4611686018427387904]u8,
+}
+
+fn takes(values: [18446744073709551615]u64) {} //~ error[P0011]: `[18446744073709551615]u64` is too big for x86_64-linux, where a value takes at most 9223372036854775807 bytes
+
+fn fits(values: [9223372036854775807]u8) {}
+
+fn main() {}

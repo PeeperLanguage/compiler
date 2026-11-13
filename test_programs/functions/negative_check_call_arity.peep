@@ -1,0 +1,9 @@
+fn add(a: i32, b: i32) -> i32 {
+    return a + b;
+}
+
+fn main() {
+    let sum = add(1, 2, 3); //~ error[T0006]: `add` takes 2 arguments, but 3 were given
+    let count = 4;
+    count(); //~ error[T0005]: `count` is not a function
+}

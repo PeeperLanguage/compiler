@@ -1,0 +1,8 @@
+//@ run
+//@ exit-code: 1
+
+fn f() -> Missing {} //~ error[T0002]: unknown type `Missing`
+
+fn main() {
+    f();
+}

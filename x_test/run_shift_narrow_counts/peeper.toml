@@ -1,8 +1,0 @@
-name = "run_shift_narrow_counts"
-build = "program"
-
-[test]
-mode = "run"
-outcome = "exit_code"
-exit_code = 0
-stdout_contains = ["i5: 32 2\n", "i8: 16\n", "i7: 32\n"]

@@ -1,0 +1,10 @@
+// Each copy of `Grow` makes two copies for new types: without a limit,
+// twice as many at each depth, so the first copy too deep stops them all.
+fn Grow(const T: type) {
+    Grow(*T); //~ error[T0013]: `Grow` makes a new copy of itself inside each copy, without end: copies nest 64 deep here
+    Grow([1]T);
+}
+
+fn main() {
+    Grow(i32);
+}

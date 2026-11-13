@@ -1,0 +1,22 @@
+// Only `rawptr + usize` moves an address; an address is not known when
+// compiling.
+const Moved: rawptr = none + 8; //~ error[T0004]: an address is known only when the program runs
+const Ran = Offset(); //~ error[T0044]: this call cannot be evaluated at compile time
+
+fn Offset() -> i32 {
+    let at: rawptr = none;
+    let moved = at + 8; //~ label: a pointer offset cannot run at compile time, as it could read an address
+    return 1;
+}
+
+fn main() {
+    let raw: rawptr = none;
+    let typed: *i32 = none;
+    let count: usize = 1;
+    let small: i32 = 1;
+    let a = typed + count; //~ error[T0004]: operator `+` cannot be applied to `*i32`
+    let b = count + raw; //~ error[T0001]: mismatched types: expected `u64`, found `rawptr`
+    let c = raw - count; //~ error[T0004]: operator `-` cannot be applied to `rawptr`
+    let d = raw + raw; //~ error[T0001]: mismatched types: expected `u64`, found `rawptr`
+    let e = raw + small; //~ error[T0001]: mismatched types: expected `u64`, found `i32`
+}

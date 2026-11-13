@@ -1,0 +1,2 @@
+panic: array literal needs exactly 3 values
+  --> src/main.peep:12:13
