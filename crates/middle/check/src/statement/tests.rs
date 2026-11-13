@@ -82,19 +82,14 @@ fn statements_and_operators() {
     );
 }
 
-/// A range's literal start takes the end's type; its variables are
-/// declared in the body. Its step is the ends' type made unsigned, 1
-/// when not written.
+/// A loop without a condition runs until a `break`; one with a condition
+/// while it holds.
 #[test]
 fn loops() {
     let (bodies, reported) = bodies(
         "fn f(n: i64) {
                 for { break; }
                 for n > 0 { continue; }
-                for i in 0..n { let j = i; }
-                for 0..3 { }
-                for k in 1..=n { }
-                for i, m in n..0:2 { }
             }",
     );
     assert!(reported.is_empty(), "{reported:?}");
@@ -105,15 +100,6 @@ fn loops() {
     }
     for (n.0 GreaterThan 0:i64) {
         continue
-    }
-    for i.1 in 0:i64..n.0 by 1:u64 {
-        let j.2 = i.1
-    }
-    for 0:i32..3:i32 by 1:u32 {
-    }
-    for k.3 in 1:i64..=n.0 by 1:u64 {
-    }
-    for i.4, m.5 in n.0..0:i64 by 2:u64 {
     }
 "]
     );

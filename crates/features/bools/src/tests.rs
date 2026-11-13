@@ -42,6 +42,10 @@ impl Language for Bools {
     fn string_kind(_: &BoolLiteral) -> Option<ast::StringKind> {
         None
     }
+
+    fn written_range(_: &BoolLiteral) -> Option<ast::WrittenRange<Bools>> {
+        None
+    }
 }
 
 static RULES: Rules<Bools> = {

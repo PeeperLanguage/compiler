@@ -48,6 +48,21 @@ pub trait Language: Copy + Debug + 'static {
     /// The kind of string literal the feature expression `expr` is, if it
     /// is one.
     fn string_kind(expr: &Self::Expr) -> Option<StringKind>;
+
+    /// The parts of the feature expression `expr`, if it is a written range.
+    fn written_range(expr: &Self::Expr) -> Option<WrittenRange<Self>>;
+}
+
+/// A range as written: `start..end`, or `start..=end` when `inclusive`,
+/// stepping by `start..end:step`, inside `[ ]`, after `in` or as an array
+/// literal's value; an end may be left out before a `]`. Slicing reads it,
+/// so it is the core's.
+#[derive(Clone, Copy, Debug)]
+pub struct WrittenRange<L: Language> {
+    pub inclusive: bool,
+    pub start: Option<Id<Expr<L>>>,
+    pub end: Option<Id<Expr<L>>>,
+    pub step: Option<Id<Expr<L>>>,
 }
 
 /// A string literal's kind: `"..."` is a `str`, `c"..."` a `cstr`.
@@ -158,6 +173,14 @@ impl<L: Language> Tree<L> {
             expr = inner;
         }
         expr
+    }
+
+    /// The parts of `expr`, if it is a written range.
+    pub fn written_range(&self, expr: Id<Expr<L>>) -> Option<WrittenRange<L>> {
+        match &self.exprs[expr] {
+            Expr::Feature(feature) => L::written_range(feature),
+            _ => None,
+        }
     }
 
     /// Adds `node` with `span` to its arena.
@@ -502,14 +525,6 @@ pub enum Expr<L: Language> {
         value: Id<Expr<L>>,
         index: Id<Expr<L>>,
     },
-    /// `a..b`, or `a..=b` when `inclusive`, inside `[ ]`, after `in` or as
-    /// an array literal's value, with `a..b:step` stepping by more than one
-    Range {
-        inclusive: bool,
-        start: Option<Id<Expr<L>>>,
-        end: Option<Id<Expr<L>>>,
-        step: Option<Id<Expr<L>>>,
-    },
     /// `Enum::Variant with payload`; the case is a `Type::Path`
     VariantLiteral {
         case: Id<Type<L>>,
@@ -564,7 +579,6 @@ impl<L: Language> Expr<L> {
             Expr::Is { .. } => Precedence::Equality,
             // These end in an expression read at the lowest precedence.
             Expr::OrElse { .. } | Expr::VariantLiteral { .. } => Precedence::Lowest,
-            Expr::Range { .. } => Precedence::Range,
             Expr::Name
             | Expr::Path(_)
             | Expr::Number

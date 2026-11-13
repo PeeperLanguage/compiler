@@ -43,6 +43,10 @@ impl Language for Structs {
     fn string_kind(_: &StructLiteral<Structs>) -> Option<ast::StringKind> {
         None
     }
+
+    fn written_range(_: &StructLiteral<Structs>) -> Option<ast::WrittenRange<Structs>> {
+        None
+    }
 }
 
 static RULES: Rules<Structs> = {

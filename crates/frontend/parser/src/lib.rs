@@ -178,7 +178,7 @@ impl<L: Grammar> Parser<L> {
         self.tokens[self.current()]
     }
 
-    fn at(&self, kind: TokenKind) -> bool {
+    pub fn at(&self, kind: TokenKind) -> bool {
         self.tok().kind == kind
     }
 

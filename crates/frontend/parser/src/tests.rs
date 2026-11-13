@@ -4,6 +4,7 @@ use syntax::ast::Decl;
 use syntax::ast::Field;
 use syntax::ast::StringKind;
 use syntax::ast::Type;
+use syntax::ast::WrittenRange;
 use syntax::operators::Precedence;
 
 use super::*;
@@ -34,6 +35,10 @@ impl Language for Bare {
     }
 
     fn string_kind(expr: &Infallible) -> Option<StringKind> {
+        match *expr {}
+    }
+
+    fn written_range(expr: &Infallible) -> Option<WrittenRange<Bare>> {
         match *expr {}
     }
 }
@@ -477,12 +482,6 @@ fn separators() {
     one_error(
         "fn f() {\n    let v = [3]i32{4, 5, 6;\n    return;\n}",
         "expected `}`, found `;`",
-        None,
-    );
-    // Only before `]` may a range leave out its end.
-    one_error(
-        "fn f() { for i in 0.. { } }",
-        "expected expression, found `{`",
         None,
     );
 }

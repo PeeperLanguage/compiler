@@ -14,6 +14,7 @@ use model::thir::ExprKind;
 use source::Span;
 use syntax::ast;
 use syntax::ast::Ident;
+use syntax::ast::WrittenRange;
 
 use crate::Checked;
 use crate::builder::ThirBuilder;
@@ -115,7 +116,7 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
         span: Span,
     ) -> Expr {
         let tree = &self.checker.module().ast;
-        if let ast::Expr::Range { .. } = tree.exprs[index] {
+        if tree.written_range(index).is_some() {
             let message = format!("slicing borrows; write `&{}`", tree.file.slice(span));
             self.checker
                 .error(diagnostics::INVALID_OPERATION, message, span);
@@ -208,12 +209,12 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
         else {
             unreachable!("the caller found an index")
         };
-        let ast::Expr::Range {
+        let Some(WrittenRange {
             inclusive,
             start,
             end,
             step,
-        } = tree.exprs[range]
+        }) = tree.written_range(range)
         else {
             unreachable!("the caller found a written range")
         };

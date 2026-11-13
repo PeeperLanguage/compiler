@@ -91,17 +91,6 @@ fn grouped(t: &Tree<Bare>, id: Id<Expr<Bare>>) -> String {
         Expr::Pipe { value, call } => {
             format!("({} |> {})", grouped(t, value), grouped(t, call))
         }
-        Expr::Range {
-            inclusive,
-            start,
-            end,
-            step,
-        } => {
-            let part = |part: Option<Id<Expr<Bare>>>| part.map_or(String::new(), |e| grouped(t, e));
-            let op = if inclusive { "..=" } else { ".." };
-            let step = step.map_or(String::new(), |e| format!(":{}", grouped(t, e)));
-            format!("({}{op}{}{step})", part(start), part(end))
-        }
         Expr::Unary { value, .. } | Expr::Reference { value, .. } => {
             let (span, inner) = (t.exprs.span(id), t.exprs.span(value));
             let prefix = t.file.text[span.start as usize..inner.start as usize].trim();
@@ -157,12 +146,7 @@ fn precedence() {
         ("a || b orelse c", "((a || b) orelse c)"),
         ("a |> f(b) |> g()", "((a |> f(b)) |> g())"),
         ("a + b |> f()", "((a + b) |> f())"),
-        ("x.y.z[0][i..j]", "x.y.z[0][i..j]"),
-        ("a + b..c * d", "((a + b)..(c * d))"),
-        ("a orelse b..c", "(a orelse (b..c))"),
-        ("a..b orelse c", "(a..(b orelse c))"),
-        ("a..=b:c + d", "(a..=b:(c + d))"),
-        ("a..b..c", "((a..b)..c)"),
+        ("x.y.z[0][i]", "x.y.z[0][i]"),
         ("-r.* * r.x.*", "(-r.* * r.x.*)"),
         ("&mut r.*.x", "&mut r.*.x"),
     ] {
@@ -179,9 +163,9 @@ fn parses_expressions() {
     b'y';
     none;
     Shape::Line with Box<i32>::new(1);
-    [_]u8{ 1, 2, 4..=8:2..., (0..3)..., a... };
+    [_]u8{ 1, 2, (b)..., a... };
     sum(1, a..., &mut b...);
-    println(items[1..=n]);
+    println(items[n]);
 }
 "#;
     let want = r#"module
@@ -214,15 +198,8 @@ fn parses_expressions() {
           number literal 1
           number literal 2
           spread
-            range ..=
-              number literal 4
-              number literal 8
-              number literal 2
-          spread
             parentheses
-              range ..
-                number literal 0
-                number literal 3
+              name reference b
           spread
             name reference a
       expression statement
@@ -238,9 +215,7 @@ fn parses_expressions() {
         print expression println
           index expression
             name reference items
-            range ..=
-              number literal 1
-              name reference n
+            name reference n
 "#;
     assert!(messages(text).is_empty());
     assert_eq!(dump_of(text), want);
@@ -249,7 +224,6 @@ fn parses_expressions() {
 #[test]
 fn expression_errors() {
     for (text, message) in [
-        ("a[1..=];", "inclusive range requires an end bound"),
         ("a is b;", "enum case must use a fully named path"),
         ("a |> b;", "pipe target must be a free-function call"),
         ("a |> b.c();", "pipe cannot call a method"),

@@ -23,6 +23,7 @@ use structs::StructType;
 use syntax::ast;
 use syntax::ast::Language;
 use syntax::ast::StringKind;
+use syntax::ast::WrittenRange;
 use syntax::operators::Precedence;
 use text::StringLiteral;
 
@@ -38,6 +39,7 @@ pub enum FeatureExpr {
     StructLiteral(StructLiteral<Peeper>),
     RawAddress(RawAddress<Peeper>),
     String(StringLiteral),
+    Range(WrittenRange<Peeper>),
 }
 
 impl From<BoolLiteral> for FeatureExpr {
@@ -61,6 +63,12 @@ impl From<StructLiteral<Peeper>> for FeatureExpr {
 impl From<StringLiteral> for FeatureExpr {
     fn from(expr: StringLiteral) -> FeatureExpr {
         FeatureExpr::String(expr)
+    }
+}
+
+impl From<WrittenRange<Peeper>> for FeatureExpr {
+    fn from(expr: WrittenRange<Peeper>) -> FeatureExpr {
+        FeatureExpr::Range(expr)
     }
 }
 
@@ -107,6 +115,7 @@ impl Language for Peeper {
                 Precedence::Call
             }
             FeatureExpr::Cast(_) => Precedence::Cast,
+            FeatureExpr::Range(_) => Precedence::Range,
             // `@` reads its place at prefix precedence.
             FeatureExpr::RawAddress(_) => Precedence::Prefix,
         }
@@ -138,6 +147,18 @@ impl Language for Peeper {
             FeatureExpr::String(literal) => Some(literal.kind),
             FeatureExpr::Bool(_)
             | FeatureExpr::Cast(_)
+            | FeatureExpr::Range(_)
+            | FeatureExpr::StructLiteral(_)
+            | FeatureExpr::RawAddress(_) => None,
+        }
+    }
+
+    fn written_range(expr: &FeatureExpr) -> Option<WrittenRange<Peeper>> {
+        match expr {
+            FeatureExpr::Range(range) => Some(*range),
+            FeatureExpr::Bool(_)
+            | FeatureExpr::Cast(_)
+            | FeatureExpr::String(_)
             | FeatureExpr::StructLiteral(_)
             | FeatureExpr::RawAddress(_) => None,
         }
@@ -151,6 +172,7 @@ static RULES: Rules<Peeper> = {
     casts::parse::rows(&mut rules);
     structs::parse::rows(&mut rules);
     interfaces::parse::rows(&mut rules);
+    ranges::parse::rows(&mut rules);
     raw_pointers::parse::rows(&mut rules);
     text::parse::rows(&mut rules);
     rules
@@ -175,6 +197,7 @@ impl Checked for Peeper {
             FeatureExpr::StructLiteral(literal) => {
                 structs::check::check_literal(builder, literal, span, expected)
             }
+            FeatureExpr::Range(range) => ranges::check::check_range(builder, range, span, expected),
             FeatureExpr::String(literal) => text::check::check_literal(builder, literal, span),
             FeatureExpr::RawAddress(address) => {
                 raw_pointers::check::check_address(builder, address, span)

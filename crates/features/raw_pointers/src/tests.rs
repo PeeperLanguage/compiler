@@ -43,6 +43,10 @@ impl Language for RawPointers {
     fn string_kind(_: &RawAddress<RawPointers>) -> Option<ast::StringKind> {
         None
     }
+
+    fn written_range(_: &RawAddress<RawPointers>) -> Option<ast::WrittenRange<RawPointers>> {
+        None
+    }
 }
 
 static RULES: Rules<RawPointers> = {

@@ -450,58 +450,10 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
         Some((spread, Ok(count.as_slice()[0]))) // it fits a `usize`
     }
 
-    /// The range `start..end`, or `..=`, stepping by `start..end:step`, at
-    /// `range`: a `range[T]` of its ends' integer type `T`. A literal end
-    /// without a suffix takes the other end's type, or `T` when a
-    /// `range[T]` is `expected`; the step is of the range type's step type
-    /// and not a constant zero (`check_range_step`). A range without both
-    /// ends is not supported yet.
-    pub(super) fn check_range(
-        &mut self,
-        range: Id<ast::Expr<L>>,
-        expected: Option<TypeId>,
-    ) -> Expr {
-        let tree = &self.checker.module().ast;
-        let span = tree.exprs.span(range);
-        let ast::Expr::Range {
-            inclusive,
-            start: Some(start),
-            end: Some(end),
-            step,
-        } = tree.exprs[range]
-        else {
-            self.checker.not_supported(span, "ranges without both ends");
-            return Expr::INVALID;
-        };
-        let hint = expected.and_then(|ty| match self.checker.types[ty] {
-            Type::Range { element, .. } => Some(element),
-            _ => None,
-        });
-        let (start, end) = self.check_range_ends(start, end, hint);
-        let ty = self.checker.range_type(self.body.exprs[start].ty, span);
-        let step_type = match self.checker.types[ty] {
-            Type::Range { step, .. } => step,
-            _ => TypeId::INVALID,
-        };
-        let step = self.check_range_step(step, step_type, span);
-        if ty == TypeId::INVALID {
-            return Expr::INVALID;
-        }
-        Expr {
-            ty,
-            kind: ExprKind::Range {
-                start,
-                end,
-                step,
-                inclusive,
-            },
-        }
-    }
-
     /// A range's or slice's ends `start` and `end`, of one type: a literal
     /// without a suffix takes the other end's type, or `hint` when both are
     /// such literals.
-    pub(super) fn check_range_ends(
+    pub fn check_range_ends(
         &mut self,
         start: Id<ast::Expr<L>>,
         end: Id<ast::Expr<L>>,

@@ -84,41 +84,6 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
         }
     }
 
-    /// The step of a range, written `step` or else 1 at `range_span`, of
-    /// the range type's step type `step_type` (`Types::range`), and not a
-    /// constant zero. With an invalid `step_type`, after an error in the
-    /// ends, it is checked only for its own errors.
-    pub(crate) fn check_range_step(
-        &mut self,
-        step: Option<Id<ast::Expr<L>>>,
-        step_type: TypeId,
-        range_span: Span,
-    ) -> Id<Expr> {
-        let Some(step) = step else {
-            let one = match self.checker.types[step_type] {
-                Type::Integer(unsigned) => Expr {
-                    ty: step_type,
-                    kind: ExprKind::Constant(Value::Integer(Limbs::new(unsigned.bits, &[1]))),
-                },
-                _ => Expr::INVALID,
-            };
-            return self.body.add(one, range_span);
-        };
-        let step = match step_type {
-            TypeId::INVALID => self.add_expr(step, None),
-            ty => self.add_required(step, ty),
-        };
-        if let ExprKind::Constant(Value::Integer(limbs)) = &self.body.exprs[step].kind
-            && limbs.as_slice().iter().all(|&limb| limb == 0)
-        {
-            let span = self.body.exprs.span(step);
-            let message = "a range's step must not be zero";
-            self.checker
-                .error(diagnostics::INVALID_OPERATION, message, span);
-        }
-        step
-    }
-
     /// `for value in items { body }` or `for index, value in items`, over an
     /// array, a reference to one or a slice, computed once before the first
     /// pass. Written as the code that runs it, a block of

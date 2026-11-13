@@ -267,7 +267,6 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
                         .error(diagnostics::INVALID_OPERATION, message, span);
                     Expr::INVALID
                 }
-                ast::Expr::Range { .. } => self.check_range(expression, expected),
                 ast::Expr::Index { value, index } => self.check_index(value, index, span),
                 ast::Expr::Dereference(value) => self.check_dereference(value, span),
                 ast::Expr::Reference { mutable, value } => {
@@ -295,7 +294,7 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
     ) -> Expr {
         let tree = &self.checker.module().ast;
         if let ast::Expr::Index { index, .. } = tree.exprs[value]
-            && let ast::Expr::Range { .. } = tree.exprs[index]
+            && tree.written_range(index).is_some()
         {
             return self.check_slice(mutable, value);
         }

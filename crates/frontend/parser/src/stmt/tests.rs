@@ -25,9 +25,9 @@ fn parses_statements() {
     for { break; }
     for n < limit { continue; }
     for item in items { }
-    for i, item in items[1..] { }
-    for 0..n { }
-    for v in n..=0:2 { }
+    for i, item in items { }
+    for n { }
+    for v in values { }
     match shape {
         Shape::Dot => { }
         Shape::Line with .{ end } => { }
@@ -91,22 +91,14 @@ fn parses_statements() {
       for in statement
         declared name i
         declared name item
-        index expression
-          name reference items
-          range ..
-            number literal 1
+        name reference items
         block { }
       loop statement
-        range ..
-          number literal 0
-          name reference n
+        name reference n
         block { }
       for in statement
         declared name v
-        range ..=
-          name reference n
-          number literal 0
-          number literal 2
+        name reference values
         block { }
       match statement
         name reference shape

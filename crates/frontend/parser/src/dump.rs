@@ -477,25 +477,6 @@ impl<'t> Dumper<'t> {
             Expr::Index { value, index } => {
                 ("index expression", None, two(value, Item::Expr(index)))
             }
-            Expr::Range {
-                inclusive,
-                start,
-                end,
-                step,
-            } => (
-                "range",
-                Some(if inclusive {
-                    TokenKind::DotDotEqual.text()
-                } else {
-                    TokenKind::DotDot.text()
-                }),
-                start
-                    .into_iter()
-                    .chain(end)
-                    .chain(step)
-                    .map(Item::Expr)
-                    .collect(),
-            ),
             Expr::VariantLiteral { case, payload } => (
                 "variant literal",
                 None,

@@ -44,6 +44,10 @@ impl Language for Interfaces {
     fn string_kind(expr: &Infallible) -> Option<ast::StringKind> {
         match *expr {}
     }
+
+    fn written_range(expr: &Infallible) -> Option<ast::WrittenRange<Interfaces>> {
+        match *expr {}
+    }
 }
 
 static RULES: Rules<Interfaces> = {

@@ -56,6 +56,10 @@ impl Language for Texts {
     fn string_kind(expr: &StringLiteral) -> Option<StringKind> {
         Some(expr.kind)
     }
+
+    fn written_range(_: &StringLiteral) -> Option<ast::WrittenRange<Texts>> {
+        None
+    }
 }
 
 static RULES: Rules<Texts> = {

@@ -727,7 +727,7 @@ impl<L: Checked> Checker<'_, L> {
 
     /// `range[element]`, written or made at `span`: invalid when `element`
     /// is, reported when it is not an integer.
-    pub(crate) fn range_type(&mut self, element: TypeId, span: Span) -> TypeId {
+    pub fn range_type(&mut self, element: TypeId, span: Span) -> TypeId {
         if element == TypeId::INVALID {
             return element;
         }

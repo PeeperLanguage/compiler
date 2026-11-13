@@ -1,0 +1,21 @@
+[package]
+name = "ranges"
+description = "Ranges: `a..b`, `a..=b` and `a..b:step`, read and checked into the core's `range[T]` values"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+publish.workspace = true
+
+[dependencies]
+arena.workspace = true
+bigint.workspace = true
+check.workspace = true
+diagnostics.workspace = true
+model.workspace = true
+parser.workspace = true
+source.workspace = true
+syntax.workspace = true
+token.workspace = true
+
+[lints]
+workspace = true

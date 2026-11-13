@@ -42,6 +42,10 @@ impl Language for Casts {
     fn string_kind(_: &Cast<Casts>) -> Option<ast::StringKind> {
         None
     }
+
+    fn written_range(_: &Cast<Casts>) -> Option<ast::WrittenRange<Casts>> {
+        None
+    }
 }
 
 static RULES: Rules<Casts> = {
@@ -81,26 +85,18 @@ fn grouped(tree: &Tree, id: Id<ast::Expr<Casts>>) -> String {
         ast::Expr::Pipe { value, call } => {
             format!("({} |> {})", grouped(tree, value), grouped(tree, call))
         }
-        ast::Expr::Range {
-            start: None,
-            end: Some(end),
-            ..
-        } => {
-            format!("(..{})", grouped(tree, end))
-        }
         _ => text(tree.exprs.span(id)),
     }
 }
 
-/// A cast binds tighter than every binary operator and a range, and looser
-/// than a pipe.
+/// A cast binds tighter than every binary operator, and looser than a
+/// pipe.
 #[test]
 fn precedence() {
     for (text, want) in [
         ("a + b as i64", "(a + (b as i64))"),
         ("a as i32 * b", "((a as i32) * b)"),
         ("a |> len() as i32", "((a |> len()) as i32)"),
-        ("..b as i64", "(..(b as i64))"),
     ] {
         let source = Arc::new(SourceFile::new("t.peep", format!("fn f() {{ {text}; }}")));
         let (tree, errors) = parser::parse::<Casts>(&source);
