@@ -974,3 +974,23 @@
   `shortcut:` comment on `constant_refusal` removed, as the core naming
   the struct type is no longer a shortcut. Not decided: whether
   `thir::ExprKind` follows the same shape.
+
+- **Step 19, interfaces, the second feature (uncommitted, 2026-11-13).**
+  New crate `features/interfaces`: `InterfaceType<L> { methods }`, the
+  `iface` declaration and keyword-type rows with `interface_type` (from
+  `parser/types.rs`), and `check::declare` (was `Checker::check_interface`)
+  plus `resolve_type` ("interface types are not supported yet"). The core's
+  `ast::Type::Interface` is gone; `model::program::interface_methods`
+  asks the new `Language::methods`. `Peeper`'s written type is now the
+  enum `FeatureType { Struct, Interface }` in `driver/compile/language.rs`;
+  its expression stays the struct literal. Made pub: `named_signature`,
+  `signature_type`, `is_self`. The checked `Type::Interface`, interface
+  references, conversion and method tables stay core (closed list, 5.2).
+  Tests 305 -> 308 (3 interface parser tests moved out of the parser's,
+  none lost). Gate 2,501 files, 0 differ; benchmark -0.04% against
+  10753f90; `check.sh` all ok; the feature boundary check now also refuses
+  one feature crate naming another (a planted `structs` dependency in
+  `interfaces` failed it; after review the list of features is read from
+  `crates/features`, so a new feature crate is covered). Dropping the
+  interface rows from `Peeper`
+  failed 2 lower tests.

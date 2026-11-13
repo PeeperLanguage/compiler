@@ -36,6 +36,10 @@ pub trait Language: Copy + Debug + 'static {
 
     /// The fields of the feature type `ty`, if it has fields.
     fn fields(ty: &Self::Type) -> Option<List<Field<Self>>>;
+
+    /// The methods of the feature type `ty`, if it is an interface:
+    /// `Decl::Function`s without bodies.
+    fn methods(ty: &Self::Type) -> Option<List<Decl<Self>>>;
 }
 
 nodes! {
@@ -205,9 +209,9 @@ pub enum Decl<L: Language> {
         ty: Option<Id<Type<L>>>,
         value: Option<Id<Expr<L>>>,
     },
-    /// `enum Name<T> { variants }`, `iface Name<T> { methods }` or a
-    /// feature's, such as `struct Name<T> { fields }`; its type, a
-    /// `Type::Enum`, `Type::Interface` or `Type::Feature`, says which
+    /// `enum Name<T> { variants }` or a feature's, such as
+    /// `struct Name<T> { fields }` or `iface Name<T> { methods }`; its type,
+    /// a `Type::Enum` or `Type::Feature`, says which
     Type(TypeDecl<L>),
     /// `type Name<T> = Type;`
     Alias(TypeDecl<L>),
@@ -329,8 +333,6 @@ pub enum Type<L: Language> {
     Function(Signature<L>),
     /// `enum { variants }`
     Enum(List<Variant<L>>),
-    /// `iface { methods }`
-    Interface(List<Decl<L>>), // `Decl::Function`s without bodies
     /// The type the function belongs to, `Point` in `fn Point::sum(&self)`;
     /// in an interface, the type that meets it. Only `self` has it.
     Owner,

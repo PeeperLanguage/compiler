@@ -6,6 +6,7 @@ use arena::List;
 use check::Checked;
 use check::Checker;
 use check::builder::ThirBuilder;
+use interfaces::InterfaceType;
 use model::DefId;
 use model::semantic_types::TypeId;
 use model::thir;
@@ -22,19 +23,49 @@ use syntax::operators::Precedence;
 #[derive(Clone, Copy, Debug)]
 pub enum Peeper {}
 
-// shortcut: structs are the one feature, so a feature's expression and type
-// are its own; an enum over the features replaces each with the second.
+/// A written type of a feature's, by feature.
+#[derive(Clone, Copy, Debug)]
+pub enum FeatureType {
+    Struct(StructType<Peeper>),
+    Interface(InterfaceType<Peeper>),
+}
+
+impl From<StructType<Peeper>> for FeatureType {
+    fn from(ty: StructType<Peeper>) -> FeatureType {
+        FeatureType::Struct(ty)
+    }
+}
+
+impl From<InterfaceType<Peeper>> for FeatureType {
+    fn from(ty: InterfaceType<Peeper>) -> FeatureType {
+        FeatureType::Interface(ty)
+    }
+}
+
+// shortcut: structs are the one feature with an expression, so a feature's
+// expression is the struct literal; an enum over the features, as
+// `FeatureType` is, replaces it with the second.
 impl Language for Peeper {
     type Expr = StructLiteral<Peeper>;
-    type Type = StructType<Peeper>;
+    type Type = FeatureType;
 
     /// A struct literal ends with its `}`.
     fn precedence(_: &StructLiteral<Peeper>) -> Precedence {
         Precedence::Call
     }
 
-    fn fields(ty: &StructType<Peeper>) -> Option<List<ast::Field<Peeper>>> {
-        Some(ty.fields)
+    fn fields(ty: &FeatureType) -> Option<List<ast::Field<Peeper>>> {
+        match ty {
+            FeatureType::Struct(ty) => Some(ty.fields),
+            FeatureType::Interface(_) => None,
+        }
+    }
+
+    fn methods(ty: &FeatureType) -> Option<List<ast::Decl<Peeper>>> {
+        match ty {
+            FeatureType::Struct(_) => None,
+            FeatureType::Interface(ty) => Some(ty.methods),
+        }
     }
 }
 
@@ -42,6 +73,7 @@ impl Language for Peeper {
 static RULES: Rules<Peeper> = {
     let mut rules = Rules::core();
     structs::parse::rows(&mut rules);
+    interfaces::parse::rows(&mut rules);
     rules
 };
 
@@ -61,20 +93,22 @@ impl Checked for Peeper {
         structs::check::check_literal(builder, expr, span, expected)
     }
 
-    fn resolve_type(
-        checker: &mut Checker<'_, Peeper>,
-        _: StructType<Peeper>,
-        span: Span,
-    ) -> TypeId {
-        structs::check::resolve_type(checker, span)
+    fn resolve_type(checker: &mut Checker<'_, Peeper>, ty: FeatureType, span: Span) -> TypeId {
+        match ty {
+            FeatureType::Struct(_) => structs::check::resolve_type(checker, span),
+            FeatureType::Interface(_) => interfaces::check::resolve_type(checker, span),
+        }
     }
 
     fn declare_type(
         checker: &mut Checker<'_, Peeper>,
         definition: DefId,
         written: ast::TypeDecl<Peeper>,
-        ty: StructType<Peeper>,
+        ty: FeatureType,
     ) -> TypeId {
-        structs::check::declare(checker, definition, written, ty)
+        match ty {
+            FeatureType::Struct(ty) => structs::check::declare(checker, definition, written, ty),
+            FeatureType::Interface(_) => interfaces::check::declare(checker, definition),
+        }
     }
 }

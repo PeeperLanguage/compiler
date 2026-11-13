@@ -44,9 +44,10 @@ check "middle boundary" bash -c "
         crates/middle/{eval,flow} crates/backend/llvm"
 # A feature is named only by the language that lists it, in driver/compile
 # (docs/feature-front.md section 7); Cargo refuses the cycle for the crates a
-# feature depends on, this the others.
+# feature depends on, this the others, and a feature naming another.
 check "feature boundary" bash -c \
-    "! grep -n '^structs' crates/{base,core,frontend,middle,backend}/*/Cargo.toml"
+    "features=\$(ls crates/features | paste -sd'|') &&
+    ! grep -nE \"^(\$features)\\b\" crates/{base,core,frontend,middle,backend,features}/*/Cargo.toml"
 check "tests" cargo test --workspace --no-fail-fast
 check "bundle" bash scripts/build.sh
 check "fixtures on the bundle" env PEEPER="$PWD/build/bin/peeper" \

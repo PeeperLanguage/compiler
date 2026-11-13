@@ -40,6 +40,10 @@ impl Language for Bare {
     fn fields(ty: &Infallible) -> Option<List<ast::Field<Bare>>> {
         match *ty {}
     }
+
+    fn methods(ty: &Infallible) -> Option<List<ast::Decl<Bare>>> {
+        match *ty {}
+    }
 }
 
 static RULES: Rules<Bare> = Rules::core();

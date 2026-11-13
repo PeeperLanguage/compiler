@@ -37,7 +37,6 @@ pub(crate) const fn declaration_rows<L: Grammar>(rules: &mut Rules<L>) {
     rules.declaration(TokenKind::Fn, function_decl);
     rules.declaration(TokenKind::Const, const_decl);
     rules.declaration(TokenKind::Enum, type_decl);
-    rules.declaration(TokenKind::Iface, type_decl);
     rules.declaration(TokenKind::Type, type_decl);
 }
 
@@ -225,7 +224,7 @@ impl<L: Grammar> Parser<L> {
 
     /// Reads `name<T>(parameters) -> Result in origins` after a function's
     /// `fn` and owner: its name and signature.
-    pub(crate) fn named_signature(&mut self) -> (Ident, Signature<L>) {
+    pub fn named_signature(&mut self) -> (Ident, Signature<L>) {
         let name = self.name();
         let type_parameters = self.type_parameters();
         let signature = self.signature(type_parameters, starts_parameter::<L>, Self::parameter);

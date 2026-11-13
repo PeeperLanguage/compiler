@@ -192,7 +192,6 @@ impl<'t> Dumper<'t> {
                         let kind = match (t.decls[id], t.types[d.ty]) {
                             (Decl::Alias(_), _) => "type alias declaration",
                             (_, Type::Enum(_)) => "enum declaration",
-                            (_, Type::Interface(_)) => "interface declaration",
                             _ => {
                                 unreachable!("the parser gives a type declaration only these types")
                             }
@@ -327,11 +326,6 @@ impl<'t> Dumper<'t> {
                     .items(variants)
                     .map(Item::Variant)
                     .collect(),
-            ),
-            Type::Interface(methods) => (
-                "interface type",
-                None,
-                t.children.lists.items(methods).map(Item::Decl).collect(),
             ),
             Type::Invalid => ("invalid type", None, vec![]),
         };

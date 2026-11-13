@@ -1,15 +1,11 @@
 //! Types: names and paths, pointers, optionals, arrays, function types, and the
-//! types a keyword begins, as the enum and interface types of type
-//! declarations.
+//! types a keyword begins, as the enum type of a type declaration.
 
 use arena::Id;
 use arena::List;
 use diagnostics::Diagnostic;
 use source::Span;
-use syntax::ast::Decl;
-use syntax::ast::Function;
 use syntax::ast::Length;
-use syntax::ast::Metadata;
 use syntax::ast::Param;
 use syntax::ast::Type;
 use syntax::ast::Variant;
@@ -28,7 +24,6 @@ pub type KeywordTypeRule<L> = fn(&mut Parser<L>, u32) -> Id<Type<L>>;
 /// Adds the core's types a keyword begins to `rules`.
 pub(crate) const fn keyword_type_rows<L: Grammar>(rules: &mut Rules<L>) {
     rules.keyword_type(TokenKind::Enum, Parser::enum_type);
-    rules.keyword_type(TokenKind::Iface, Parser::interface_type);
 }
 
 /// Whether `kind` begins one of the types `Parser::type_expr` has an arm
@@ -288,46 +283,5 @@ impl<L: Grammar> Parser<L> {
             },
         );
         self.add(start, Type::Enum(variants))
-    }
-
-    /// Reads `{ fn name(parameters) -> Result, ... }`, the methods of an
-    /// interface type that starts at `start`: function signatures without
-    /// bodies. A method takes no default values.
-    fn interface_type(&mut self, start: u32) -> Id<Type<L>> {
-        let methods = self.delimited(
-            TokenKind::LeftBrace,
-            TokenKind::RightBrace,
-            true,
-            |kind| kind == TokenKind::Fn,
-            |p| {
-                let start = p.next().span.start;
-                let (name, signature) = p.named_signature();
-                let parameters: Vec<_> =
-                    p.tree.children.lists.items(signature.parameters).collect();
-                for parameter in parameters {
-                    if let Some(value) = p.tree.children.params[parameter].default {
-                        let span = p.tree.exprs.span(value);
-                        p.repair(
-                            Diagnostic::new(
-                                diagnostics::INVALID_DECLARATION,
-                                "interface method defaults are not supported",
-                            )
-                            .label(&p.tree.file, span, ""),
-                        );
-                    }
-                }
-                p.add(
-                    start,
-                    Decl::Function(Function {
-                        metadata: Metadata::NONE,
-                        owner: None,
-                        name,
-                        signature,
-                        body: None,
-                    }),
-                )
-            },
-        );
-        self.add(start, Type::Interface(methods))
     }
 }

@@ -31,7 +31,6 @@ use crate::builder::ThirBuilder;
 use crate::builtin::unsupported_type;
 use crate::function::function_declaration;
 use crate::scope;
-use crate::scope::report_redeclared;
 
 /// The most references and slices a struct or an array holds, however deep.
 // shortcut: the loan check keeps each one apart, so a struct that holds the
@@ -43,9 +42,8 @@ const MOST_HOLDERS: usize = 4_096;
 
 impl<L: Checked> Checker<'_, L> {
     /// The type the module's type declaration or alias `definition` declares:
-    /// an interface's (`Type::Interface`), a feature's (`declare_type`), or
-    /// the type an alias names. Enums and type parameters are not supported
-    /// yet.
+    /// a feature's (`declare_type`), or the type an alias names. Enums and
+    /// type parameters are not supported yet.
     pub(crate) fn check_type_declaration(&mut self, definition: DefId) -> TypeId {
         let tree = &self.module().ast;
         let (written, is_alias) = match tree.decls[tree.declaration(definition.index)] {
@@ -61,7 +59,6 @@ impl<L: Checked> Checker<'_, L> {
         }
         let what = match tree.types[written.ty] {
             ast::Type::Feature(ty) => return L::declare_type(self, definition, written, ty),
-            ast::Type::Interface(_) => return self.check_interface(definition),
             ast::Type::Enum(_) => "enum declarations",
             _ => unreachable!("the parser gives a type declaration only these types"),
         };
@@ -198,7 +195,7 @@ impl<L: Checked> Checker<'_, L> {
     /// is invalid inside it. A `const T: type` parameter is not among its
     /// parameters: each call gives it a type, which makes its own copy
     /// (`copy_type`).
-    fn signature_type(
+    pub fn signature_type(
         &mut self,
         signature: ast::Signature<L>,
         has_owner: bool,
@@ -278,70 +275,6 @@ impl<L: Checked> Checker<'_, L> {
             origins,
             variadic,
         })
-    }
-
-    /// The type the module's interface declaration `definition` declares:
-    /// each method's function type, whose `self` is a reference to the
-    /// interface (`Type::InterfaceReference`), or the interface taken whole.
-    /// Invalid when a method has an error or is declared twice, as a struct
-    /// is when a field has an error.
-    fn check_interface(&mut self, definition: DefId) -> TypeId {
-        let modules = self.modules;
-        let tree = &modules[definition.module.index()].ast;
-        let declared: Vec<&ast::Function<L>> =
-            model::program::interface_methods(modules, definition)
-                .expect("an interface declaration has methods")
-                .collect();
-        let mut methods = Vec::with_capacity(declared.len());
-        for (index, method) in declared.iter().enumerate() {
-            let text = method.name.text(&tree.file);
-            // An interface has few methods, so the ones before are searched.
-            if let Some(first) = declared[..index]
-                .iter()
-                .find(|first| first.name.text(&tree.file) == text)
-            {
-                let diagnostic = report_redeclared(
-                    &tree.file,
-                    text,
-                    "interface",
-                    method.name.span,
-                    first.name.span,
-                );
-                self.report(diagnostic);
-                methods.push(TypeId::INVALID);
-                continue;
-            }
-            let first = tree
-                .children
-                .lists
-                .items(method.signature.parameters)
-                .next();
-            if !first.is_some_and(|first| is_self(tree, tree.children.params[first])) {
-                let message = format!("an interface method takes `self` first: `fn {text}(&self)`");
-                self.error(diagnostics::INVALID_DECLARATION, message, method.name.span);
-                methods.push(TypeId::INVALID);
-                continue;
-            }
-            if let Some(span) = const_parameter(tree, method.signature) {
-                let message = "a call through an interface reference cannot pick a copy, so an interface method takes no `const` parameter";
-                self.error(diagnostics::INVALID_DECLARATION, message, span);
-                methods.push(TypeId::INVALID);
-                continue;
-            }
-            methods.push(self.signature_type(method.signature, true, false));
-        }
-        let invalid = |ty: TypeId| match &self.types[ty] {
-            Type::Function {
-                parameters, result, ..
-            } => parameters.contains(&TypeId::INVALID) || *result == TypeId::INVALID,
-            _ => true,
-        };
-        if methods.iter().any(|&method| invalid(method)) {
-            return TypeId::INVALID;
-        }
-        let named = self.types.intern(Type::Named(definition));
-        self.types.define_interface(named, methods.into());
-        named
     }
 
     /// The functions of the struct `structure` that are the methods of the
@@ -1092,7 +1025,6 @@ impl<L: Checked> Checker<'_, L> {
                 }
                 ast::Type::Function(_) => "function types",
                 ast::Type::Enum(_) => "enum types",
-                ast::Type::Interface(_) => "interface types",
             };
             self.not_supported(span, what)
         })
@@ -1140,19 +1072,18 @@ fn names_type_parameter<L: Language>(
         | ast::Type::RawPointer
         | ast::Type::Function(_)
         | ast::Type::Enum(_)
-        | ast::Type::Interface(_)
         | ast::Type::Owner
         | ast::Type::Type
         | ast::Type::Invalid => false,
         // shortcut: a feature's type is taken to name no type parameter, as
-        // a struct type (the only one) does not; ask the feature when one can.
+        // a struct or interface type does not; ask the feature when one can.
         ast::Type::Feature(_) => false,
     })
 }
 
 /// Whether `parameter` of a function in `tree` is `self`, `&self` or
 /// `&mut self`: of the type the function belongs to.
-pub(crate) fn is_self<L: Language>(tree: &ast::Tree<L>, parameter: ast::Param<L>) -> bool {
+pub fn is_self<L: Language>(tree: &ast::Tree<L>, parameter: ast::Param<L>) -> bool {
     let taken = match tree.types[parameter.ty] {
         ast::Type::Reference { target, .. } => target,
         _ => parameter.ty,

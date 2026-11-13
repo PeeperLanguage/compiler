@@ -387,16 +387,22 @@ v4's `gateway::lower` had this API (`emit`, `temporary`, `new_block`,
 
 **Built (step 19, piece 2).** Each phase names what it asks of a feature
 in its own trait, so a phase depends on no later one:
-`syntax::ast::Language` (the feature nodes, `precedence`, `fields`),
+`syntax::ast::Language` (the feature nodes, `precedence`, `fields`,
+`methods`),
 `parser::Grammar` (the rule table) and `check::Checked` (`check_expr`,
 `resolve_type`, `declare_type`). The table is built by `const` code in the
 top crate, so two rules for one token fail the build. A feature claims a
 declaration keyword, a type keyword (`Rules::keyword_type`), an expression
 prefix, or what continues a path (`Rules::after_path`: `Point.{`). There is
-no `features!` macro while structs are the one feature: `Peeper`'s nodes
-are the struct crate's own. A field and a field's value stay core nodes
-(`ast::Field`, `ast::FieldValue`), since the core reads fields too
-(`point.x`, the field names `model::program::field_names` gives).
+no `features!` macro: `Peeper` lists its features by hand in
+`driver/compile/src/language.rs`, a written type as the enum
+`FeatureType` over the struct and interface crates' own, and an
+expression as the struct literal, the one feature expression so far. A
+field and a field's value stay core nodes (`ast::Field`,
+`ast::FieldValue`), since the core reads fields too (`point.x`, the field
+names `model::program::field_names` gives); an interface's methods stay
+core `Decl::Function`s, which `model::program::interface_methods` reads
+through `Language::methods`.
 
 ## 8. The boundary after lowering
 
@@ -503,6 +509,10 @@ For every step from 18 on:
   Then one feature per step; each adds the questions on `Type` it needs
   (`number` and `operation` with numbers, a view with references,
   elements with arrays), with their first caller (`RULES.md` 1.1).
+  Interfaces came second (`features/interfaces`): the `iface` declaration
+  and type rows and the declaration's checking; interface references,
+  owned interfaces, the conversion and the method tables read the core's
+  checked type and stay core.
 - **20.** Removal: the closed syntax enums and every per-phase match of
   section 3.1 on them are gone (`semantic_types::Type` stays, 5.2); no
   half-moved state outlives this step.

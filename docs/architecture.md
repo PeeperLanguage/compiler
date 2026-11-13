@@ -192,7 +192,8 @@ and has one job:
   and so does a keyword that begins a type (`struct { ... }`).
 - The tables are one `Rules` value per language, built by `const` code:
   `Rules::core()` adds the core's rows, and the top crate
-  (`driver/compile`) adds each feature's (`structs::parse::rows`). A feature's
+  (`driver/compile`) adds each feature's (`structs::parse::rows`,
+  `interfaces::parse::rows`). A feature's
   rule lives in its crate (`crates/features/`), and calls the parser's
   public reading methods.
 - Rules in a table are plain functions taking `p: &mut Parser`; shared helpers

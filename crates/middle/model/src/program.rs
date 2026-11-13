@@ -208,9 +208,10 @@ pub fn interface_methods<L: Language>(
     let &ast::Decl::Type(written) = declaration(modules, definition) else {
         return None;
     };
-    let ast::Type::Interface(methods) = tree.types[written.ty] else {
+    let ast::Type::Feature(ty) = tree.types[written.ty] else {
         return None;
     };
+    let methods = L::methods(&ty)?;
     Some(
         tree.children
             .lists

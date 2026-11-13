@@ -29,6 +29,7 @@ parser = { path = "crates/frontend/parser" }
 literal = { path = "crates/base/literal" }
 syntax = { path = "crates/core/syntax" }
 structs = { path = "crates/features/structs" }
+interfaces = { path = "crates/features/interfaces" }
 model = { path = "crates/middle/model" }
 eval = { path = "crates/middle/eval" }
 check = { path = "crates/middle/check" }

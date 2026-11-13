@@ -1,0 +1,20 @@
+[package]
+name = "interfaces"
+description = "Interfaces: the interface type of a declaration, read and checked into the core's interface type"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+publish.workspace = true
+
+[dependencies]
+arena.workspace = true
+check.workspace = true
+diagnostics.workspace = true
+model.workspace = true
+parser.workspace = true
+source.workspace = true
+syntax.workspace = true
+token.workspace = true
+
+[lints]
+workspace = true

@@ -1,5 +1,6 @@
 use std::convert::Infallible;
 
+use syntax::ast::Decl;
 use syntax::ast::Field;
 use syntax::operators::Precedence;
 
@@ -19,6 +20,10 @@ impl Language for Bare {
     }
 
     fn fields(ty: &Infallible) -> Option<List<Field<Bare>>> {
+        match *ty {}
+    }
+
+    fn methods(ty: &Infallible) -> Option<List<Decl<Bare>>> {
         match *ty {}
     }
 }
@@ -273,8 +278,6 @@ const BROKEN_INPUTS: &[&str] = &[
     "const a",
     "const a: = ;",
     "enum E { A: }",
-    "iface I { fn",
-    "iface I { fn (",
     "type",
     "type A =",
     "type A<T",

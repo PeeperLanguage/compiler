@@ -31,6 +31,10 @@ impl Language for Structs {
     fn fields(ty: &StructType<Structs>) -> Option<List<ast::Field<Structs>>> {
         Some(ty.fields)
     }
+
+    fn methods(_: &StructType<Structs>) -> Option<List<ast::Decl<Structs>>> {
+        None
+    }
 }
 
 static RULES: Rules<Structs> = {

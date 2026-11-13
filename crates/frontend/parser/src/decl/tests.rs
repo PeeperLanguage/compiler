@@ -237,10 +237,6 @@ const Untyped = 1;
 #[extern("rt_exit")]
 fn exit(code: i32);
 enum Status { Ready, Waiting: Pair<i32>, }
-iface Summer {
-    fn sum(&self) -> i32,
-    fn add<T>(&mut self, value: T)
-}
 type Alias<T> = ?T;
 fn Pair::new() {}
 "#;
@@ -274,26 +270,6 @@ fn Pair::new() {}
         generic type
           type name Pair
           type name i32
-  interface declaration
-    declared name Summer
-    interface type
-      function declaration
-        declared name sum
-        parameter
-          declared name self
-          reference type
-            self type self
-        type name i32
-      function declaration
-        declared name add
-        declared name T
-        parameter
-          declared name self
-          reference type mut
-            self type self
-        parameter
-          declared name value
-          type name T
   type alias declaration
     declared name Alias
     declared name T
@@ -327,10 +303,6 @@ fn declaration_errors() {
         (
             "#[a, b] fn f();",
             "only one attribute is allowed per `#[...]` block",
-        ),
-        (
-            "iface I { fn f(&self, a: i32 = 1) }",
-            "interface method defaults are not supported",
         ),
         ("fn (p: Point) f() {}", "expected `identifier`, found `(`"),
         ("type A i32;", "expected `=`, found `identifier`"),
