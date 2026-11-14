@@ -461,23 +461,21 @@ crate (step 19): with none, it cannot fail.
 
 ```text
 crates/
-  base/       arena, bigint, diagnostics, literal, source, runtime_abi (unchanged)
-  core/
-    syntax/   tokens, lexer, parser engine and rule tables, tree storage
-    check/    declarations, scopes, cycle stack, the type table, the THIR builder,
-              the core concepts' checking
-    lower/    the lowering builder, the core concepts' lowering
-    model/    THIR, MIR, layout, machine (what the phases share)
-    flow/ eval/                                          (unchanged)
-  features/   one crate per feature (section 6)
-  backend/llvm/                                          (unchanged)
-  driver/     compile, peeper, lsp, and the crate that lists the features
+  base/       arena, bigint, diagnostics, literal, source, runtime_abi
+  core/       syntax: the tree and the `Language` trait
+  frontend/   token, lexer, parser (the engine and its rule table), project
+  middle/     check, lower, flow, eval, and model (THIR, MIR, layout, machine)
+  features/   one crate: `src/lib.rs` lists the features, one file each
+  backend/    llvm
+  driver/     compile, peeper, lsp, browser, test_programs
 ```
 
 One crate per feature lets Cargo refuse a dependency between features for
-free; one module per feature in a single crate needs the grep check
-instead. **Decided (2026-11-13): a crate per feature**, so Cargo refuses a
-dependency between features.
+free; one file per feature in a single crate needs a grep check instead.
+A crate per feature was decided first and then replaced, the same day
+(2026-11-13), by **one crate with a file per feature**: fewer crates to
+build and link, and the grep check ("feature boundary" in
+`scripts/check.sh`) keeps a feature file from naming another.
 
 This also answers plan item 10: the syntax tree leaves `model`; its core
 part goes to `core/syntax`, each feature's nodes to the feature.
@@ -485,8 +483,8 @@ part goes to `core/syntax`, each feature's nodes to the feature.
 A consequence for tests: a crate's own tests cannot use a crate that
 depends on it, so the core's tests cannot write a feature's syntax. Each
 core crate (`parser`, `check`) tests in a language of its own with no
-feature (`Bare`). A feature's crate tests its syntax and checking in a
-language of the core and itself. A core test that needs a feature only to
+feature (`Bare`). A feature's file tests its syntax and checking in
+`Peeper`, naming no other feature (`src/<feature>/tests.rs`). A core test that needs a feature only to
 reach core behaviour (an `extern` function taking a struct, a type's
 functions) moves unchanged to the top crate's tests
 (`driver/compile/tests/`). No test is deleted: the test names before and
