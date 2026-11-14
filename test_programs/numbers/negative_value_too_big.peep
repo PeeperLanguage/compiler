@@ -7,6 +7,17 @@ struct Halves { //~ error[P0011]: `Halves` is too big for x86_64-linux, where a 
     b: [4611686018427387904]u8,
 }
 
+// It is reported once, not again where it is held or pointed to.
+struct Big { //~ error[P0011]: `Big` is too big for x86_64-linux, where a value takes at most 9223372036854775807 bytes
+    first: [1152921504606846975]i64,
+    second: [1152921504606846975]i64,
+}
+
+struct HoldsBig {
+    big: Big,
+    pointer: *Big,
+}
+
 fn takes(values: [18446744073709551615]u64) {} //~ error[P0011]: `[18446744073709551615]u64` is too big for x86_64-linux, where a value takes at most 9223372036854775807 bytes
 
 fn fits(values: [9223372036854775807]u8) {}

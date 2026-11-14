@@ -52,17 +52,6 @@ fn Copy(broken: *Broken) {
     let copy = broken.*;
 }
 
-// A struct too big for the target is reported once too.
-struct Big { //~ error[P0011]: `Big` is too big for x86_64-linux, where a value takes at most 9223372036854775807 bytes
-    first: [1152921504606846975]i64,
-    second: [1152921504606846975]i64,
-}
-
-struct HoldsBig {
-    big: Big,
-    pointer: *Big,
-}
-
 fn Keep(holder: Holder) -> Holder {
     return holder;
 }

@@ -262,7 +262,8 @@ pub fn mismatches(marked: &[Mark], reported: &[Mark]) -> Vec<String> {
 /// is from the folder, as a page writes it; a line they show is without its
 /// marks.
 pub fn reported<'a>(stderr: &'a str, folder: &Path) -> (Vec<Mark>, &'a str) {
-    let folder = folder.display().to_string();
+    // The compiler writes a path with `/` on every system.
+    let folder = folder.to_string_lossy().replace('\\', "/");
     let sources = format!("{folder}/src/");
     let (diagnostics, program) = match stderr.find("\nCompilation ") {
         Some(at) => {
