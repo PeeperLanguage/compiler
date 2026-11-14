@@ -1,0 +1,32 @@
+// `value |> f(arguments)` is the call `f(value, arguments)`; a method
+// takes the value after its `self`.
+struct Counter {
+    total: i32,
+}
+
+fn Counter::add(&mut self, amount: i32) {
+    self.total = self.total + amount;
+}
+
+fn Counter::scaled(&self, factor: i32, offset: i32) -> i32 {
+    return self.total * factor + offset;
+}
+
+fn double(value: i32) -> i32 {
+    return value * 2;
+}
+
+fn add(left: i32, right: i32) -> i32 {
+    return left + right;
+}
+
+fn main() {
+    println(3 |> double());
+    println(3 |> add(4) |> double());
+    println(1 + 2 |> double());
+    let mut counter = Counter.{ total = 0 };
+    5 |> counter.add();
+    2 |> double() |> counter.add();
+    println(counter.total);
+    println(2 |> counter.scaled(1));
+}

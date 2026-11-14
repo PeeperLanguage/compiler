@@ -1,0 +1,9 @@
+fn one(value: i32) -> i32 {
+    return value;
+}
+
+fn main() {
+    1 |> one(2); //~ error[T0006]: `one` takes 1 argument, but 2 were given
+    true |> one(); //~ error[T0001]: mismatched types: expected `i32`, found `bool`
+    1 |> missing(); //~ error[T0002]: unknown name `missing`
+}

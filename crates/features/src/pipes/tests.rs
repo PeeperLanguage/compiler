@@ -1,4 +1,4 @@
-//! Reading pipes, and their refusal.
+//! Reading pipes as calls, and checking them.
 
 use arena::Id;
 use syntax::ast;
@@ -10,53 +10,62 @@ use crate::testing::messages;
 use crate::testing::parse_text;
 use crate::testing::statements;
 
-/// `expr` with each pipe in parentheses.
-fn grouped(tree: &Tree, expr: Id<ast::Expr<Peeper>>) -> String {
+/// `expr` with each call as `callee(arguments)`, its callee as written.
+fn calls(tree: &Tree, expr: Id<ast::Expr<Peeper>>) -> String {
     match tree.exprs[expr] {
-        ast::Expr::Feature(FeatureExpr::Pipe(Pipe { value, call })) => {
-            format!("({} |> {})", grouped(tree, value), grouped(tree, call))
+        ast::Expr::Call { callee, arguments } => {
+            let arguments: Vec<String> = (tree.children.lists.items(arguments))
+                .map(|argument| calls(tree, argument))
+                .collect();
+            let callee = tree.file.slice(tree.exprs.span(callee));
+            format!("{callee}({})", arguments.join(", "))
         }
         _ => tree.file.slice(tree.exprs.span(expr)).to_string(),
     }
 }
 
-/// A pipe groups to the left and binds looser than `+`; what is written
-/// after its call, as `as`, takes the whole pipe.
+/// The piped value is the first written argument, of a function or of a
+/// method, after its `self`. A pipe groups to the left and binds looser
+/// than `+`; what is written after its call, as `as`, takes the whole pipe.
 #[test]
-fn parses_pipes() {
+fn parses_pipes_as_calls() {
     let (tree, errors) =
-        parse_text("fn f() { a |> f(b) |> g(); a + b |> f(); c |> len() as i32; }");
+        parse_text("fn f() { a |> f(b) |> g(); a + b |> f(); c |> x.m(d); c |> len() as i32; }");
     assert!(errors.is_empty(), "{errors:?}");
     let found: Vec<String> = (statements(&tree).into_iter())
-        .map(|statement| grouped(&tree, statement))
+        .map(|statement| calls(&tree, statement))
         .collect();
-    assert_eq!(found[..2], ["((a |> f(b)) |> g())", "(a + b |> f())"]);
-    let last = (tree.exprs.ids())
-        .filter(|&id| matches!(tree.exprs[id], ast::Expr::Feature(FeatureExpr::Pipe(_))))
-        .last()
-        .unwrap();
-    assert_eq!(tree.file.slice(tree.exprs.span(last)), "c |> len()");
+    assert_eq!(found[..3], ["g(f(a, b))", "f(a + b)", "x.m(c, d)"]);
+    let piped = tree.exprs.ids().find(|&id| calls(&tree, id) == "len(c)");
+    assert_eq!(
+        tree.file.slice(tree.exprs.span(piped.unwrap())),
+        "c |> len()"
+    );
 }
 
-/// A pipe's target is a call of a free function.
 #[test]
 fn target_errors() {
     assert_eq!(
         messages("fn f() { a |> b; }"),
-        ["pipe target must be a free-function call"]
-    );
-    assert_eq!(
-        messages("fn f() { a |> b.c(); }"),
-        ["pipe cannot call a method"]
+        ["expected a call after `|>`"]
     );
 }
 
-/// A pipe is not checked yet, so it is refused where it is written.
+/// A pipe is checked as the call it is.
 #[test]
-fn refused() {
-    let (_, reported) = bodies("fn g(a: i32) {}\nfn f(a: i32) { a |> g(); }");
+fn checked_as_calls() {
+    let (found, reported) = bodies("fn g(a: i32, b: i32) {}\nfn f(a: i32) { a |> g(2); }");
+    assert!(reported.is_empty(), "{reported:?}");
+    assert!(found[1].contains("(a.0, 2:i32)"), "{found:?}");
+    let (_, reported) = bodies("fn g(a: i32) {}\nfn f(a: bool) { a |> g(); 1 |> g(2); }");
     let found: Vec<(&str, &str)> = (reported.iter())
         .map(|(_, message, text)| (message.as_str(), text.as_str()))
         .collect();
-    assert_eq!(found, [("pipes are not supported yet", "a |> g()")]);
+    assert_eq!(
+        found,
+        [
+            ("mismatched types: expected `i32`, found `bool`", "a"),
+            ("`g` takes 1 argument, but 2 were given", "1 |> g(2)"),
+        ]
+    );
 }

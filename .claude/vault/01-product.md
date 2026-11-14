@@ -63,7 +63,7 @@ as few walks per body as possible; one owner per fact.
   (`fn Point::name(&self)`, called `Point::name(&p)` or `p.name()`).
 - **Not done (parser reads, check reports T0043):** enums, optionals,
   generics, function values, default
-  parameters, destructuring, block expressions, pipes, dependencies.
+  parameters, destructuring, block expressions, dependencies.
 - **Since then (worklog, 2026-11-06 to 2026-11-07):** borrowed interfaces (`&Shape`),
   `core:memory` (`Allocator` with `Heap`, `Arena`, `Pool`, `Stack`,
   `Realloc`, `New`, `Replace`), `rawptr + usize`, `size_of`/`align_of`,

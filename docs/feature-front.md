@@ -343,7 +343,7 @@ core's now:
 | C interop | `extern`, variadic `...` parameters |
 | type declarations | `type` aliases and named types |
 | panic, print | `panic`, `print`, `println` (print becomes a library function later) |
-| reserved | syntax the parser reads and the checker refuses today (`'c'`, variants, `is`, `orelse`, block values, `\|>`, `match`, enums, destructuring): kept as one feature so its messages stay the same |
+| reserved | syntax the parser reads and the checker refuses today (`'c'`, variants, `is`, `orelse`, block values, `match`, enums, destructuring): kept as one feature so its messages stay the same |
 
 Tokens stay core: the lexer must know every token, so a new keyword is one
 line in the token list, plus its feature.

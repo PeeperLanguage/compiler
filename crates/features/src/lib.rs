@@ -50,7 +50,6 @@ pub enum FeatureExpr {
     Cast(casts::Cast),
     Char(chars::CharLiteral),
     OrElse(optionals::OrElse),
-    Pipe(pipes::Pipe),
     Print(printing::Print),
     StructLiteral(structs::StructLiteral),
     RawAddress(raw_pointers::RawAddress),
@@ -99,8 +98,6 @@ impl Language for Peeper {
             FeatureExpr::Range(_) => Precedence::Range,
             // `orelse` ends in an expression read at the lowest precedence.
             FeatureExpr::OrElse(_) => Precedence::Lowest,
-            // A pipe reads its call at prefix precedence.
-            FeatureExpr::Pipe(_) => Precedence::Prefix,
             // `@` reads its place at prefix precedence.
             FeatureExpr::RawAddress(_) => Precedence::Prefix,
         }
@@ -159,7 +156,6 @@ impl Language for Peeper {
             | FeatureExpr::Cast(_)
             | FeatureExpr::Char(_)
             | FeatureExpr::OrElse(_)
-            | FeatureExpr::Pipe(_)
             | FeatureExpr::Print(_)
             | FeatureExpr::Range(_)
             | FeatureExpr::StructLiteral(_)
@@ -177,7 +173,6 @@ impl Language for Peeper {
             | FeatureExpr::Cast(_)
             | FeatureExpr::Char(_)
             | FeatureExpr::OrElse(_)
-            | FeatureExpr::Pipe(_)
             | FeatureExpr::Print(_)
             | FeatureExpr::String(_)
             | FeatureExpr::StructLiteral(_)
@@ -227,7 +222,6 @@ impl Checked for Peeper {
             FeatureExpr::VariantLiteral(_) => enums::check_expr(builder, span, "variant literals"),
             FeatureExpr::Char(_) => chars::check_literal(builder, span),
             FeatureExpr::OrElse(_) => optionals::check_or_else(builder, span),
-            FeatureExpr::Pipe(_) => pipes::check_pipe(builder, span),
             FeatureExpr::Print(print) => printing::check_print(builder, print),
             FeatureExpr::StructLiteral(literal) => {
                 structs::check_literal(builder, literal, span, expected)
