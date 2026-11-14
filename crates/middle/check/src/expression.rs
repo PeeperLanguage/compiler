@@ -255,7 +255,11 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
                     let symbol = self.checker.resolve_path(path);
                     self.check_symbol_value(symbol, span)
                 }
-                ast::Expr::Call { callee, arguments } => self.check_call(callee, arguments, span),
+                ast::Expr::Call { callee, arguments } => {
+                    let arguments: Vec<Id<ast::Expr<L>>> =
+                        tree.children.lists.items(arguments).collect();
+                    self.check_call(callee, &arguments, span)
+                }
                 ast::Expr::Selector { value, field } => self.check_field(value, field),
                 ast::Expr::Spread(values) => {
                     self.add_expr(values, None); // for its own errors

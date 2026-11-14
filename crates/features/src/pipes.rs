@@ -1,44 +1,61 @@
 //! Pipes: `value |> f(arguments)` is the call `f(value, arguments)`.
 
-use std::num::NonZeroU32;
-
 use arena::Id;
-use diagnostics::Diagnostic;
+use check::builder::ThirBuilder;
+use model::thir;
 use parser::Parser;
 use parser::Rules;
+use source::Span;
 use syntax::ast;
 use syntax::operators::Precedence;
 use token::TokenKind;
 
+use crate::FeatureExpr;
 use crate::Peeper;
+
+/// `value |> target`, as written
+#[derive(Clone, Copy, Debug)]
+pub struct Pipe {
+    pub value: Id<ast::Expr<Peeper>>,
+    pub target: Id<ast::Expr<Peeper>>,
+}
 
 /// Adds the rule that reads pipes to `rules`.
 pub(crate) const fn rows(rules: &mut Rules<Peeper>) {
     rules.infix(TokenKind::PipeArrow, Precedence::Pipe, pipe);
 }
 
-/// Reads `|> f(arguments)` after `value`, as the call `f(value, arguments)`:
-/// the tree holds what a pipe means, so nothing after the parser knows of
-/// pipes. Its right side takes only what binds tighter than a prefix
-/// operator, a call, so `a |> len() as i32` is (a |> len()) as i32.
+/// Reads `|> target` after `value`. The target takes only what binds
+/// tighter than a prefix operator, so `a |> len() as i32` is
+/// (a |> len()) as i32.
 fn pipe(p: &mut Parser<Peeper>, value: Id<ast::Expr<Peeper>>) -> Id<ast::Expr<Peeper>> {
     p.next();
     let target = p.expr(Precedence::Prefix);
-    let ast::Expr::Call { callee, arguments } = p.tree.exprs[target] else {
-        let span = p.tree.exprs.span(target);
-        p.repair(
-            Diagnostic::new(
-                diagnostics::INVALID_EXPRESSION,
-                "expected a call after `|>`",
-            )
-            .label(&p.tree.file, span, "write `value |> function(...)`"),
-        );
-        return value;
+    let pipe = FeatureExpr::Pipe(Pipe { value, target });
+    p.add(p.start_of(value), ast::Expr::Feature(pipe))
+}
+
+/// `value |> target` at `span`: its target must be a call, which is checked
+/// with the value as its first written argument, so a method takes it after
+/// its `self`.
+pub(crate) fn check_pipe(
+    builder: &mut ThirBuilder<'_, '_, Peeper>,
+    pipe: Pipe,
+    span: Span,
+) -> thir::Expr {
+    let tree = &builder.checker.module().ast;
+    let ast::Expr::Call { callee, arguments } = tree.exprs[pipe.target] else {
+        let target = tree.exprs.span(pipe.target);
+        let message = "a pipe's target must be a call";
+        builder
+            .checker
+            .error(diagnostics::INVALID_OPERATION, message, target);
+        builder.add_expr(pipe.value, None); // for its own errors
+        return thir::Expr::INVALID;
     };
-    let mut given: Vec<NonZeroU32> = vec![value.into()];
-    given.extend((p.tree.children.lists.items(arguments)).map(NonZeroU32::from));
-    let arguments = p.tree.children.lists.add(&given);
-    p.add(p.start_of(value), ast::Expr::Call { callee, arguments })
+    let mut given = vec![pipe.value];
+    given.extend(tree.children.lists.items(arguments));
+    builder.check_call(callee, &given, span)
 }
 
 #[cfg(test)]

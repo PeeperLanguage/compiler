@@ -4,7 +4,6 @@
 use std::num::NonZeroU32;
 
 use arena::Id;
-use arena::List;
 use bigint::Limbs;
 use model::Callee;
 use model::ConstArguments;
@@ -72,11 +71,11 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
         &mut self,
         fact: LayoutFact,
         text: &str,
-        arguments: List<ast::Expr<L>>,
+        arguments: &[Id<ast::Expr<L>>],
         span: Span,
     ) -> Expr {
         let tree = &self.checker.module().ast;
-        let mut given = tree.children.lists.items(arguments);
+        let mut given = arguments.iter().copied();
         let (Some(argument), None) = (given.next(), given.next()) else {
             let message = argument_count_message(text, 1, false, arguments.len());
             self.checker
@@ -110,17 +109,18 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
         }
     }
 
-    /// `callee(arguments)`, written at `span`. Only a module's function, by
+    /// `callee(arguments)`, written at `span`; a pipe gives its value as the
+    /// first of `arguments`. Only a module's function, by
     /// its name or its path, can be called, or with a dot, `x.name(arguments)`,
     /// a type's function or an interface reference's method, which gets `x`
     /// as its `self`. A `...` parameter takes all the arguments past the
     /// others (`check_variadic`). A function with `const` parameters is
     /// called as its copy for what is written in their places
     /// (`copy_called`).
-    pub(super) fn check_call(
+    pub fn check_call(
         &mut self,
         callee: Id<ast::Expr<L>>,
-        arguments: List<ast::Expr<L>>,
+        arguments: &[Id<ast::Expr<L>>],
         span: Span,
     ) -> Expr {
         let tree = &self.checker.module().ast;
@@ -194,7 +194,7 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
             },
         )) = signature
         else {
-            let written = tree.children.lists.items(arguments).enumerate();
+            let written = arguments.iter().copied().enumerate();
             for (_, argument) in written.filter(not_const) {
                 let argument = match tree.exprs[argument] {
                     ast::Expr::Spread(values) => values,
@@ -230,7 +230,7 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
             };
             checked.push(argument.into());
         }
-        let written = tree.children.lists.items(arguments).enumerate();
+        let written = arguments.iter().copied().enumerate();
         let mut given = written.filter(not_const).map(|(_, argument)| argument);
         for (&parameter, argument) in parameters[first..first + fixed].iter().zip(given.by_ref()) {
             let argument = self.add_required(argument, parameter);
@@ -365,7 +365,7 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
     fn copy_called(
         &mut self,
         definition: DefId,
-        arguments: List<ast::Expr<L>>,
+        arguments: &[Id<ast::Expr<L>>],
         first: usize,
         const_places: &mut Vec<usize>,
         span: Span,
@@ -381,8 +381,6 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
             .map(|(place, parameter)| (place - first, parameter))
             .collect();
         const_places.extend(const_parameters.iter().map(|&(place, _)| place));
-        let written: Vec<Id<ast::Expr<L>>> =
-            (self.checker.module().ast.children.lists.items(arguments)).collect();
         let pattern = self.checker.function_type(definition, span);
         if pattern == TypeId::INVALID {
             return None; // reported
@@ -390,7 +388,7 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
         // Too few arguments: `check_call` reports it, by the function's own type.
         if const_parameters
             .last()
-            .is_some_and(|&(place, _)| place >= written.len())
+            .is_some_and(|&(place, _)| place >= arguments.len())
         {
             let function = FunctionCopy {
                 definition,
@@ -401,7 +399,7 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
         let mut given = Vec::with_capacity(const_parameters.len());
         let mut failed = false;
         for (place, parameter) in const_parameters {
-            let argument = written[place];
+            let argument = arguments[place];
             if let ast::Type::Type = tree.types[parameter.ty] {
                 let ty = self.checker.resolve_type_argument(argument);
                 failed |= ty == TypeId::INVALID;
