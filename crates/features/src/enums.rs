@@ -2,6 +2,7 @@
 //! literal (`Enum::Case with payload`), a case test (`x is Enum::Case`) and
 //! `match`. All are read, and refused by the checker until enums exist.
 
+use model::DefId;
 use std::num::NonZeroU32;
 
 use arena::Id;
@@ -20,10 +21,13 @@ use syntax::ast;
 use syntax::operators::Precedence;
 use token::TokenKind;
 
+use crate::ExprNode;
 use crate::FeatureExpr;
 use crate::FeatureStmt;
 use crate::FeatureType;
 use crate::Peeper;
+use crate::StmtNode;
+use crate::TypeNode;
 
 /// `enum { variants }`
 #[derive(Clone, Copy, Debug)]
@@ -52,13 +56,33 @@ pub struct Match {
     pub arms: List<ast::MatchArm<Peeper>>,
 }
 
-/// Adds the rules that read enums and `match` to `rules`.
-pub(crate) const fn rows(rules: &mut Rules<Peeper>) {
-    rules.declaration(TokenKind::Enum, type_decl);
-    rules.type_start(TokenKind::Enum, enum_type);
-    rules.infix(TokenKind::With, Precedence::Call, variant_literal);
-    rules.infix(TokenKind::Is, Precedence::Equality, case_test);
-    rules.statement(TokenKind::Match, match_statement);
+impl EnumType {
+    /// Adds the rules that read enum types and declarations to `rules`.
+    pub(crate) const fn rows(rules: &mut Rules<Peeper>) {
+        rules.declaration(TokenKind::Enum, type_decl);
+        rules.type_start(TokenKind::Enum, enum_type);
+    }
+}
+
+impl VariantLiteral {
+    /// Adds the rule that reads variant literals to `rules`.
+    pub(crate) const fn rows(rules: &mut Rules<Peeper>) {
+        rules.infix(TokenKind::With, Precedence::Call, variant_literal);
+    }
+}
+
+impl CaseTest {
+    /// Adds the rule that reads `is` tests to `rules`.
+    pub(crate) const fn rows(rules: &mut Rules<Peeper>) {
+        rules.infix(TokenKind::Is, Precedence::Equality, case_test);
+    }
+}
+
+impl Match {
+    /// Adds the rule that reads `match` to `rules`.
+    pub(crate) const fn rows(rules: &mut Rules<Peeper>) {
+        rules.statement(TokenKind::Match, match_statement);
+    }
 }
 
 /// Reads `{ Name, Name: Payload, ... }`, the variants of an enum type that
@@ -243,35 +267,65 @@ fn payload_pattern(p: &mut Parser<Peeper>) -> Id<ast::Pattern<Peeper>> {
     }
 }
 
-/// An enum type at `span`, which no check exists for yet.
-pub(crate) fn resolve_type(checker: &mut Checker<'_, Peeper>, span: Span) -> TypeId {
-    checker.not_supported(span, "enum types")
+impl TypeNode for EnumType {
+    /// An enum type at `span`, which no check exists for yet.
+    fn resolve(&self, checker: &mut Checker<'_, Peeper>, span: Span) -> TypeId {
+        checker.not_supported(span, "enum types")
+    }
+
+    /// The declaration of an enum, written `written`, which no check exists
+    /// for yet.
+    fn declare(
+        &self,
+        checker: &mut Checker<'_, Peeper>,
+        _definition: DefId,
+        written: ast::TypeDecl<Peeper>,
+    ) -> TypeId {
+        checker.not_supported(written.name.span, "enum declarations")
+    }
 }
 
-/// The declaration of an enum, written `written`, which no check exists
-/// for yet.
-pub(crate) fn declare(checker: &mut Checker<'_, Peeper>, written: ast::TypeDecl<Peeper>) -> TypeId {
-    checker.not_supported(written.name.span, "enum declarations")
+impl ExprNode for VariantLiteral {
+    // Ends in an expression read at the lowest precedence.
+    fn precedence(&self) -> Precedence {
+        Precedence::Lowest
+    }
+
+    /// Variant literals, at `span`, which no check exists for yet.
+    fn check(
+        &self,
+        builder: &mut ThirBuilder<'_, '_, Peeper>,
+        span: Span,
+        _expected: Option<TypeId>,
+    ) -> thir::Expr {
+        builder.checker.not_supported(span, "variant literals");
+        thir::Expr::INVALID
+    }
 }
 
-/// The enum expression `what` names, at `span`, which no check exists for
-/// yet.
-pub(crate) fn check_expr(
-    builder: &mut ThirBuilder<'_, '_, Peeper>,
-    span: Span,
-    what: &str,
-) -> thir::Expr {
-    builder.checker.not_supported(span, what);
-    thir::Expr::INVALID
+impl ExprNode for CaseTest {
+    fn precedence(&self) -> Precedence {
+        Precedence::Equality
+    }
+
+    /// `is` tests, at `span`, which no check exists for yet.
+    fn check(
+        &self,
+        builder: &mut ThirBuilder<'_, '_, Peeper>,
+        span: Span,
+        _expected: Option<TypeId>,
+    ) -> thir::Expr {
+        builder.checker.not_supported(span, "`is` tests");
+        thir::Expr::INVALID
+    }
 }
 
-/// A `match` at `span`, which no check exists for yet.
-pub(crate) fn check_match(
-    builder: &mut ThirBuilder<'_, '_, Peeper>,
-    span: Span,
-) -> Option<thir::Stmt> {
-    builder.checker.not_supported(span, "`match` statements");
-    None
+impl StmtNode for Match {
+    /// A `match` at `span`, which no check exists for yet.
+    fn check(&self, builder: &mut ThirBuilder<'_, '_, Peeper>, span: Span) -> Option<thir::Stmt> {
+        builder.checker.not_supported(span, "`match` statements");
+        None
+    }
 }
 
 #[cfg(test)]

@@ -13,9 +13,11 @@ use syntax::ast;
 use syntax::operators::Precedence;
 use token::TokenKind;
 
+use crate::ExprNode;
 use crate::FeatureExpr;
 use crate::FeatureType;
 use crate::Peeper;
+use crate::TypeNode;
 
 /// `?T`
 #[derive(Clone, Copy, Debug)]
@@ -37,11 +39,19 @@ pub enum Fallback {
     Block(Id<ast::Block<Peeper>>),
 }
 
-/// Adds the rules that read optional types and `orelse` to `rules`.
-pub(crate) const fn rows(rules: &mut Rules<Peeper>) {
-    rules.type_start(TokenKind::Question, optional_type);
-    rules.type_start(TokenKind::QuestionQuestion, doubled_optional_type);
-    rules.infix(TokenKind::Orelse, Precedence::OrElse, or_else);
+impl OptionalType {
+    /// Adds the rules that read optional types to `rules`.
+    pub(crate) const fn rows(rules: &mut Rules<Peeper>) {
+        rules.type_start(TokenKind::Question, optional_type);
+        rules.type_start(TokenKind::QuestionQuestion, doubled_optional_type);
+    }
+}
+
+impl OrElse {
+    /// Adds the rule that reads `orelse` to `rules`.
+    pub(crate) const fn rows(rules: &mut Rules<Peeper>) {
+        rules.infix(TokenKind::Orelse, Precedence::OrElse, or_else);
+    }
 }
 
 /// Reads the type after a `?` that starts at `start`.
@@ -74,15 +84,29 @@ fn or_else(p: &mut Parser<Peeper>, value: Id<ast::Expr<Peeper>>) -> Id<ast::Expr
     p.add(p.start_of(value), ast::Expr::Feature(or_else))
 }
 
-/// `?T` at `span`, which no check exists for yet.
-pub(crate) fn resolve_type(checker: &mut Checker<'_, Peeper>, span: Span) -> TypeId {
-    checker.not_supported(span, "optional types")
+impl TypeNode for OptionalType {
+    /// `?T` at `span`, which no check exists for yet.
+    fn resolve(&self, checker: &mut Checker<'_, Peeper>, span: Span) -> TypeId {
+        checker.not_supported(span, "optional types")
+    }
 }
 
-/// `value orelse fallback` at `span`, which no check exists for yet.
-pub(crate) fn check_or_else(builder: &mut ThirBuilder<'_, '_, Peeper>, span: Span) -> thir::Expr {
-    builder.checker.not_supported(span, "`orelse` fallbacks");
-    thir::Expr::INVALID
+impl ExprNode for OrElse {
+    // `orelse` ends in an expression read at the lowest precedence.
+    fn precedence(&self) -> Precedence {
+        Precedence::Lowest
+    }
+
+    /// `value orelse fallback` at `span`, which no check exists for yet.
+    fn check(
+        &self,
+        builder: &mut ThirBuilder<'_, '_, Peeper>,
+        span: Span,
+        _expected: Option<TypeId>,
+    ) -> thir::Expr {
+        builder.checker.not_supported(span, "`orelse` fallbacks");
+        thir::Expr::INVALID
+    }
 }
 
 #[cfg(test)]

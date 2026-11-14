@@ -14,6 +14,7 @@ use syntax::ast;
 use syntax::operators::Precedence;
 use token::TokenKind;
 
+use crate::ExprNode;
 use crate::FeatureExpr;
 use crate::Peeper;
 
@@ -24,9 +25,11 @@ pub struct Cast {
     pub ty: Id<ast::Type<Peeper>>,
 }
 
-/// Adds the rule that reads casts to `rules`.
-pub(crate) const fn rows(rules: &mut Rules<Peeper>) {
-    rules.infix(TokenKind::As, Precedence::Cast, cast);
+impl Cast {
+    /// Adds the rule that reads casts to `rules`.
+    pub(crate) const fn rows(rules: &mut Rules<Peeper>) {
+        rules.infix(TokenKind::As, Precedence::Cast, cast);
+    }
 }
 
 /// Reads `as Type` after `value`.
@@ -37,39 +40,46 @@ fn cast(p: &mut Parser<Peeper>, value: Id<ast::Expr<Peeper>>) -> Id<ast::Expr<Pe
     p.add(p.start_of(value), ast::Expr::Feature(cast))
 }
 
-/// `value as ty`: `value` as a value of the type `ty`, which its type
-/// converts to with `as` or without it (`Types::conversion`). A number
-/// literal takes the type `ty` if it can, so `300 as u8` is an error.
-pub(crate) fn check_cast(
-    builder: &mut ThirBuilder<'_, '_, Peeper>,
-    cast: Cast,
-    span: Span,
-) -> thir::Expr {
-    let Cast { value, ty } = cast;
-    let to = builder.checker.resolve_value_type(ty);
-    let checked = builder.check_expr(value, Some(to));
-    if checked.ty == TypeId::INVALID || to == TypeId::INVALID {
-        return thir::Expr::INVALID;
+impl ExprNode for Cast {
+    fn precedence(&self) -> Precedence {
+        Precedence::Cast
     }
-    let value_span = builder.checker.module().ast.exprs.span(value);
-    let found = checked.ty;
-    let conversion = builder.checker.types.conversion(found, to);
-    if let Some(converted) = builder.convert(checked, value_span, to, conversion) {
-        return converted;
+
+    /// `value as ty`: `value` as a value of the type `ty`, which its type
+    /// converts to with `as` or without it (`Types::conversion`). A number
+    /// literal takes the type `ty` if it can, so `300 as u8` is an error.
+    fn check(
+        &self,
+        builder: &mut ThirBuilder<'_, '_, Peeper>,
+        span: Span,
+        _expected: Option<TypeId>,
+    ) -> thir::Expr {
+        let Cast { value, ty } = *self;
+        let to = builder.checker.resolve_value_type(ty);
+        let checked = builder.check_expr(value, Some(to));
+        if checked.ty == TypeId::INVALID || to == TypeId::INVALID {
+            return thir::Expr::INVALID;
+        }
+        let value_span = builder.checker.module().ast.exprs.span(value);
+        let found = checked.ty;
+        let conversion = builder.checker.types.conversion(found, to);
+        if let Some(converted) = builder.convert(checked, value_span, to, conversion) {
+            return converted;
+        }
+        let (found_text, to_text) = builder.checker.type_texts(found, to);
+        let message = format!("`{found_text}` cannot be converted to `{to_text}`");
+        let types = &builder.checker.types;
+        let diagnostic = builder.type_error(
+            diagnostics::INVALID_CAST,
+            message,
+            span,
+            value,
+            found,
+            |ty| types.conversion(ty, to) != Conversion::Never,
+        );
+        builder.checker.report(diagnostic);
+        thir::Expr::INVALID
     }
-    let (found_text, to_text) = builder.checker.type_texts(found, to);
-    let message = format!("`{found_text}` cannot be converted to `{to_text}`");
-    let types = &builder.checker.types;
-    let diagnostic = builder.type_error(
-        diagnostics::INVALID_CAST,
-        message,
-        span,
-        value,
-        found,
-        |ty| types.conversion(ty, to) != Conversion::Never,
-    );
-    builder.checker.report(diagnostic);
-    thir::Expr::INVALID
 }
 
 #[cfg(test)]

@@ -13,8 +13,10 @@ use parser::Rules;
 use source::Span;
 use syntax::ast;
 use syntax::ast::StringKind;
+use syntax::operators::Precedence;
 use token::TokenKind;
 
+use crate::ExprNode;
 use crate::FeatureExpr;
 use crate::Peeper;
 
@@ -24,10 +26,12 @@ pub struct StringLiteral {
     pub kind: StringKind,
 }
 
-/// Adds the rules that read string literals to `rules`.
-pub(crate) const fn rows(rules: &mut Rules<Peeper>) {
-    rules.prefix(TokenKind::String, string_literal);
-    rules.prefix(TokenKind::CString, string_literal);
+impl StringLiteral {
+    /// Adds the rules that read string literals to `rules`.
+    pub(crate) const fn rows(rules: &mut Rules<Peeper>) {
+        rules.prefix(TokenKind::String, string_literal);
+        rules.prefix(TokenKind::CString, string_literal);
+    }
 }
 
 /// Reads `"text"` or `c"text"`.
@@ -43,17 +47,28 @@ fn string_literal(p: &mut Parser<Peeper>) -> Id<ast::Expr<Peeper>> {
     )
 }
 
-/// The constant the string literal `literal`, written at `span`, is.
-pub(crate) fn check_literal(
-    builder: &mut ThirBuilder<'_, '_, Peeper>,
-    literal: StringLiteral,
-    span: Span,
-) -> thir::Expr {
-    let ty = match literal.kind {
-        StringKind::Plain => TypeId::STR,
-        StringKind::C => TypeId::CSTR,
-    };
-    builder.string_literal(span, ty)
+impl ExprNode for StringLiteral {
+    fn precedence(&self) -> Precedence {
+        Precedence::Call
+    }
+
+    fn string_kind(&self) -> Option<StringKind> {
+        Some(self.kind)
+    }
+
+    /// The constant the string literal `literal`, written at `span`, is.
+    fn check(
+        &self,
+        builder: &mut ThirBuilder<'_, '_, Peeper>,
+        span: Span,
+        _expected: Option<TypeId>,
+    ) -> thir::Expr {
+        let ty = match self.kind {
+            StringKind::Plain => TypeId::STR,
+            StringKind::C => TypeId::CSTR,
+        };
+        builder.string_literal(span, ty)
+    }
 }
 
 #[cfg(test)]

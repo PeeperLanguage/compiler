@@ -15,12 +15,13 @@ use crate::testing::parse_text;
 fn grouped(tree: &Tree, id: Id<ast::Expr<Peeper>>) -> String {
     let text = |span| tree.file.slice(span).to_string();
     match tree.exprs[id] {
-        ast::Expr::Feature(FeatureExpr::Range(WrittenRange {
-            inclusive,
-            start,
-            end,
-            step,
-        })) => {
+        ast::Expr::Feature(FeatureExpr::Range(Range { written })) => {
+            let WrittenRange {
+                inclusive,
+                start,
+                end,
+                step,
+            } = written;
             let part = |part: Option<Id<ast::Expr<Peeper>>>| {
                 part.map_or(String::new(), |part| grouped(tree, part))
             };

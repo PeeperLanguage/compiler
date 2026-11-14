@@ -3,13 +3,16 @@
 
 use arena::Id;
 use check::builder::ThirBuilder;
+use model::semantic_types::TypeId;
 use model::thir;
 use parser::Parser;
 use parser::Rules;
 use source::Span;
 use syntax::ast;
+use syntax::operators::Precedence;
 use token::TokenKind;
 
+use crate::ExprNode;
 use crate::FeatureExpr;
 use crate::Peeper;
 
@@ -19,10 +22,12 @@ pub struct CharLiteral {
     pub byte: bool,
 }
 
-/// Adds the rules that read character literals to `rules`.
-pub(crate) const fn rows(rules: &mut Rules<Peeper>) {
-    rules.prefix(TokenKind::Char, char_literal);
-    rules.prefix(TokenKind::ByteChar, char_literal);
+impl CharLiteral {
+    /// Adds the rules that read character literals to `rules`.
+    pub(crate) const fn rows(rules: &mut Rules<Peeper>) {
+        rules.prefix(TokenKind::Char, char_literal);
+        rules.prefix(TokenKind::ByteChar, char_literal);
+    }
 }
 
 /// Reads `'x'` or `b'x'`.
@@ -35,10 +40,21 @@ fn char_literal(p: &mut Parser<Peeper>) -> Id<ast::Expr<Peeper>> {
     )
 }
 
-/// A character literal at `span`, which no check exists for yet.
-pub(crate) fn check_literal(builder: &mut ThirBuilder<'_, '_, Peeper>, span: Span) -> thir::Expr {
-    builder.checker.not_supported(span, "character literals");
-    thir::Expr::INVALID
+impl ExprNode for CharLiteral {
+    fn precedence(&self) -> Precedence {
+        Precedence::Call
+    }
+
+    /// A character literal at `span`, which no check exists for yet.
+    fn check(
+        &self,
+        builder: &mut ThirBuilder<'_, '_, Peeper>,
+        span: Span,
+        _expected: Option<TypeId>,
+    ) -> thir::Expr {
+        builder.checker.not_supported(span, "character literals");
+        thir::Expr::INVALID
+    }
 }
 
 #[cfg(test)]
