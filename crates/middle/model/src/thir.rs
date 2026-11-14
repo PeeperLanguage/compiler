@@ -51,8 +51,9 @@ pub struct Body {
     /// name; `None` when its value had an error. Uses of it are folded.
     pub constants: Arena<Option<Constant>>,
     pub children: Children,
-    /// Checking it reported an error: later phases would only find what
-    /// follows from that, so it is not lowered.
+    /// Checking it reported an error, or it holds an invalid expression
+    /// whose error another body's check reported: later phases would only
+    /// find what follows from that, so it is not lowered.
     pub has_errors: bool,
 }
 

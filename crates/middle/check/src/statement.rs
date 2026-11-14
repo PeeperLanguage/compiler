@@ -38,9 +38,9 @@ use crate::scope::report_redeclared;
 impl<L: Checked> Checker<'_, L> {
     /// Puts in `body` the THIR of the body of the function `copy`,
     /// asked for at `used_at`, recording its facts when `records_facts`
-    /// (`Checking`), with `has_errors` set when checking it reported
-    /// an error; what `body` held is dropped, its memory kept. False, with
-    /// `body` untouched, for a function without a body or whose signature had
+    /// (`Checking`), with `has_errors` set when it has an error (`Body`);
+    /// what `body` held is dropped, its memory kept. False, with `body`
+    /// untouched, for a function without a body or whose signature had
     /// an error.
     pub fn check_body(
         &mut self,
@@ -122,12 +122,15 @@ impl<L: Checked> Checker<'_, L> {
             let statements = builder.check_statements(None, tree.blocks[block].statements);
             builder.body.blocks[outermost].statements = statements;
         });
-        // A part of the signature that failed was reported with the signature.
+        // A part of the signature that failed was reported with the signature,
+        // and so was what a call of another function with such a signature
+        // leaves here: an invalid expression, with nothing reported again.
         body.has_errors = parameters.contains(&TypeId::INVALID)
             || result == TypeId::INVALID
             || self.module_checks[module].diagnostics[reported..]
                 .iter()
-                .any(Diagnostic::is_error);
+                .any(Diagnostic::is_error)
+            || (body.exprs.ids()).any(|id| matches!(body.exprs[id].kind, ExprKind::Invalid));
         true
     }
 }
