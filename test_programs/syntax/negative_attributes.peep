@@ -1,11 +1,17 @@
-// `#[extern("name")]` is written once, with one string, and only on a
-// function: it is the one attribute there is. An attribute needs a
-// declaration after it.
+// `#[extern("name")]` is written once, with one string that a symbol can
+// be named, and only on a function: it is the one attribute there is. An
+// attribute needs a declaration after it.
 #[extern(123)] //~ error[P0005]: write `#[extern("name")]` once, with the C function's name
 fn Numbered(code: i32) -> i32;
 
 #[extern("puts", 1)] //~ error[P0005]: write `#[extern("name")]` once, with the C function's name
 fn Extra(text: &cstr) -> i32;
+
+#[extern("")] //~ error[P0005]: write `#[extern("name")]` once, with the C function's name
+fn Unnamed(code: i32) -> i32;
+
+#[extern("a\0b")] //~ error[P0005]: write `#[extern("name")]` once, with the C function's name
+fn Cut(code: i32) -> i32;
 
 #[extern("limit")] //~ error[P0005]: `extern` names a C function, so only a function has it
 const Limit: i32 = 1;

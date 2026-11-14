@@ -87,8 +87,9 @@ pub const EXTERN_ATTRIBUTE: &str = "extern";
 
 /// The name in `#[extern("name")]` on the function `definition` of
 /// `modules`, if it has one: it is a C function, linked by that name. The
-/// error is where an `extern` attribute of another shape, or a second one,
-/// is written, which the checker reports.
+/// error is where an `extern` attribute of another shape, a second one, or
+/// one whose name no symbol can have is written, which the checker
+/// reports.
 pub fn extern_symbol<L: Language>(
     modules: &[Module<L>],
     definition: DefId,
@@ -115,7 +116,13 @@ pub fn extern_symbol<L: Language>(
             return Err(span);
         }
         let text = tree.file.slice(tree.exprs.span(argument));
-        symbol = Some(String::from_utf8_lossy(&literal::value(text)).into_owned());
+        let name = String::from_utf8_lossy(&literal::value(text)).into_owned();
+        // No symbol has an empty name or one with a zero byte, which ends a
+        // C name.
+        if name.is_empty() || name.contains('\0') {
+            return Err(span);
+        }
+        symbol = Some(name);
     }
     Ok(symbol)
 }
