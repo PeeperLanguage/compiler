@@ -15,14 +15,13 @@ use syntax::ast::Language;
 
 use crate::checked::ConstantText;
 
-/// What hover shows for a function's body, so a function that has one
-/// differs from one that ends in `;`, as an `extern` one does.
-const HIDDEN_BODY: &str = " { /* ... */ }";
+/// What hover writes in place of what it leaves out, as a function's body.
+const HIDDEN: &str = "/* ... */";
 
 /// What hover shows for `declaration` of the module at `module`
 /// (`hover_text`), its attributes first: a constant as its name, type and
 /// value, from `constant`, worked out from its initializer; a function up to
-/// its body, shown as `HIDDEN_BODY`; a struct whole, then its functions (`write_functions`), only
+/// its body, which is `HIDDEN`; a struct whole, then its functions (`write_functions`), only
 /// the exported ones when hovered `from_elsewhere`, another module; another
 /// declaration, or a constant with an error, whole.
 pub(crate) fn declaration_hover(
@@ -69,7 +68,7 @@ pub(crate) fn declaration_hover(
             _,
         ) => {
             let signature = written(tree.blocks.span(*body).start);
-            (format!("{signature}{HIDDEN_BODY}"), None)
+            (format!("{signature} {{ {HIDDEN} }}"), None)
         }
         (ast::Decl::Type(declared), _) if matches!(tree.types[declared.ty], ast::Type::Feature(ty) if Peeper::fields(&ty).is_some()) =>
         {
@@ -90,7 +89,7 @@ pub(crate) fn declaration_hover(
     )
 }
 /// Writes to `facts` each function of the struct named `owner` in `tree`,
-/// its body as `HIDDEN_BODY`, after a blank line; only the exported ones when
+/// its body as `HIDDEN`, after a blank line; only the exported ones when
 /// `exported_only`. A type's functions are declared in the type's module,
 /// where its name names one declaration, so the written name finds them.
 fn write_functions(
@@ -119,7 +118,7 @@ fn write_functions(
         facts.push_str(separator);
         facts.push_str(tree.file.text[span.start as usize..end as usize].trim());
         if function.body.is_some() {
-            facts.push_str(HIDDEN_BODY);
+            _ = write!(facts, " {{ {HIDDEN} }}");
         }
         separator = "\n";
     }
