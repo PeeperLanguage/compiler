@@ -1,6 +1,0 @@
-name = "loans"
-build = "lib"
-
-[test]
-mode = "check"
-outcome = "success"

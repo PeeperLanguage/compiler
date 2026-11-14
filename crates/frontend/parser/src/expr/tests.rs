@@ -1,8 +1,9 @@
-use model::ast::Decl;
-use model::ast::Stmt;
-use model::ast::Tree;
+use syntax::ast::Decl;
+use syntax::ast::Stmt;
+use syntax::ast::Tree;
 
 use super::*;
+use crate::tests::Bare;
 use crate::tests::dump_of;
 use crate::tests::messages;
 use crate::tests::one_error;
@@ -52,7 +53,7 @@ fn operators_are_written_as_their_tokens() {
 }
 
 /// The expression of the first statement of the first function.
-fn first_expression(tree: &Tree) -> Id<Expr> {
+fn first_expression(tree: &Tree<Bare>) -> Id<Expr<Bare>> {
     let decl = tree.declarations().next().unwrap();
     let Decl::Function(f) = tree.decls[decl] else {
         panic!("not a function")
@@ -70,7 +71,7 @@ fn first_expression(tree: &Tree) -> Id<Expr> {
 }
 
 /// An expression with each binary operation in parentheses.
-fn grouped(t: &Tree, id: Id<Expr>) -> String {
+fn grouped(t: &Tree<Bare>, id: Id<Expr<Bare>>) -> String {
     let text = |span| t.file.slice(span).to_string();
     match t.exprs[id] {
         Expr::Binary { op, left, right } => {
@@ -80,29 +81,6 @@ fn grouped(t: &Tree, id: Id<Expr>) -> String {
                 op.symbol(),
                 grouped(t, right)
             )
-        }
-        Expr::Cast { value, ty } => {
-            format!("({} as {})", grouped(t, value), text(t.types.span(ty)))
-        }
-        Expr::Is { value, case } => {
-            format!("({} is {})", grouped(t, value), text(t.types.span(case)))
-        }
-        Expr::OrElse { value, fallback } => {
-            format!("({} orelse {})", grouped(t, value), grouped(t, fallback))
-        }
-        Expr::Pipe { value, call } => {
-            format!("({} |> {})", grouped(t, value), grouped(t, call))
-        }
-        Expr::Range {
-            inclusive,
-            start,
-            end,
-            step,
-        } => {
-            let part = |part: Option<Id<Expr>>| part.map_or(String::new(), |e| grouped(t, e));
-            let op = if inclusive { "..=" } else { ".." };
-            let step = step.map_or(String::new(), |e| format!(":{}", grouped(t, e)));
-            format!("({}{op}{}{step})", part(start), part(end))
         }
         Expr::Unary { value, .. } | Expr::Reference { value, .. } => {
             let (span, inner) = (t.exprs.span(id), t.exprs.span(value));
@@ -154,21 +132,7 @@ fn precedence() {
         ("-a.b(c)[d]", "-a.b(c)[d]"),
         ("!a && b", "(!a && b)"),
         ("&mut a + b", "(&mut a + b)"),
-        ("a + b as i64", "(a + (b as i64))"),
-        ("a as i32 * b", "((a as i32) * b)"),
-        ("a is E::B && c", "((a is E::B) && c)"),
-        ("a orelse b orelse c", "(a orelse (b orelse c))"),
-        ("a || b orelse c", "((a || b) orelse c)"),
-        ("a |> f(b) |> g()", "((a |> f(b)) |> g())"),
-        ("a |> len() as i32", "((a |> len()) as i32)"),
-        ("a + b |> f()", "((a + b) |> f())"),
-        ("x.y.z[0][i..j]", "x.y.z[0][i..j]"),
-        ("a + b..c * d", "((a + b)..(c * d))"),
-        ("a orelse b..c", "(a orelse (b..c))"),
-        ("a..b orelse c", "(a..(b orelse c))"),
-        ("a..=b:c + d", "(a..=b:(c + d))"),
-        ("..b as i64", "(..(b as i64))"),
-        ("a..b..c", "((a..b)..c)"),
+        ("x.y.z[0][i]", "x.y.z[0][i]"),
         ("-r.* * r.x.*", "(-r.* * r.x.*)"),
         ("&mut r.*.x", "&mut r.*.x"),
     ] {
@@ -181,17 +145,10 @@ fn precedence() {
 #[test]
 fn parses_expressions() {
     let text = r#"fn f() {
-    c"c";
-    'x';
-    b'y';
-    true;
     none;
-    Point.{ x = 1, y = -2 };
-    .{ a = &mut v, b = @raw };
-    Shape::Line with .{ end = Box<i32>::new(1) };
-    [_]u8{ 1, 2, 4..=8:2..., (0..3)..., a... };
-    sum(1, a..., &mut b...);
-    println(items[1..=n]);
+    Box<i32>::new(1);
+    sum(1, (a)..., &mut b...);
+    items[n];
 }
 "#;
     let want = r#"module
@@ -199,85 +156,29 @@ fn parses_expressions() {
     declared name f
     block
       expression statement
-        string literal c string c"c"
-      expression statement
-        character literal 'x'
-      expression statement
-        character literal byte character b'y'
-      expression statement
-        bool literal true
-      expression statement
         none literal none
       expression statement
-        struct literal
-          type name Point
-          field value
-            field name x
-            number literal 1
-          field value
-            field name y
-            unary expression -
-              number literal 2
-      expression statement
-        struct literal
-          field value
-            field name a
-            reference expression mut
-              name reference v
-          field value
-            field name b
-            raw address expression
-              name reference raw
-      expression statement
-        variant literal
+        call expression
           path
-            type name Shape
-            type name Line
-          struct literal
-            field value
-              field name end
-              call expression
-                path
-                  generic type
-                    type name Box
-                    type name i32
-                  type name new
-                number literal 1
-      expression statement
-        array literal
-          fixed array type
-            inferred length _
-            type name u8
+            generic type
+              type name Box
+              type name i32
+            type name new
           number literal 1
-          number literal 2
-          spread
-            range ..=
-              number literal 4
-              number literal 8
-              number literal 2
-          spread
-            parentheses
-              range ..
-                number literal 0
-                number literal 3
-          spread
-            name reference a
       expression statement
         call expression
           name reference sum
           number literal 1
           spread
-            name reference a
+            parentheses
+              name reference a
           spread
             reference expression mut
               name reference b
       expression statement
-        print expression println
-          index expression
-            name reference items
-            range ..=
-              number literal 1
-              name reference n
+        index expression
+          name reference items
+          name reference n
 "#;
     assert!(messages(text).is_empty());
     assert_eq!(dump_of(text), want);
@@ -285,25 +186,7 @@ fn parses_expressions() {
 
 #[test]
 fn expression_errors() {
-    for (text, message) in [
-        ("a[1..=];", "inclusive range requires an end bound"),
-        ("a is b;", "enum case must use a fully named path"),
-        ("a |> b;", "pipe target must be a free-function call"),
-        ("a |> b.c();", "pipe cannot call a method"),
-        (
-            ".{ a: 1, b: 2 };",
-            "expected `=` after struct literal field name",
-        ),
-        ("[x]i32{};", "expected array length"),
-        (
-            "[]i32{};",
-            "`[]i32` is any number of `i32`s, so it has no fixed size",
-        ),
-        ("a.;", "expected `identifier`, found `;`"),
-        ("[_]i32;", "expected `{`, found `;`"),
-    ] {
-        one_error(&format!("fn f() {{ {text} }}"), message, None);
-    }
+    one_error("fn f() { a.; }", "expected `identifier`, found `;`", None);
 }
 
 /// Values after a slice type are an array's, lent: `&[_]i32{ 1, 2 }`.
@@ -317,10 +200,10 @@ fn slice_type_with_values() {
 }
 
 /// A spelling that can only be a type is read as one where a value could go,
-/// for an argument that takes a type; `[N]T` is a type when no `{` follows.
+/// for an argument that takes a type.
 #[test]
 fn type_expressions() {
-    let text = "fn f() { g(*Node, rawptr, [4]i32, &[]i32, &mut []u8, &x); }\n";
+    let text = "fn f() { g(&[]i32, &mut []u8, &x); }\n";
     let want = r#"module
   function declaration
     declared name f
@@ -328,15 +211,6 @@ fn type_expressions() {
       expression statement
         call expression
           name reference g
-          type expression
-            pointer type
-              type name Node
-          type expression
-            raw pointer type rawptr
-          type expression
-            fixed array type
-              number literal 4
-              type name i32
           type expression
             slice type
               type name i32
@@ -350,13 +224,13 @@ fn type_expressions() {
     assert_eq!(dump_of(text), want);
 }
 
-/// `<` begins type arguments only when `::` or `.{` follows the matching `>`.
+/// `<` begins type arguments only when `::`, or what continues a path, follows
+/// the matching `>`.
 #[test]
 fn comparison_is_not_type_arguments() {
     for (text, want) in [
         ("a < b && c > d;", "binary"),
         ("Box<T>::new();", "call"),
-        ("Pair<A, B>.{};", "struct literal"),
         ("a < b;", "binary"),
         ("f(a < b, c > d);", "call"),
     ] {
@@ -365,7 +239,6 @@ fn comparison_is_not_type_arguments() {
         let got = match tree.exprs[first_expression(&tree)] {
             Expr::Binary { .. } => "binary",
             Expr::Call { .. } => "call",
-            Expr::StructLiteral { .. } => "struct literal",
             other => panic!("{text}: {other:?}"),
         };
         assert_eq!(got, want, "{text}");

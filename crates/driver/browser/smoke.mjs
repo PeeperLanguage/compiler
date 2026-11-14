@@ -71,14 +71,14 @@ assert.match(wrapped.run.output[0].text, /^panic: this reads or writes memory th
 // A program runs with what it printed, with no backend or linker.
 const { diagnostics, run } = await execute({
     "main.peep":
-        'struct Point { x: i32, y: f64 }\nfn main() -> i32 {\n    println(Point.{ x = 1, y = 2.5 }, [2]i32{3, 4}, 340282366920938463463374607431768211455u128);\n    return 7;\n}\n',
+        'struct Point { x: i32, y: f64 }\nfn main() -> i32 {\n    let point = Point.{ x = 1, y = 2.5 };\n    let pair = [2]i32{3, 4};\n    println(point.x, point.y, pair[0], pair[1], 340282366920938463463374607431768211455u128);\n    return 7;\n}\n',
 });
 assert.equal(diagnostics, "");
 assert.deepEqual(run, {
     output: [
         {
             stream: "stdout",
-            text: "Point { x: 1, y: 2.5 } [3, 4] 340282366920938463463374607431768211455\n",
+            text: "1 2.5 3 4 340282366920938463463374607431768211455\n",
         },
     ],
     exit_code: 7,

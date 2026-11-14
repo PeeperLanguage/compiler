@@ -43,9 +43,8 @@ fn compile_growth_kb(text: String) -> u64 {
         &program,
         target,
         compile::Results::default(),
-        false,
-        false,
-        |_| {},
+        compile::Options::default(),
+        &mut |_| {},
     );
     assert_eq!(results.diagnostics().count(), 0);
     status_kb("VmHWM:") - before
@@ -119,14 +118,14 @@ fn late_set_function(groups: usize) -> String {
 #[test]
 fn large_functions_stay_small() {
     let measured = [
-        // 21 MB as it runs first here; 47 MB with a set of every holder at
+        // 25 MB as it runs first here; 47 MB with a set of every holder at
         // every block's end. At 400 groups, a table of every holder and loan
         // at every block took 407 MB.
         ("branching", branching_function(4000), 30),
         // 2 MB after `branching`; 28 MB alone, keeping the live holders after
         // each instruction.
         ("straight", straight_function(3000), 8),
-        // 16 MB after the others, 25 MB alone; 70 MB with a set of every
+        // 25 MB after the others, 25 MB alone; 70 MB with a set of every
         // variable at every block.
         ("late", late_set_function(8000), 35),
     ];

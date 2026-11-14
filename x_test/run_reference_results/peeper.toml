@@ -1,7 +1,0 @@
-name = "run_reference_results"
-build = "program"
-
-[test]
-mode = "run"
-outcome = "exit_code"
-exit_code = 73

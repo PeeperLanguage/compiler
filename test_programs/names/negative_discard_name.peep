@@ -1,0 +1,9 @@
+// `_` binds nothing, so it cannot name a declaration or stand for a value.
+const _: i32 = 2; //~ error[P0002]: expected `identifier`, found `_`
+
+fn _() {} //~ error[P0002]: expected `identifier`, found `_`
+
+fn main() {
+    let _ = 1; //~ error[P0002]: expected `identifier`, found `_`
+    let x = _; //~ error[P0002]: expected expression, found `_`
+}

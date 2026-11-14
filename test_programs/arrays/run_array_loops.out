@@ -1,0 +1,10 @@
+total: 10
+copy: 1 2 3 4 then 100
+doubled: 2 4 6 8
+indexed: 0 5 1 6 2 7
+grid: 21
+made: 6 calls 1
+points: 8
+jumps: 10 30
+kept: 3 2 9
+slices: 18 1 2 4 6 52 0 2

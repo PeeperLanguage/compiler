@@ -11,8 +11,6 @@ use arena::Id;
 use arena::List;
 use diagnostics::Diagnostic;
 use model::FunctionCopy;
-use model::ast;
-use model::ast::Ident;
 use model::constant::Value;
 use model::semantic_types::ConstArgument;
 use model::semantic_types::Type;
@@ -26,7 +24,10 @@ use model::thir::Stmt;
 use model::thir::Symbol;
 use model::thir::Variable;
 use source::Span;
+use syntax::ast;
+use syntax::ast::Ident;
 
+use crate::Checked;
 use crate::Checker;
 use crate::Checking;
 use crate::builder::Declared;
@@ -34,19 +35,19 @@ use crate::builder::ThirBuilder;
 use crate::function::function_declaration;
 use crate::scope::report_redeclared;
 
-impl Checker<'_> {
+impl<L: Checked> Checker<'_, L> {
     /// Puts in `body` the THIR of the body of the function `copy`,
-    /// asked for at `used_at` and built only to run at compile time when
-    /// `to_run` (`Checking`), with `has_errors` set when checking it reported
-    /// an error; what `body` held is dropped, its memory kept. False, with
-    /// `body` untouched, for a function without a body or whose signature had
+    /// asked for at `used_at`, recording its facts when `records_facts`
+    /// (`Checking`), with `has_errors` set when it has an error (`Body`);
+    /// what `body` held is dropped, its memory kept. False, with `body`
+    /// untouched, for a function without a body or whose signature had
     /// an error.
     pub fn check_body(
         &mut self,
         copy: FunctionCopy,
         used_at: Span,
         body: &mut Body,
-        to_run: bool,
+        records_facts: bool,
     ) -> bool {
         let FunctionCopy {
             definition,
@@ -71,7 +72,7 @@ impl Checker<'_> {
             definition,
             arguments,
             used_at,
-            records_facts: !to_run,
+            records_facts,
         };
         self.checking_in(checking, |checker| {
             body.clear();
@@ -121,17 +122,20 @@ impl Checker<'_> {
             let statements = builder.check_statements(None, tree.blocks[block].statements);
             builder.body.blocks[outermost].statements = statements;
         });
-        // A part of the signature that failed was reported with the signature.
+        // A part of the signature that failed was reported with the signature,
+        // and so was what a call of another function with such a signature
+        // leaves here: an invalid expression, with nothing reported again.
         body.has_errors = parameters.contains(&TypeId::INVALID)
             || result == TypeId::INVALID
             || self.module_checks[module].diagnostics[reported..]
                 .iter()
-                .any(Diagnostic::is_error);
+                .any(Diagnostic::is_error)
+            || (body.exprs.ids()).any(|id| matches!(body.exprs[id].kind, ExprKind::Invalid));
         true
     }
 }
 
-impl<'a, 'p> ThirBuilder<'a, 'p> {
+impl<'a, 'p, L: Checked> ThirBuilder<'a, 'p, L> {
     /// The THIR of `statements`, in the current block, after `first`, a
     /// statement the checker made for the block. In a copy, the statements
     /// after an `if` its constants decided that always leaves the block are
@@ -140,7 +144,7 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
     fn check_statements(
         &mut self,
         first: Option<Id<Stmt>>,
-        statements: List<ast::Stmt>,
+        statements: List<ast::Stmt<L>>,
     ) -> List<Stmt> {
         let mut checked: Vec<NonZeroU32> = Vec::with_capacity(statements.len() + 1);
         checked.extend(first.map(NonZeroU32::from));
@@ -186,7 +190,7 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
 
     /// The THIR of `block`; the names it declares end with it. It is added
     /// before the blocks inside it.
-    fn check_block(&mut self, block: Id<ast::Block>) -> Id<Block> {
+    fn check_block(&mut self, block: Id<ast::Block<L>>) -> Id<Block> {
         let enclosing = self.open_block(block);
         self.close_block(block, enclosing, None)
     }
@@ -194,7 +198,7 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
     /// Makes `block` the current block, for names declared before its
     /// statements; gives the enclosing block and where its names start, for
     /// `close_block`.
-    fn open_block(&mut self, block: Id<ast::Block>) -> (Id<Block>, usize) {
+    fn open_block(&mut self, block: Id<ast::Block<L>>) -> (Id<Block>, usize) {
         let opened = Block {
             parent: Some(self.block),
             statements: List::EMPTY,
@@ -211,7 +215,7 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
     /// again.
     fn close_block(
         &mut self,
-        block: Id<ast::Block>,
+        block: Id<ast::Block<L>>,
         enclosing: (Id<Block>, usize),
         first: Option<Id<Stmt>>,
     ) -> Id<Block> {
@@ -325,7 +329,7 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
 
     /// The THIR of `statement`; `None` for a `const`, which only declares a
     /// name, and for a statement with an error.
-    fn check_statement(&mut self, statement: Id<ast::Stmt>) -> Option<Id<Stmt>> {
+    fn check_statement(&mut self, statement: Id<ast::Stmt<L>>) -> Option<Id<Stmt>> {
         // Blocks in blocks and long `else if` chains are a deep recursion.
         source::grow_stack(|| {
             let tree = &self.checker.module().ast;
@@ -348,22 +352,7 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
                     return None;
                 }
                 ast::Stmt::Return(value) => Stmt::Return(self.check_return_value(span, value)),
-                ast::Stmt::Panic(message) => {
-                    let message = tree.unparenthesized(message);
-                    let span = tree.exprs.span(message);
-                    // shortcut: a plain string literal only, as there are no
-                    // run-time strings; take a string value once there are.
-                    if !matches!(tree.exprs[message], ast::Expr::String { c_string: false }) {
-                        let checked = self.add_expr(message, None);
-                        if self.body.exprs[checked].ty != TypeId::INVALID {
-                            let what = "`panic` messages other than string literals";
-                            self.checker.not_supported(span, what);
-                        }
-                        return None;
-                    }
-                    let message = self.string_literal(span, TypeId::STR);
-                    Stmt::Panic(self.body.add(message, span))
-                }
+                ast::Stmt::Feature(stmt) => L::check_stmt(self, stmt, span)?,
                 ast::Stmt::Expression(value) => Stmt::Expression(self.add_expr(value, None)),
                 ast::Stmt::Assign { target, value } => self.assign(target, value)?,
                 ast::Stmt::If {
@@ -467,10 +456,6 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
                 }
                 ast::Stmt::Break => Stmt::Break,
                 ast::Stmt::Continue => Stmt::Continue,
-                ast::Stmt::Match { .. } => {
-                    self.checker.not_supported(span, "`match` statements");
-                    return None;
-                }
             };
             Some(self.body.add(checked, span))
         })

@@ -1,0 +1,43 @@
+source_filename = "<fixture>/src/main.peep"
+
+@.str.0 = private unnamed_addr constant [4 x i8] c"true"
+@.str.1 = private unnamed_addr constant [5 x i8] c"false"
+@.str.2 = private unnamed_addr constant [1 x i8] c"\0A"
+
+define ptr @"ll_pointer_offsets:main.Next"(ptr %a0, i64 %a1) {
+entry:
+  %s0 = alloca [8 x i8], align 8
+  %s1 = alloca [8 x i8], align 8
+  br label %bb0
+bb0:
+  store ptr %a0, ptr %s0
+  store i64 %a1, ptr %s1
+  %i2 = load ptr, ptr %s0
+  %i3 = load i64, ptr %s1
+  %i4 = getelementptr i8, ptr %i2, i64 %i3
+  ret ptr %i4
+}
+
+define void @"ll_pointer_offsets:main.main"() {
+entry:
+  br label %bb0
+bb0:
+  %i0 = call ptr @"ll_pointer_offsets:main.Next"(ptr null, i64 8)
+  %i1.c = icmp eq ptr %i0, null
+  br i1 %i1.c, label %bb1, label %bb2
+bb1:
+  call void @"peeper_rt_v1_print_bytes"(ptr @.str.0, i64 4)
+  br label %bb3
+bb2:
+  call void @"peeper_rt_v1_print_bytes"(ptr @.str.1, i64 5)
+  br label %bb3
+bb3:
+  call void @"peeper_rt_v1_print_bytes"(ptr @.str.2, i64 1)
+  call void @"peeper_rt_v1_flush"()
+  ret void
+}
+
+declare void @"peeper_rt_v1_flush"()
+
+declare void @"peeper_rt_v1_print_bytes"(ptr, i64)
+

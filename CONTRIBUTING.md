@@ -40,7 +40,7 @@ Set up the toolchain once, then build the compiler and bundled library:
 ```bash
 bash scripts/setup.sh
 bash scripts/build.sh
-build/bin/peeper check x_test/<fixture>
+cargo test -p peeper --test test_programs
 ```
 
 ## Project rules
@@ -79,12 +79,15 @@ bash scripts/check.sh
 On Linux it also builds the browser checker and runs it in Node, which needs
 `rustup target add wasm32-wasip1` once.
 
-Language features and behavior changes require Peeper source coverage under
-`x_test/`:
+Language features and behavior changes require test programs under
+`test_programs/<subject>/` (the `test_programs` crate's documentation says
+how one is written):
 
-- add a positive type or runtime fixture;
-- add negative fixtures for rejected semantics when applicable;
-- validate fixtures with bundled `build/bin/peeper`;
+- add a positive program that is checked or run;
+- add programs for rejected semantics when applicable, each error marked
+  with `//~` on its line;
+- run them with bundled `build/bin/peeper`
+  (`PEEPER=build/bin/peeper cargo test -p peeper --test test_programs`);
 - retain focused Rust unit tests near affected compiler crates.
 
 Backend or ABI changes need coverage for every affected target width. Semantic

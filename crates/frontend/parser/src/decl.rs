@@ -4,68 +4,65 @@
 use arena::Id;
 use arena::List;
 use diagnostics::Diagnostic;
-use model::ast::Attribute;
-use model::ast::Decl;
-use model::ast::Expr;
-use model::ast::Function;
-use model::ast::Ident;
-use model::ast::Import;
-use model::ast::Metadata;
-use model::ast::Name;
-use model::ast::Param;
-use model::ast::Signature;
-use model::ast::Type;
-use model::ast::TypeDecl;
-use model::operators::Precedence;
 use source::Span;
+use syntax::ast::Attribute;
+use syntax::ast::Decl;
+use syntax::ast::Expr;
+use syntax::ast::Function;
+use syntax::ast::Ident;
+use syntax::ast::Import;
+use syntax::ast::Metadata;
+use syntax::ast::Name;
+use syntax::ast::Param;
+use syntax::ast::Signature;
+use syntax::ast::Type;
+use syntax::ast::TypeDecl;
+use syntax::operators::Precedence;
 use token::TokenKind;
 
+use crate::Grammar;
 use crate::Parser;
+use crate::Rules;
 use crate::expr::starts_expression;
 use crate::is_name;
 use crate::types::starts_type;
 
 /// Reads the declaration the current keyword begins, with its doc comment and
 /// attributes.
-type DeclarationRule = fn(&mut Parser, Metadata) -> Id<Decl>;
+pub type DeclarationRule<L> = fn(&mut Parser<L>, Metadata<L>) -> Id<Decl<L>>;
 
 /// The reader of each declaration a keyword begins, indexed by token kind;
 /// each takes the declaration's doc comment and attributes.
-static DECLARATIONS: [Option<DeclarationRule>; 256] = {
-    let mut declarations: [Option<DeclarationRule>; 256] = [None; 256];
-    declarations[TokenKind::Fn as usize] = Some(function_decl);
-    declarations[TokenKind::Const as usize] = Some(const_decl);
-    declarations[TokenKind::Struct as usize] = Some(type_decl);
-    declarations[TokenKind::Enum as usize] = Some(type_decl);
-    declarations[TokenKind::Iface as usize] = Some(type_decl);
-    declarations[TokenKind::Type as usize] = Some(type_decl);
-    declarations
-};
-
-/// Whether `kind` begins a declaration or an import.
-pub(crate) fn starts_declaration(kind: TokenKind) -> bool {
-    DECLARATIONS[kind as usize].is_some() || kind == TokenKind::Import
+pub(crate) const fn declaration_rows<L: Grammar>(rules: &mut Rules<L>) {
+    rules.declaration(TokenKind::Fn, function_decl);
+    rules.declaration(TokenKind::Const, const_decl);
+    rules.declaration(TokenKind::Type, type_decl);
 }
 
-fn starts_parameter(kind: TokenKind) -> bool {
+/// Whether `kind` begins a declaration or an import.
+pub(crate) fn starts_declaration<L: Grammar>(kind: TokenKind) -> bool {
+    L::rules().declarations[kind as usize].is_some() || kind == TokenKind::Import
+}
+
+fn starts_parameter<L: Grammar>(kind: TokenKind) -> bool {
     matches!(
         kind,
         TokenKind::Const | TokenKind::Mut | TokenKind::Underscore | TokenKind::SelfValue
-    ) || starts_type(kind)
+    ) || starts_type::<L>(kind)
 }
 
-impl Parser {
+impl<L: Grammar> Parser<L> {
     pub(crate) fn module(&mut self) {
         let mut imports = Vec::new();
         let mark = self.list_items.len();
         loop {
             let metadata = self.metadata();
             let kind = self.tok().kind;
-            if starts_declaration(kind) {
+            if starts_declaration::<L>(kind) {
                 self.recovering = false;
             }
             let first = self.tree.children.lists.items(metadata.attributes).next();
-            if DECLARATIONS[kind as usize].is_none()
+            if L::rules().declarations[kind as usize].is_none()
                 && let Some(attribute) = first
             {
                 let span = self.tree.children.attributes.span(attribute);
@@ -84,7 +81,7 @@ impl Parser {
                     return;
                 }
                 TokenKind::Import => imports.extend(self.import_decl()),
-                kind if let Some(read) = DECLARATIONS[kind as usize] => {
+                kind if let Some(read) = L::rules().declarations[kind as usize] => {
                     let decl = read(self, metadata);
                     self.list_items.push(decl.into());
                 }
@@ -115,7 +112,7 @@ impl Parser {
                         .label(&self.tree.file, t.span, "expected a declaration here")
                         .help("move this statement into a function", Vec::new()),
                     );
-                    while !self.at(TokenKind::Eof) && !starts_declaration(self.tok().kind) {
+                    while !self.at(TokenKind::Eof) && !starts_declaration::<L>(self.tok().kind) {
                         self.next();
                     }
                 }
@@ -124,7 +121,7 @@ impl Parser {
     }
 
     /// Reads the doc comment and attributes in front of a declaration.
-    fn metadata(&mut self) -> Metadata {
+    fn metadata(&mut self) -> Metadata<L> {
         let doc_comment = self.doc_comment();
         let mark = self.list_items.len();
         while self.at(TokenKind::Hash) {
@@ -159,7 +156,7 @@ impl Parser {
     }
 
     /// Reads `#[name]` or `#[name(arguments)]`; one attribute per block.
-    fn attribute(&mut self) -> Id<Attribute> {
+    fn attribute(&mut self) -> Id<Attribute<L>> {
         let start = self.next().span.start;
         let Some(open) = self.expect(TokenKind::LeftBracket) else {
             let name = Ident { span: self.here() };
@@ -178,7 +175,7 @@ impl Parser {
                 TokenKind::LeftParen,
                 TokenKind::RightParen,
                 false,
-                starts_expression,
+                starts_expression::<L>,
                 |p| p.expr(Precedence::Lowest),
             );
         }
@@ -197,7 +194,7 @@ impl Parser {
             );
             while !self.at(TokenKind::RightBracket)
                 && !self.at(TokenKind::Eof)
-                && !starts_declaration(self.tok().kind)
+                && !starts_declaration::<L>(self.tok().kind)
             {
                 self.next();
             }
@@ -226,17 +223,17 @@ impl Parser {
 
     /// Reads `name<T>(parameters) -> Result in origins` after a function's
     /// `fn` and owner: its name and signature.
-    pub(crate) fn named_signature(&mut self) -> (Ident, Signature) {
+    pub fn named_signature(&mut self) -> (Ident, Signature<L>) {
         let name = self.name();
         let type_parameters = self.type_parameters();
-        let signature = self.signature(type_parameters, starts_parameter, Self::parameter);
+        let signature = self.signature(type_parameters, starts_parameter::<L>, Self::parameter);
         (name, signature)
     }
 
     /// Reads a name into a node of its own: a type parameter or an origin.
     fn name_node(&mut self) -> Id<Name> {
         let name = self.name();
-        self.tree.add(Name, name.span)
+        self.tree.children.names.push(Name, name.span)
     }
 
     /// Reads what a returned reference may point into: a parameter's name, or
@@ -244,7 +241,7 @@ impl Parser {
     fn origin(&mut self) -> Id<Name> {
         if self.at(TokenKind::SelfValue) {
             let span = self.next().span;
-            return self.tree.add(Name, span);
+            return self.tree.children.names.push(Name, span);
         }
         self.name_node()
     }
@@ -262,7 +259,11 @@ impl Parser {
 
     /// Reads `name: Type = value;` after `let` or `const`; the type and the
     /// value may be left out.
-    pub(crate) fn binding(&mut self) -> (Ident, Option<Id<Type>>, Option<Id<Expr>>) {
+    #[expect(
+        clippy::type_complexity,
+        reason = "three parts; only the language parameter is long"
+    )]
+    pub(crate) fn binding(&mut self) -> (Ident, Option<Id<Type<L>>>, Option<Id<Expr<L>>>) {
         let name = self.name();
         let ty = self.at(TokenKind::Colon).then(|| {
             self.next();
@@ -281,7 +282,7 @@ impl Parser {
     /// or `...mut T`; `const name: type`, which takes a type; or `self`,
     /// `mut self`, `&self` or `&mut self`, the parameter `self` of the type
     /// the function belongs to.
-    fn parameter(&mut self) -> Id<Param> {
+    fn parameter(&mut self) -> Id<Param<L>> {
         let start = self.tok().span.start;
         let reference = self.at(TokenKind::Ampersand);
         let mutable = self.ahead(usize::from(reference)).kind == TokenKind::Mut;
@@ -313,7 +314,6 @@ impl Parser {
                     mutable: mutable && !reference,
                     name: Some(name),
                     ty,
-                    variadic: false,
                     default: None,
                 },
             );
@@ -341,15 +341,14 @@ impl Parser {
             }
         }
         let name = self.parameter_name();
-        let variadic = self.at(TokenKind::Ellipsis);
-        let ty = if variadic {
+        let ty = if self.at(TokenKind::Ellipsis) {
             let start = self.next().span.start;
             let mutable = self.at(TokenKind::Mut);
             if mutable {
                 self.next();
             }
             let element = self.type_expr();
-            self.add(start, Type::Slice { mutable, element })
+            self.add(start, Type::Variadic { mutable, element })
         } else if self.at(TokenKind::Type) {
             let start = self.next().span.start;
             self.add(start, Type::Type)
@@ -383,7 +382,6 @@ impl Parser {
                 mutable: keyword.is_some(),
                 name,
                 ty,
-                variadic,
                 default,
             },
         )
@@ -413,8 +411,8 @@ impl Parser {
         &mut self,
         type_parameters: List<Name>,
         starts_parameter: fn(TokenKind) -> bool,
-        parameter: impl FnMut(&mut Self) -> Id<Param>,
-    ) -> Signature {
+        parameter: impl FnMut(&mut Self) -> Id<Param<L>>,
+    ) -> Signature<L> {
         let parameters = self.delimited(
             TokenKind::LeftParen,
             TokenKind::RightParen,
@@ -427,7 +425,7 @@ impl Parser {
         if kind == TokenKind::Arrow {
             self.next();
             result = Some(self.type_expr());
-        } else if starts_type(kind) && !starts_declaration(kind) {
+        } else if starts_type::<L>(kind) && !starts_declaration::<L>(kind) {
             // A type right after the parameters can only be the result; `fn`,
             // `struct`, `enum` or `iface` there starts the next declaration.
             let at = self.here();
@@ -470,7 +468,7 @@ impl Parser {
 /// Reads `fn name<T>(parameters) -> Result in origins`, with `Owner::`
 /// before the name for a function of the type `Owner`, followed by a body,
 /// or by `;` for a function defined elsewhere.
-fn function_decl(p: &mut Parser, metadata: Metadata) -> Id<Decl> {
+fn function_decl<L: Grammar>(p: &mut Parser<L>, metadata: Metadata<L>) -> Id<Decl<L>> {
     let start = p.next().span.start;
     let owner = (p.at(TokenKind::Ident) && p.ahead(1).kind == TokenKind::ColonColon).then(|| {
         let owner = p.name();
@@ -509,7 +507,7 @@ fn function_decl(p: &mut Parser, metadata: Metadata) -> Id<Decl> {
 }
 
 /// Reads `const name: Type = value;`.
-pub(crate) fn const_decl(p: &mut Parser, metadata: Metadata) -> Id<Decl> {
+pub(crate) fn const_decl<L: Grammar>(p: &mut Parser<L>, metadata: Metadata<L>) -> Id<Decl<L>> {
     let start = p.next().span.start;
     let (name, ty, value) = p.binding();
     p.add(
@@ -523,24 +521,21 @@ pub(crate) fn const_decl(p: &mut Parser, metadata: Metadata) -> Id<Decl> {
     )
 }
 
-/// Reads `struct Name<T> { fields }`, `enum Name<T> { variants }`,
-/// `iface Name<T> { methods }` or `type Name<T> = Type;`. A `;` after the `}`
-/// is allowed.
-fn type_decl(p: &mut Parser, metadata: Metadata) -> Id<Decl> {
+/// Reads `type Name<T> = Type;`, or a keyword, a name and the rest of the
+/// type the keyword begins: `enum Name<T> { variants }`. A `;` after the
+/// `}` is allowed.
+pub fn type_decl<L: Grammar>(p: &mut Parser<L>, metadata: Metadata<L>) -> Id<Decl<L>> {
     let keyword = p.next();
     let name = p.name();
     let type_parameters = p.type_parameters();
     let start = p.tok().span.start;
-    let ty = match keyword.kind {
-        TokenKind::Struct => p.struct_type(start),
-        TokenKind::Enum => p.enum_type(start),
-        TokenKind::Iface => p.interface_type(start),
-        _ => {
-            p.expect(TokenKind::Assign);
-            let ty = p.type_expr();
-            p.end();
-            ty
-        }
+    let ty = if let Some(read) = L::rules().type_starts[keyword.kind as usize] {
+        read(p, start)
+    } else {
+        p.expect(TokenKind::Assign);
+        let ty = p.type_expr();
+        p.end();
+        ty
     };
     if keyword.kind != TokenKind::Type && p.at(TokenKind::Semicolon) {
         p.next();

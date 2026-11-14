@@ -3,10 +3,12 @@ use std::path::PathBuf;
 
 use super::CheckedFunction;
 use super::ModuleResults;
+use super::Options;
 use super::Output;
 use super::Results;
 use super::run;
 use diagnostics::Diagnostic;
+use features::Peeper;
 use model::machine::Machine;
 
 /// The machine the tests check for, but where they test another.
@@ -17,7 +19,7 @@ fn x86_64() -> &'static Machine {
 /// The program of `modules`, each an import path and its text, loaded as
 /// `peeper check` loads it from `app:main`, with every file given as open
 /// editor text so nothing is read from disk. Loading must find no error.
-fn load(modules: &[(&str, &str)]) -> model::program::Program {
+fn load(modules: &[(&str, &str)]) -> model::program::Program<Peeper> {
     let folder = |package: &str| match package {
         "core" => PathBuf::from("/peeper-build-test/libs/core/src"),
         _ => PathBuf::from("/peeper-build-test/src"),
@@ -59,9 +61,8 @@ fn diagnostics(modules: &[(&str, &str)]) -> Vec<(&'static str, String, String)> 
         &load(modules),
         x86_64(),
         Results::default(),
-        false,
-        false,
-        |_| {},
+        Options::default(),
+        &mut |_| {},
     );
     found
         .diagnostics()
@@ -290,8 +291,9 @@ fn checks_deeply_nested_statements() {
     let codes: Vec<&str> = found.iter().map(|&(code, ..)| code).collect();
     assert_eq!(codes, ["T0001"], "{found:?}");
     let arrays = format!(
-        "fn f(a: {}i32) {{ println(a); }}\nfn main() {{}}",
-        "[1]".repeat(DEPTH)
+        "fn f(a: {}i32) {{ println(a{}); }}\nfn main() {{}}",
+        "[1]".repeat(DEPTH),
+        "[0]".repeat(DEPTH)
     );
     assert_eq!(diagnostics(&[("app:main", &arrays)]), []);
     // A pointer breaks a flat array, so an error's type text recurses.
@@ -324,8 +326,9 @@ fn checks_structs_holding_structs_twice() {
     let chain: String = (1..40)
         .map(|i| format!("struct S{i} {{ a: S{0}, b: S{0} }}\n", i - 1))
         .collect();
+    let leaf = ".a".repeat(39);
     let text = format!(
-        "struct S0 {{ n: i32 }}\n{chain}fn show(s: &S39) {{ println(s.*); }}
+        "struct S0 {{ n: i32 }}\n{chain}fn show(s: &S39) {{ println(s{leaf}.n); }}
         fn same(s: S39) -> S39 {{ return s; }}
         fn replace(to: &mut S39, s: S39) {{ to.* = s; }}
         fn borrowing(s: S39) -> S39 {{ let n = 1; let r = &n; println(r); return s; }}"
@@ -373,9 +376,8 @@ fn slice_ends_fit_the_target_usize() {
         &program,
         Machine::named("i686-linux").unwrap(),
         Results::default(),
-        false,
-        false,
-        |_| {},
+        Options::default(),
+        &mut |_| {},
     );
     let messages: Vec<&str> = (found.diagnostics())
         .map(|diagnostic| diagnostic.message.as_str())
@@ -393,7 +395,16 @@ fn slice_ends_fit_the_target_usize() {
 fn the_entry_module_needs_a_main_to_start() {
     let entry_point = |text: &str| {
         let program = load(&[("app:main", text)]);
-        let found = run(&program, x86_64(), Results::default(), true, false, |_| {});
+        let found = run(
+            &program,
+            x86_64(),
+            Results::default(),
+            Options {
+                require_main: true,
+                ..Options::default()
+            },
+            &mut |_| {},
+        );
         let codes: Vec<&str> = found.diagnostics().map(|d| d.code.id).collect();
         (found.entry_point().map(|(_, exit_code)| exit_code), codes)
     };
@@ -406,7 +417,7 @@ fn the_entry_module_needs_a_main_to_start() {
         "fn helper() {}",
         "fn main(x: i32) {}",
         "fn main() -> i64 { return 0; }",
-        "#[extern(\"main\")]\nfn main();",
+        "#[extern(\"start\")]\nfn main();",
         "struct App { x: i32 }\nfn App::main() {}",
     ] {
         assert_eq!(entry_point(text), (None, vec!["M0006"]), "{text}");
@@ -421,76 +432,47 @@ fn the_entry_module_needs_a_main_to_start() {
 fn a_loading_error_leaves_no_entry_point() {
     let program = load(&[("app:main", "fn main() {\n    let x: i32 = 1\n}")]);
     assert!(program.diagnostics.iter().any(Diagnostic::is_error));
-    let found = run(&program, x86_64(), Results::default(), true, false, |_| {});
+    let found = run(
+        &program,
+        x86_64(),
+        Results::default(),
+        Options {
+            require_main: true,
+            ..Options::default()
+        },
+        &mut |_| {},
+    );
     assert_eq!(found.diagnostics().count(), 0, "the checker found nothing");
     assert!(found.entry_point().is_none());
 }
 
-/// The MIR `run` gives is what the path checks read, with the `scope end`s a
-/// compiled body has lost (`flow::cleanup`): each way out of a block ends the
-/// variables it leaves, newest first.
 #[test]
-fn each_way_out_of_a_block_ends_its_variables_newest_first() {
+fn a_function_whose_path_checks_fail_gives_no_mir() {
     let program = load(&[(
         "app:main",
-        "fn walk(limit: i32) -> i32 {
-            let first: i32 = limit;
-            for first > 0 {
-                let second: i32 = first;
-                let third: i32 = second;
-                if third == 1 {
-                    break;
-                }
-                if third == 2 {
-                    continue;
-                }
-                if third == 3 {
-                    return third;
-                }
-            }
-            return first;
+        "fn broken() {
+            let mut x = 0;
+            let r = &mut x;
+            x = 1;
+            r.* = 2;
         }
         fn main() {}",
     )]);
-    let mut text = String::new();
+    let mut lowered = Vec::new();
     let results = run(
         &program,
         x86_64(),
         Results::default(),
-        false,
-        false,
-        |output| {
-            if let Output::Function(CheckedFunction {
-                function,
-                mir: Some(mir),
-                types,
-                ..
-            }) = output
-            {
-                let file = &program.modules[function.definition.module.index()].ast.file;
-                text.push_str(&mir.text(types, file, |_| ""));
+        Options::default(),
+        &mut |output| {
+            if let Output::Function(checked) = output {
+                lowered.push(checked.mir.is_some());
             }
         },
     );
-    assert_eq!(messages(&results), Vec::<String>::new());
-    let ends: Vec<&str> = (text.lines())
-        .map(str::trim)
-        .filter(|line| line.starts_with("scope end"))
-        .collect();
-    let (outer, inner) = (
-        ["scope end first.1", "scope end limit.0"],
-        ["scope end third.3", "scope end second.2"],
-    );
-    let expected = [
-        &outer[..], // after the loop, which `break` jumps to
-        &inner,     // at the `break`
-        &inner,     // at the `continue`
-        &inner,     // at the `return`, with the rest
-        &outer,
-        &inner, // at the loop's `}`
-        &outer, // at the function's `}`
-    ];
-    assert_eq!(ends, expected.concat());
+    assert_eq!(messages(&results).len(), 1, "{:?}", messages(&results));
+    lowered.sort();
+    assert_eq!(lowered, [false, true]); // `broken` has none, `main` has one
 }
 
 /// A cycle gets one error with a place for each step, however often it
@@ -508,7 +490,13 @@ fn a_cycle_is_reported_once_with_its_path() {
             fn Point::E() -> i32 { return E; }
             fn main() { let x = A + B + E; }",
     )]);
-    let found = run(&program, x86_64(), Results::default(), false, false, |_| {});
+    let found = run(
+        &program,
+        x86_64(),
+        Results::default(),
+        Options::default(),
+        &mut |_| {},
+    );
     let errors: Vec<(String, Vec<(String, String)>)> = found
         .diagnostics()
         .map(|diagnostic| {
@@ -581,9 +569,8 @@ fn module_constants_cannot_be_assigned() {
         &load(&modules),
         x86_64(),
         Results::default(),
-        false,
-        false,
-        |_| {},
+        Options::default(),
+        &mut |_| {},
     );
     let declared: Vec<(&str, &str)> = found
         .diagnostics()
@@ -682,9 +669,8 @@ fn an_invalid_declaration_lowers_nothing_using_it() {
         &program,
         x86_64(),
         Results::default(),
-        false,
-        false,
-        |output| {
+        Options::default(),
+        &mut |output| {
             if let Output::Function(CheckedFunction { mir: Some(_), .. }) = output {
                 lowered += 1;
             }
@@ -701,15 +687,21 @@ fn an_invalid_declaration_lowers_nothing_using_it() {
 fn recompile(modules: &[(&str, &str)], previous: Results) -> (Results, Vec<String>) {
     let loaded = load(modules);
     let mut checked: Vec<String> = Vec::new();
-    let results = run(&loaded, x86_64(), previous, false, false, |output| {
-        let Output::Function(CheckedFunction { module, .. }) = output else {
-            return;
-        };
-        let path = &loaded.modules[module.index()].path;
-        if !checked.contains(path) {
-            checked.push(path.clone());
-        }
-    });
+    let results = run(
+        &loaded,
+        x86_64(),
+        previous,
+        Options::default(),
+        &mut |output| {
+            let Output::Function(CheckedFunction { module, .. }) = output else {
+                return;
+            };
+            let path = &loaded.modules[module.index()].path;
+            if !checked.contains(path) {
+                checked.push(path.clone());
+            }
+        },
+    );
     (results, checked)
 }
 
@@ -717,6 +709,20 @@ fn recompile(modules: &[(&str, &str)], previous: Results) -> (Results, Vec<Strin
 fn messages(results: &Results) -> Vec<String> {
     let message = |diagnostic: &diagnostics::Diagnostic| diagnostic.message.clone();
     results.diagnostics().map(message).collect()
+}
+
+/// The messages of a first compile of `program` for the machine named
+/// `target`.
+fn messages_on(program: &model::program::Program<Peeper>, target: &str) -> Vec<String> {
+    let target = Machine::named(target).unwrap();
+    let found = run(
+        program,
+        target,
+        Results::default(),
+        Options::default(),
+        &mut |_| {},
+    );
+    messages(&found)
 }
 
 const UTILS: (&str, &str) = (
@@ -970,9 +976,11 @@ fn a_function_run_at_compile_time_records_its_facts_once() {
         &program,
         x86_64(),
         Results::default(),
-        false,
-        true,
-        |output| {
+        Options {
+            record_facts: true,
+            ..Options::default()
+        },
+        &mut |output| {
             let (owner, facts) = match output {
                 Output::Function(CheckedFunction {
                     function, facts, ..
@@ -1018,17 +1026,7 @@ fn array_lengths_fit_the_target_usize() {
         "struct Empty {}
             fn main() { let a: [4294967296]Empty; let b: [4294967295]Empty; }",
     )]);
-    let at = |name| {
-        let target = Machine::named(name).unwrap();
-        messages(&run(
-            &program,
-            target,
-            Results::default(),
-            false,
-            false,
-            |_| {},
-        ))
-    };
+    let at = |target| messages_on(&program, target);
     assert_eq!(
         at("i686-linux"),
         ["an array length must fit `usize`, of 32 bits"]
@@ -1045,17 +1043,7 @@ fn values_fit_the_target() {
         "struct Halves { a: [1073741824]u8, b: [1073741824]u8 }
             fn main() { let fits: [2147483647]u8; let over: [2147483648]u8; }",
     )]);
-    let at = |name| {
-        let target = Machine::named(name).unwrap();
-        messages(&run(
-            &program,
-            target,
-            Results::default(),
-            false,
-            false,
-            |_| {},
-        ))
-    };
+    let at = |target| messages_on(&program, target);
     let too_big = |text| {
         format!("`{text}` is too big for i686-linux, where a value takes at most 2147483647 bytes")
     };
@@ -1074,17 +1062,7 @@ fn extern_integers_are_ones_c_has() {
         "app:main",
         "#[extern(\"c_wide\")]\nfn wide(a: i128, b: i129) -> i200;",
     )]);
-    let at = |name| {
-        let target = Machine::named(name).unwrap();
-        messages(&run(
-            &program,
-            target,
-            Results::default(),
-            false,
-            false,
-            |_| {},
-        ))
-    };
+    let at = |target| messages_on(&program, target);
     let none =
         |text| format!("C has no `{text}` on aarch64-linux, whose integers have at most 128 bits");
     assert_eq!(at("aarch64-linux"), [none("i129"), none("i200")]);
@@ -1150,7 +1128,13 @@ fn copies_report_once_to_the_calling_module() {
             fn main() { list::Twice(i32, 1); list::Twice(bool, true); list::Twice(i64, 2); }",
         ),
     ]);
-    let results = run(&program, x86_64(), Results::default(), false, false, |_| {});
+    let results = run(
+        &program,
+        x86_64(),
+        Results::default(),
+        Options::default(),
+        &mut |_| {},
+    );
     let found = |module: &ModuleResults| -> Vec<(String, Vec<String>)> {
         let labels = |diagnostic: &Diagnostic| {
             let label = |label: &diagnostics::Label| {
@@ -1222,9 +1206,11 @@ fn a_function_with_const_parameters_records_its_signature_once() {
         &program,
         x86_64(),
         Results::default(),
-        false,
-        true,
-        |output| {
+        Options {
+            record_facts: true,
+            ..Options::default()
+        },
+        &mut |output| {
             let facts = match output {
                 Output::Function(CheckedFunction { facts, .. }) | Output::Facts { facts, .. } => {
                     facts
@@ -1350,4 +1336,95 @@ fn array_elements_keep_their_own_loans() {
     for (function, message) in refused {
         assert_eq!(check(function), [("T0037", message)], "{function}");
     }
+}
+
+/// A move in code that never runs moves nothing: it is not named, and the
+/// use before it in the loop was not moved by an earlier pass.
+#[test]
+fn a_move_that_never_runs_is_not_named() {
+    let program = load(&[(
+        "app:main",
+        "struct Pair { left: i32, right: &i32 }
+        fn consume(p: Pair) {}
+        fn f(flag: bool, n: &i32) {
+            let p = Pair.{ left = 1, right = n };
+            if flag { consume(p); }
+            for {
+                consume(p);
+                return;
+                consume(p);
+            }
+        }
+        fn main() {}",
+    )]);
+    let found = run(
+        &program,
+        x86_64(),
+        Results::default(),
+        Options::default(),
+        &mut |_| {},
+    );
+    let moved: Vec<&Diagnostic> = found
+        .diagnostics()
+        .filter(|diagnostic| diagnostic.message == "`p` is used after it was moved")
+        .collect();
+    let [moved] = moved[..] else {
+        panic!("one use after a move: {moved:?}")
+    };
+    let labels: Vec<&str> = moved
+        .labels
+        .iter()
+        .map(|label| label.message.as_str())
+        .collect();
+    assert_eq!(labels, ["`p` is used here", "`p` is moved here"]);
+    let notes: Vec<&str> = moved.notes.iter().map(|note| note.text.as_str()).collect();
+    assert!(
+        !notes.contains(&"it was moved in an earlier pass of the loop"),
+        "{notes:?}"
+    );
+}
+
+/// A move inside the use, such as in the value an assignment sets, ran just
+/// before it, not in an earlier pass; the same move seen again does come
+/// from one.
+#[test]
+fn only_a_move_from_a_loop_pass_says_so() {
+    let program = load(&[(
+        "app:main",
+        "struct Pair { left: i32, right: &i32 }
+        fn consume(p: Pair) -> i32 { return 1; }
+        fn set_from_move(n: &i32) {
+            let mut p = Pair.{ left = 1, right = n };
+            p.left = consume(p);
+        }
+        fn move_each_pass(n: &i32) {
+            let q = Pair.{ left = 1, right = n };
+            for { consume(q); }
+        }
+        fn main() {}",
+    )]);
+    let found = run(
+        &program,
+        x86_64(),
+        Results::default(),
+        Options::default(),
+        &mut |_| {},
+    );
+    let loop_notes: Vec<(&str, bool)> = found
+        .diagnostics()
+        .map(|diagnostic| {
+            let from_a_pass = diagnostic
+                .notes
+                .iter()
+                .any(|note| note.text == "it was moved in an earlier pass of the loop");
+            (diagnostic.message.as_str(), from_a_pass)
+        })
+        .collect();
+    assert_eq!(
+        loop_notes,
+        [
+            ("cannot set a field of `p` after `p` was moved", false),
+            ("`q` is used after it was moved", true),
+        ]
+    );
 }

@@ -1,0 +1,13 @@
+whole u8: 256
+whole i8: 256
+near the top: 250
+down to zero: 5 3 1
+down across i8: 127 27 -73
+step past end: 0
+inclusive: 0 5 10
+down: 5 4 3
+empty:
+indexed: 0 100 1 75 2 50 3 25
+one pass: 0 3
+run time: 4 4 0
+grouped: 0 1 0 5 1 4

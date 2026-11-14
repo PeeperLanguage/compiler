@@ -1,7 +1,0 @@
-name = "run_type_alias"
-build = "program"
-
-[test]
-mode = "run"
-outcome = "exit_code"
-exit_code = 42

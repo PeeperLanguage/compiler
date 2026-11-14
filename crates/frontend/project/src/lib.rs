@@ -27,6 +27,7 @@ use packages::SOURCE_EXTENSION;
 use packages::file_of;
 use packages::import_path_of;
 use packages::is_source_file;
+use parser::Grammar;
 
 use crate::loading::Job;
 use crate::loading::load_module;
@@ -257,7 +258,10 @@ pub fn library_packages(
 /// keys, like `project`'s paths, are spelled as `canonical_path` spells them.
 /// Each `.peep` file of a package in it is loaded too, imported or not, so an
 /// editor checks the file it has open.
-pub fn load(project: &Project, open_files: &HashMap<PathBuf, impl AsRef<str> + Sync>) -> Program {
+pub fn load<L: Grammar>(
+    project: &Project,
+    open_files: &HashMap<PathBuf, impl AsRef<str> + Sync>,
+) -> Program<L> {
     let with_prelude = file_of(&project.packages, PRELUDE_PATH)
         .is_some_and(|file| file.is_file() || open_files.contains_key(&file));
     let workers = if cfg!(target_family = "wasm") {

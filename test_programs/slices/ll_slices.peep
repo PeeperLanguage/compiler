@@ -1,0 +1,24 @@
+//@ dump: ll
+
+// A slice is two words in memory, its elements' address then their count,
+// passed by the address of the caller's own copy: `&a` stores both words,
+// `s[i]` loads the address and checks the index against the count, `.len`
+// loads the count, and passing a slice on copies its two words to a new copy.
+fn get(view: &[]i32, at: usize) -> i32 {
+    return view[at] + view.len as i32;
+}
+
+fn set(edit: &mut []i32) {
+    edit[0] = 1;
+}
+
+fn lend(edit: &mut []i32) {
+    set(edit);
+}
+
+fn main() {
+    let mut values = [2]i32{3, 4};
+    set(&mut values);
+    lend(&mut values);
+    let read = get(&values, 1);
+}

@@ -1,31 +1,30 @@
-//! Checking names, paths and calls: what a name stands for as a value, a
-//! call's arguments, and `print`.
+//! Checking names, paths and calls: what a name stands for as a value, and
+//! a call's arguments.
 
 use std::num::NonZeroU32;
 
 use arena::Id;
-use arena::List;
 use bigint::Limbs;
 use model::Callee;
+use model::ConstArguments;
 use model::DefId;
 use model::FunctionCopy;
-use model::ast;
-use model::ast::Ident;
-use model::constant::Constant;
 use model::constant::Value;
 use model::layout::layout;
 use model::semantic_types::ConstArgument;
-use model::semantic_types::ConstArguments;
+use model::semantic_types::Constant;
+use model::semantic_types::Members;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
-use model::semantic_types::Types;
 use model::thir::Expr;
 use model::thir::ExprKind;
 use model::thir::Local;
 use model::thir::Symbol;
-use rustc_hash::FxHashSet;
 use source::Span;
+use syntax::ast;
+use syntax::ast::Ident;
 
+use crate::Checked;
 use crate::builder::ThirBuilder;
 use crate::builtin::LayoutFact;
 use crate::builtin::layout_function;
@@ -34,58 +33,7 @@ use crate::declaration::is_self;
 use crate::function::function_declaration;
 use crate::scope;
 
-impl ThirBuilder<'_, '_> {
-    /// `print(values)`, or `println(values)` when `newline`: each value of a
-    /// type `printable` takes. A plain string literal is printed as a `&cstr`,
-    /// though it is not one anywhere else.
-    // shortcut: a built-in until a library function takes any number of
-    // values of any printable type; then delete it with THIR's and MIR's
-    // `Print`.
-    pub(super) fn check_print(&mut self, newline: bool, values: List<ast::Expr>) -> Expr {
-        let tree = &self.checker.module().ast;
-        let mut checked: Vec<NonZeroU32> = Vec::with_capacity(values.len());
-        for value in tree.children.lists.items(values) {
-            let span = tree.exprs.span(value);
-            let expr = self.check_expr(value, None);
-            let ty = expr.ty;
-            let types = &self.checker.types;
-            // On an error the others are still checked, for their own.
-            if !printable(types, ty) {
-                if ty != TypeId::INVALID {
-                    let message = format!("`{}` cannot be printed", self.checker.type_text(ty));
-                    self.checker
-                        .error(diagnostics::INVALID_OPERATION, message, span);
-                }
-                continue;
-            }
-            let mut printed = self.body.add(expr, span);
-            // Printing reads a value, never takes it: one that moves, in a
-            // place, is lent instead, a `&mut` reference as `&`.
-            if !types.is_copy(ty) && self.start_variable(self.place_root(printed).0).is_some() {
-                let lent = match types[ty] {
-                    Type::Reference { target, .. } => {
-                        let reference = self.body.exprs[printed].clone();
-                        let shared = self.checker.reference_type(false, target);
-                        self.reborrow(reference, span, shared)
-                    }
-                    _ => self.check_borrow(false, printed),
-                };
-                printed = self.body.add(lent, span);
-            }
-            checked.push(printed.into());
-        }
-        if checked.len() < values.len() {
-            return Expr::INVALID;
-        }
-        Expr {
-            ty: TypeId::VOID,
-            kind: ExprKind::Print {
-                newline,
-                values: self.body.children.lists.add(&checked),
-            },
-        }
-    }
-
+impl<L: Checked> ThirBuilder<'_, '_, L> {
     /// The name or path written at `span`, which stands for `symbol`, as a
     /// value. `None` when finding the symbol reported an error.
     pub(super) fn check_symbol_value(&mut self, symbol: Option<Symbol>, span: Span) -> Expr {
@@ -123,11 +71,11 @@ impl ThirBuilder<'_, '_> {
         &mut self,
         fact: LayoutFact,
         text: &str,
-        arguments: List<ast::Expr>,
+        arguments: &[Id<ast::Expr<L>>],
         span: Span,
     ) -> Expr {
         let tree = &self.checker.module().ast;
-        let mut given = tree.children.lists.items(arguments);
+        let mut given = arguments.iter().copied();
         let (Some(argument), None) = (given.next(), given.next()) else {
             let message = argument_count_message(text, 1, false, arguments.len());
             self.checker
@@ -161,17 +109,18 @@ impl ThirBuilder<'_, '_> {
         }
     }
 
-    /// `callee(arguments)`, written at `span`. Only a module's function, by
+    /// `callee(arguments)`, written at `span`; a pipe gives its value as the
+    /// first of `arguments`. Only a module's function, by
     /// its name or its path, can be called, or with a dot, `x.name(arguments)`,
     /// a type's function or an interface reference's method, which gets `x`
     /// as its `self`. A `...` parameter takes all the arguments past the
     /// others (`check_variadic`). A function with `const` parameters is
     /// called as its copy for what is written in their places
     /// (`copy_called`).
-    pub(super) fn check_call(
+    pub fn check_call(
         &mut self,
-        callee: Id<ast::Expr>,
-        arguments: List<ast::Expr>,
+        callee: Id<ast::Expr<L>>,
+        arguments: &[Id<ast::Expr<L>>],
         span: Span,
     ) -> Expr {
         let tree = &self.checker.module().ast;
@@ -232,7 +181,7 @@ impl ThirBuilder<'_, '_> {
             }
             found => found,
         };
-        let not_const = |&(place, _): &(usize, Id<ast::Expr>)| !const_places.contains(&place);
+        let not_const = |&(place, _): &(usize, Id<ast::Expr<L>>)| !const_places.contains(&place);
         let signature = found.map(|(callee, ty)| (callee, ty, self.checker.types[ty].clone()));
         let Some((
             callee,
@@ -245,7 +194,7 @@ impl ThirBuilder<'_, '_> {
             },
         )) = signature
         else {
-            let written = tree.children.lists.items(arguments).enumerate();
+            let written = arguments.iter().copied().enumerate();
             for (_, argument) in written.filter(not_const) {
                 let argument = match tree.exprs[argument] {
                     ast::Expr::Spread(values) => values,
@@ -281,7 +230,7 @@ impl ThirBuilder<'_, '_> {
             };
             checked.push(argument.into());
         }
-        let written = tree.children.lists.items(arguments).enumerate();
+        let written = arguments.iter().copied().enumerate();
         let mut given = written.filter(not_const).map(|(_, argument)| argument);
         for (&parameter, argument) in parameters[first..first + fixed].iter().zip(given.by_ref()) {
             let argument = self.add_required(argument, parameter);
@@ -289,7 +238,7 @@ impl ThirBuilder<'_, '_> {
             checked.push(argument.into());
         }
         if variadic {
-            let rest: Vec<Id<ast::Expr>> = given.collect();
+            let rest: Vec<Id<ast::Expr<L>>> = given.collect();
             let slice = self.check_variadic(&rest, parameters[first + fixed], span);
             self.reborrow_in_place(slice);
             checked.push(slice.into());
@@ -365,7 +314,7 @@ impl ThirBuilder<'_, '_> {
     /// gives as `self`, the callee, and its type.
     fn method(
         &mut self,
-        value: Id<ast::Expr>,
+        value: Id<ast::Expr<L>>,
         name: Ident,
         span: Span,
     ) -> Option<(Id<Expr>, Callee, TypeId)> {
@@ -380,7 +329,7 @@ impl ThirBuilder<'_, '_> {
         }
         let place = self.through_pointer(value, self.body.exprs.span(value));
         let ty = self.body.exprs[place].ty;
-        let Type::Struct { definition, .. } = self.checker.types[ty] else {
+        let Some(Members { definition, .. }) = self.checker.types[ty].members() else {
             if ty != TypeId::INVALID {
                 let message = format!("`{}` has no functions", self.checker.type_text(ty));
                 self.checker
@@ -416,7 +365,7 @@ impl ThirBuilder<'_, '_> {
     fn copy_called(
         &mut self,
         definition: DefId,
-        arguments: List<ast::Expr>,
+        arguments: &[Id<ast::Expr<L>>],
         first: usize,
         const_places: &mut Vec<usize>,
         span: Span,
@@ -426,14 +375,12 @@ impl ThirBuilder<'_, '_> {
         let declared = function_declaration(modules, definition);
         let parameters = tree.children.lists.items(declared.signature.parameters);
         // `self` is never `const`, so a `const` parameter is past the receiver.
-        let const_parameters: Vec<(usize, ast::Param)> = (parameters.enumerate())
+        let const_parameters: Vec<(usize, ast::Param<L>)> = (parameters.enumerate())
             .map(|(place, parameter)| (place, tree.children.params[parameter]))
             .filter(|(_, parameter)| parameter.constant)
             .map(|(place, parameter)| (place - first, parameter))
             .collect();
         const_places.extend(const_parameters.iter().map(|&(place, _)| place));
-        let written: Vec<Id<ast::Expr>> =
-            (self.checker.module().ast.children.lists.items(arguments)).collect();
         let pattern = self.checker.function_type(definition, span);
         if pattern == TypeId::INVALID {
             return None; // reported
@@ -441,7 +388,7 @@ impl ThirBuilder<'_, '_> {
         // Too few arguments: `check_call` reports it, by the function's own type.
         if const_parameters
             .last()
-            .is_some_and(|&(place, _)| place >= written.len())
+            .is_some_and(|&(place, _)| place >= arguments.len())
         {
             let function = FunctionCopy {
                 definition,
@@ -452,7 +399,7 @@ impl ThirBuilder<'_, '_> {
         let mut given = Vec::with_capacity(const_parameters.len());
         let mut failed = false;
         for (place, parameter) in const_parameters {
-            let argument = written[place];
+            let argument = arguments[place];
             if let ast::Type::Type = tree.types[parameter.ty] {
                 let ty = self.checker.resolve_type_argument(argument);
                 failed |= ty == TypeId::INVALID;
@@ -570,33 +517,6 @@ fn constant_expr(constant: Option<Constant>) -> Expr {
         },
         None => Expr::INVALID,
     }
-}
-
-/// Whether `print` writes a value of the type `ty`: a number, `bool`,
-/// `&cstr` or raw pointer, a struct or array of such values, or a reference
-/// to one.
-// shortcut: structs and arrays print built in until a trait or interface
-// lets each type say how it prints; then this rule and the backend's struct
-// and array printing (`llvm` `write_printed`, `printer`) go.
-fn printable(types: &Types, ty: TypeId) -> bool {
-    // A list, not recursion, with each struct looked at once: structs hold
-    // structs as deep as the declarations nest, and can hold one many times.
-    let (mut reached, mut pending) = (FxHashSet::default(), vec![ty]);
-    while let Some(ty) = pending.pop() {
-        match &types[ty] {
-            Type::Integer(_) | Type::Float(_) | Type::Bool | Type::CString | Type::Str => {}
-            Type::RawPointer { .. } => {}
-            Type::Reference { target, .. } => pending.push(*target),
-            Type::Struct { fields, .. } => {
-                if reached.insert(ty) {
-                    pending.extend(fields);
-                }
-            }
-            Type::Array { internals, .. } => pending.push(internals.base),
-            _ => return false,
-        }
-    }
-    true
 }
 
 /// Why a call of `callee` with `given` arguments is wrong, when it takes

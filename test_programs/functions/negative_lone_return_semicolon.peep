@@ -1,0 +1,12 @@
+// A `return` needs no value; one whose `;` is missing at a line end is read
+// as `return;`, so the type checker still runs and reports `answr`.
+fn stop() {
+    return //~ error[P0002]: expected `;`, found `}`
+    //~ fix: add missing `;`
+}
+
+fn main() {
+    stop();
+    let answer = 1;
+    let copy = answr; //~ error[T0002]: unknown name `answr`
+}

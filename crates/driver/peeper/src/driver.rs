@@ -2,6 +2,7 @@
 //! apply the fixes asked for, print its diagnostics, write the dumps asked
 //! for, and build or run it.
 
+use features::Peeper;
 use std::collections::HashMap;
 use std::io::Write;
 use std::path::Path;
@@ -79,7 +80,7 @@ impl<W: Write> Command<W> {
         }
         // Read and parse every module, following imports. No editor has
         // unsaved text here, so every file is read from disk.
-        let program = project::load(&project, &HashMap::<PathBuf, String>::new());
+        let program = project::load::<Peeper>(&project, &HashMap::<PathBuf, String>::new());
         match goal {
             Goal::Check {
                 dumps,
@@ -100,7 +101,7 @@ impl<W: Write> Command<W> {
     fn execute_check(
         &mut self,
         project: &project::Project,
-        program: &model::program::Program,
+        program: &model::program::Program<Peeper>,
         dumps: &[Dump],
         apply_fixes: bool,
         mode: BuildMode,
@@ -137,7 +138,7 @@ impl<W: Write> Command<W> {
     fn execute_build(
         &mut self,
         project: &project::Project,
-        program: &model::program::Program,
+        program: &model::program::Program<Peeper>,
         output: Option<&Path>,
         mode: BuildMode,
     ) -> u8 {
@@ -166,7 +167,7 @@ impl<W: Write> Command<W> {
     /// it with `arguments` and removes it; gives the program's exit code.
     fn execute_run(
         &mut self,
-        program: &model::program::Program,
+        program: &model::program::Program<Peeper>,
         arguments: &[String],
         mode: BuildMode,
     ) -> u8 {
@@ -196,7 +197,7 @@ impl<W: Write> Command<W> {
 
     /// `run -interpret`: runs the program on the interpreter, then prints what
     /// it wrote; gives the program's exit code.
-    fn execute_interpret(&mut self, program: &model::program::Program) -> u8 {
+    fn execute_interpret(&mut self, program: &model::program::Program<Peeper>) -> u8 {
         let (results, ran) = compile::interpret(program, self.target);
         let found = program.diagnostics.iter().chain(results.diagnostics());
         let diagnostics: Vec<Diagnostic> = found.cloned().collect();
@@ -253,7 +254,7 @@ impl<W: Write> Command<W> {
 /// `mode`, when linking or a dump needs it; and the dumps, to write when
 /// there is no error.
 fn compile<'p>(
-    program: &'p model::program::Program,
+    program: &'p model::program::Program<Peeper>,
     dumps: &'p [Dump],
     mode: BuildMode,
     target: &'static Machine,
@@ -268,24 +269,12 @@ fn compile<'p>(
             program,
             target,
             compile::Results::default(),
-            false,
-            false, // names are for editors
-            |output| {
-                // `peeper check` reads no MIR, so it does not pay for it.
-                let compile::Output::Function(checked) = output else {
-                    return;
-                };
-                if dumps.is_empty() {
-                    return;
-                }
-                let compile::CheckedFunction {
-                    function,
-                    thir,
-                    types,
-                    ..
-                } = checked;
-                if let Some(mir) = checked.into_mir() {
-                    dumped.add(function, thir, &mir, types);
+            compile::Options::default(),
+            &mut |output| {
+                if let compile::Output::Function(checked) = output
+                    && let Some(mir) = &checked.mir
+                {
+                    dumped.add(checked.function, checked.thir, mir, checked.types);
                 }
             },
         );

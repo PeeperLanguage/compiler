@@ -1,6 +1,0 @@
-name = "mir_straight_code"
-build = "program"
-
-[test]
-mode = "mir"
-outcome = "success"

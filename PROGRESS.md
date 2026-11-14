@@ -3,7 +3,7 @@
 Which language features the Rust compiler handles, as of `main` = `70f9e8b6`
 (2026-10-28).
 
-- **Done:** checked, lowered to MIR and LLVM, runs, with `x_test` fixtures.
+- **Done:** checked, lowered to MIR and LLVM, runs, with test programs.
 - **Partly done:** works, but some uses are still rejected.
 - **Not done:** the parser reads it, but `check` reports
   "... are not supported yet" (T0043).

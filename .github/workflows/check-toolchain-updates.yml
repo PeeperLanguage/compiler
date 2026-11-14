@@ -41,7 +41,7 @@ jobs:
           if [ "$EVENT_NAME" = workflow_dispatch ]; then
             active=true
           elif git log -1 --since="30 days ago" --format=%H -- \
-            crates runtime _builtin_library x_test scripts Cargo.toml Cargo.lock \
+            crates runtime _builtin_library test_programs scripts Cargo.toml Cargo.lock \
             | grep -q .; then
             active=true
           fi

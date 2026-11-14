@@ -1,0 +1,67 @@
+// How an array or slice passed without `...` is repaired: a fix (`= fix:`,
+// which `peeper fix` applies) only when nothing is lost, else a guess
+// (`= help:`), or nothing when `...` would not fit.
+struct Point { row: i32 }
+
+fn sum(values: ...i32) -> i32 {
+    return 0;
+}
+
+fn bump(values: ...mut i32) {}
+
+fn rows(points: ...Point) {}
+
+fn numbers() -> [2]i32 {
+    return [2]i32{1, 2};
+}
+
+fn sure(a: [2]i32, s: &[]i32, w: &mut []i32) {
+    let mut held = [2]i32{1, 2};
+    bump(held); //~ error[T0001]: mismatched types: expected `i32`, found `[2]i32`
+    //~ fix: add `&mut` and `...` to write to it
+    //~ fixed: bump(&mut held...);
+    bump(w); //~ error[T0001]: mismatched types: expected `i32`, found `&mut []i32`
+    //~ fix: add `...` to spread its values
+    //~ fixed: bump(w...);
+    bump(numbers()); //~ error[T0001]: mismatched types: expected `i32`, found `[2]i32`
+    //~ fix: add `...` to spread its values
+    //~ fixed: bump(numbers()...);
+    let by_array = sum(a); //~ error[T0001]: mismatched types: expected `i32`, found `[2]i32`
+    //~ fix: add `...` to spread its values
+    //~ fixed: let by_array = sum(a...);
+    let by_slice = sum(s); //~ error[T0001]: mismatched types: expected `i32`, found `&[]i32`
+    //~ fix: add `...` to spread its values
+    //~ fixed: let by_slice = sum(s...);
+    let part = sum(&held[0..1]); //~ error[T0001]: mismatched types: expected `i32`, found `&[]i32`
+    //~ fix: add `...` to spread its values
+    //~ fixed: let part = sum(&held[0..1]...);
+    bump(&mut held); //~ error[T0001]: mismatched types: expected `i32`, found `&mut [2]i32`
+    //~ fix: add `...` to spread its values
+    //~ fixed: bump(&mut held...);
+    let by_reference = sum(&a); //~ error[T0001]: mismatched types: expected `i32`, found `&[2]i32`
+    //~ fix: add `...` to spread its values
+    //~ fixed: let by_reference = sum(&a...);
+}
+
+fn guessed(a: [2]i32, s: &[]i32, points: [1]Point) {
+    bump(a); //~ error[T0001]: mismatched types: expected `i32`, found `[2]i32`
+    //~ help: add `...` to spread its values
+    //~ fixed: bump(a...);
+    rows(points); //~ error[T0001]: mismatched types: expected `Point`, found `[1]Point`
+    //~ help: add `...` to spread its values
+    //~ fixed: rows(points...);
+    let beside = sum(1, s); //~ error[T0001]: mismatched types: expected `i32`, found `&[]i32`
+    //~ help: add `...` to spread its values
+    //~ fixed: let beside = sum(1, s...);
+    let in_literal = [_]i32{a}; //~ error[T0001]: mismatched types: expected `i32`, found `[2]i32`
+    //~ help: add `...` to spread its values
+    //~ fixed: let in_literal = [_]i32{a...};
+}
+
+fn no_fix(a: [2]i32, s: &[]i32) {
+    bump(s); //~ error[T0001]: mismatched types: expected `i32`, found `&[]i32`
+    bump(&a); //~ error[T0001]: mismatched types: expected `i32`, found `&[2]i32`
+    let beside = sum(1, &a); //~ error[T0001]: mismatched types: expected `i32`, found `&[2]i32`
+}
+
+fn main() {}

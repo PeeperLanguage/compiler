@@ -1,1512 +1,1041 @@
-# Work log
 
-Newest last. Each entry: commit, what changed, evidence, what was not done.
-
-## 2026-11-01 Loan check memory (`0c03928`)
-
-- **Problem:** `flow::loans::report` kept a copy of the live holder set after
-  every instruction of a block: instructions × holders bits. Measured with
-  `peeper check` (release) on one straight function of N groups of
-  `let aI = 0; let rI = &aI; total = total + rI.*;` (unique names; reusing a
-  name in one block is T0003): 2,500 → 23 MB, 5,000 → 68 MB, 10,000 → 240 MB,
-  20,000 → 905 MB / 10.0 s. The MIR has about 9 instructions and 2 holders
-  per group; 180k × 40k bits ≈ 900 MB matched.
-- **Fix:** `step_live` reports each holder whose bit flips; the backward
-  walk stores `(position, holder)` flips, the forward walk toggles them on one
-  set (`Bits::toggle`). `activation_error` takes the set from before the call
-  (no clone). `step_store` skips its `retain` when no loan is through the
-  variable. The report walk drops pairs of holders not live after each step.
-- **After:** 20,000 groups 44 MB / 3.8 s; loan check went from 56% to 1.5% of
-  instructions (callgrind, 5,000 groups). All-live shape (10,000): 240 MB /
-  4.3 s → 25 MB / 3.5 s.
-- **Evidence:** `check` output identical old vs new on every fixture and
-  example and 400 random loan programs (3,605 T0037), both targets. Test
-  `crates/driver/compile/tests/loan_memory.rs` (now `path_check_memory.rs`) adds the straight shape: 13 MB
-  now, 32 MB on the old code (fails its 20 MB bound).
-- **Not done there:** `check.sh` passed except the five `run_i686_*` fixtures
-  (no 32-bit C library where it ran); all pass in the review below.
-
-## 2026-11-01 Checker name lookup (`ebbbb81`)
-
-- **Problem:** after the loan fix, 97% of the long-function time was
-  `ThirBuilder::declare` and `resolve`: a linear search of every local name
-  per declaration and per use.
-- **Fix:** `innermost: FxHashMap<&str, usize>` maps each name to its
-  innermost entry in `names`; each `Declared` keeps the entry it hides,
-  restored at its block's end. Used by `declare` (redeclaration),
-  `resolve`, and the hidden-`mut` warning.
-- **After:** 20,000 groups 3.8 s → 0.12 s, linear. Compile benchmark
-  +1.07% instructions (3.832 G → 3.873 G, callgrind): hashing costs more than
-  a short search in small bodies. Accepted for linear scaling.
-- **Evidence:** test `hidden_names_come_back_level_by_level` fails (with
-  `names_shadow_until_their_block_ends`) when the restore is broken; `check`
-  output identical on 1,174 runs.
-
-## 2026-11-01 Variable state check (`333e327`, `2253c35`)
-
-- **Problem:** three sets of every variable at every block's start. One
-  `let late: i32;` in 20,000 groups of a branch and a new variable: 347 MB,
-  1.62 s (without `late` the check is skipped: 61 MB, 0.08 s).
-- **Fix:** follow only variables whose `let` has no value or that a `move`
-  takes whole (`Id<Tracked>`, `tracked_variables`). The function-wide early
-  exit stays first.
-- **After:** 64 MB, 0.12 s. Benchmark unchanged (3.8732 G). A first version
-  without the early exit cost +0.5%; rejected.
-- **Evidence:** new random generator (`let x: T;`, moves, non-`mut`
-  assignment, loops): 3,793 T0039, 993 T0034, 398 T0007; output identical.
-  `path_check_memory.rs` (renamed from `loan_memory.rs`) resets the kernel's
-  peak (`/proc/self/clear_refs`) before each function: `late` 25 MB, 70 MB
-  before.
-
-## 2026-11-01 Loan check block-end sets (`a318b22`)
-
-- **Problem:** `ends` kept a set of every holder at every block, and seeded
-  every block with one: 10,000 branchy groups 217 MB, about 3× per doubling.
-- **Fix:** each block's set is a sorted list of live holders; a block is
-  walked on a dense set made from it (`live_set`, `Bits::ids`).
-  `sorted_union` joins these lists and the `Held` pairs.
-- **After:** 53 MB, 0.10 s (was 0.25 s). Benchmark +0.06% (noise).
-- **Test:** `branching` at 4,000 groups: 21 MB, 47 MB with dense sets; the
-  cubic version before `757544c` grew 407 MB at 400 groups.
-
-## 2026-11-01 Cleanups (`d51cf18`, `0a901b5`, `7928223`)
-
-- `Loans::report` (125 lines) split into `live_at_ends`, `held_at_starts`,
-  `label_later_use`; `loan_count` (one caller) inlined. `report` is 60 lines.
-- LLVM debug info: slices and structs each wrote the `DW_TAG_member` and
-  `DICompositeType` text; now `add_member` and `define_struct`, same node
-  order. LLVM text byte-identical on 187 programs, both targets.
-- Parser test dump: the `names` closure written twice is `Dumper::names`.
-
-## 2026-11-01 Compile-time calls (`184e64a`)
-
-- `evaluate_call` checked reached functions with `Vec::contains`: R² per
-  call. 200 constants × chain of 4,000 functions: 0.61 s → 0.17 s with an
-  `FxHashSet`. The rest is F3 in the plan.
-
-## 2026-11-01 Deep expressions crash (`029622f`)
-
-- `peeper check` aborted with a stack overflow at 4,000 terms of
-  `x + x + ...`: `check_expr` and `lower_expr` recursed on the thread's
-  stack. Both now run through their crate's `grow` (stacker), as the parser
-  does. Test `checks_deeply_nested_expressions` (50,000 deep: operators,
-  calls, parentheses, `!`) aborted before. Cost +0.45% on the benchmark.
-
-## 2026-11-01 Deep statements and types (`59dc4cc`)
-
-- After `029622f`, nested blocks, long `else if` chains (`check_statement`,
-  `lower_statement`) and `& & ... i32` (`resolve_type`) still overflowed: the
-  parser's own deep inputs. Same `grow`. Test `checks_deeply_nested_statements`
-  (50,000 each; the types case asserts its one T0043). Cost +0.39%; all stack
-  checks together +0.84% (F12).
-- The parser's `orelse` error-recovery input showed F11 (printer).
-
-## 2026-11-02 Debug builds of long lines ("Keep debug columns within LLVM's limit")
-
-- **Problem:** clang refused a debug build with `value for 'column' too large,
-  limit is 65535`: LLVM keeps a column in 16 bits, in `DILocation` and
-  `DILexicalBlock`. `-release` has no locations and passed. Already so at
-  `1fa2750`.
-- **Fix:** `debug_position` gives both their line and column, a column past 16
-  bits as 65,535. Panics report the true column; they do not go through it.
-- **Evidence:** test `columns_past_16_bits_stop_at_the_last_one` fails without
-  the limit. An 88 KB line builds and runs in debug on both targets.
-
-## 2026-11-02 Flat arrays (branch `fix/flat-arrays`)
-
-- **Problem:** a nested array was a chain of types, and each part of the compiler
-  walked it again: `layout`, `is_copy`, `printable`, `real_text`, `hash_type`,
-  `debug_type`, `type_text`, and the printers. LLVM got the same nesting, and
-  clang crashes parsing a nested array type at 50,000 levels (nested debug
-  info is fine; tested by hand).
-- **Fix:** `Types::array` is the one writer of `Type::Array`, which also keeps
-  `base` and `count`, a derived fact stored on purpose (RULES 5.1, owner's
-  approval): recomputing it was the fault. LLVM gets `[count x base]`. An index
-  into an array of arrays starts its own `getelementptr` on the element; debug
-  info has one node with a range per level, as C's. `array_lengths` is the one
-  walk of the levels. A pointer breaks a flat array (`[1]*[1]*...i32`), so
-  `real_text`, `hash_type` and `debug_type` keep a `grow` on the pointer, which
-  covers plain `***...i32` too. Printing keeps one, as each level has its own
-  printer. Clang runs out of its 8 MB stack on deep debug types (16 MB passes)
-  and `unsafe` is forbidden, so peeper cannot raise it: `debug_type` follows
-  5,000 pointers, then writes an untyped pointer (`shortcut:` in the code).
-  Only debug info stops there; the language has no limit.
-- `hash_type` hashes the number of levels first: without it a length read as
-  the next type's kind, and `[2][11]i32` and `[2]range[i32]` hashed the same (found in
-  review, tested by `an_array_length_does_not_read_as_a_type`).
-- **Evidence:** 50,000 levels: check 6 s to 0.06 s, debug build 0.39 s (it
-  was a clang crash), with print 7.8 s and 45 s in release (one printer per
-  level). 200,000 levels: check 0.19 s, debug build with print 27 s. A
-  2,000-level print runs natively and on the interpreter. Output is the same
-  as the old compiler's on the mixed program, on the alias program (x86_64,
-  i686, interpreter) and on 6,000 fuzz programs (no crashes). Everyday compile:
-  3,768 M instructions against 3,769.4 M, within noise. Extern signatures
-  reject arrays, so no C call depends on the type's shape, and a flat array has
-  the same bytes.
-- **Not done:** Deep print still grows with depth, as each level has its own
-  printer: at 200,000 levels a release build passes the 60 s limit and a debug
-  build uses 1.7 GB. `hash_type` hashes each declaration's whole chain, so 50,000
-  aliases each one level deeper than the last take about 26 s to check (39 s before).
-  `[18446744073709551615]Empty` fails in a debug build, old and new: clang's
-  debug info limits a count to `i64`.
-
-## Measured and rejected
-
-- Reserving `llvm` `Function::locations` to its bound: +0.6% instructions
-  (allocating the bound costs more than rehashing, and release builds have
-  no debug info). Reverted.
-- Switching `compile::interface` from SipHash to FxHasher: not done; the
-  hash decides whether a module is reused, so a weaker 64-bit hash risks
-  stale results.
-
-## Scans run
-
-- Single-expression functions (about 90): no pass-through wrappers.
-- Identical 6-line windows across source files: only the two duplicates
-  fixed above; the rest are `use` lists.
-- Longest functions: most are one `match` over every kind (allowed by
-  `rust-style.md`); `write_place_address` is F5.
-- Growth probes (`peeper check`, release): long straight block, branches,
-  late-set variables, all-live references, reassigned reference, many
-  modules (1,000: 0.02 s), large array literal (100k: 0.03 s), long
-  expression (crash, fixed), many struct fields (F4), compile-time call
-  chains (fixed, F3).
-- Review findings from the first pass still open: `Loans::reserved` is
-  built as a placeholder and filled after construction (documented); the
-  return check steps the block twice on purpose (error precedence).
-
-## Validation of the branch (2026-11-01, after `029622f`; `59dc4cc` reran the affected tests)
-
-`bash scripts/check.sh`: format, clippy, runtime format and clippy, bundle,
-browser build and smoke, whitespace pass; 42 test binaries pass. `tests` and
-`fixtures on the bundle` fail only in the `fixtures` test, on the five
-`run_i686_*` programs, which cannot link without a 32-bit C library
-(`Scrt1.o`, `-lc`). Their `check -target i686-linux` output was compared old
-against new and is unchanged. On a machine with the library, the review below
-ran `check.sh` fully green.
-
-## 2026-11-02 Review and fixes (`0b94289`, `e567d09`, `715cc88`, `505b592`)
-
-- **History:** the fourteen commits moved from local `main` to
-  `fix/loans-memory-growth`; author set to the owner, `Co-Authored-By` and
-  `Claude-Session` lines removed, both dates kept, re-signed; trees unchanged.
-  The hashes in this vault are the new ones.
-- **Evidence for the branch:** `check.sh` green at `d381733`. `check` output
-  byte-identical to `1fa2750` on 336 fixture runs (both targets) and 12,000
-  random programs (15,845 T0037; 577 T0039, 1,363 T0034, 477 T0035). Putting
-  back a set per instruction fails `path_check_memory`.
-- **Stack guard (`0b94289`):** the four copies are one `source::grow`.
-- **Deep arrays (`e567d09`):** `layout` crashed at 20,000 levels of `[1]`. It now loops over
-  array levels: same sizes (zero lengths and overflow compared with the base,
-  both targets). `real_text` crashed printing such a type and `compile`'s
-  `hash_type` on a test thread; both have `grow` on their array step. `check`
-  takes 50,000 levels; `build` still overflows in the backend (F14). Test:
-  `checks_deeply_nested_statements`, 10,000 levels; it aborts with the
-  recursion back.
-- **Printer (`715cc88`):** `S.{ a = ` nested 50,000 times on one line asked for 8 GB once
-  the stack no longer overflowed. `print` writes at most 200 diagnostics, says
-  how many more, and the summary counts all: 2.1 s, 240 MB.
-- **Comments (`505b592`):** `live_at_ends` states its cost (F13); `path_check_memory` no
-  longer says a reading is independent of the order, and its numbers are
-  corrected.
-- **After the fixes:** `check.sh` green; output identical to `1fa2750` on 336
-  fixture runs and 6,000 random programs. Benchmark 3,768.7 M and 3,783.1 M in
-  two runs, against 3,769.4 M before them: no cost above the noise.
-
-## 2026-11-02 Struct chains (branch `fix/struct-chain`)
-
-- **Problem:** structs in structs had the fault arrays had. `layout` walked
-  every struct inside a struct, so check was quadratic in a chain and
-  exponential when a struct held the last one twice: 40 such structs, a short
-  program, hung the compiler. A debug build overflowed the stack at 6,000.
-  LLVM got the whole shape at each use, `{ { { i32 } } }`.
-- **Fix:** `Type::Struct` keeps its `size` and `align`, a derived fact stored on
-  purpose (RULES 5.1, with the owner's yes), written by `define_struct` from
-  what the declaration already computed. LLVM no longer sees structs or arrays: a value kept in
-  memory is `[N x i8], align A` (`memory_text`, `alloca_text`), a field a byte
-  offset (`layout::fields_placed`, which the interpreter shares), an index a
-  `getelementptr` on the element's size. Layout had been worked out twice, by
-  us and by LLVM, and had to match. `printable` is a list with each struct
-  looked at once. A printed field's name is numbered: a name built from the
-  path passed LLVM's 1,024 bytes at about 340 levels, and clang refused two as
-  one. `debug_type`'s depth stop covers structs too, past which a struct has
-  its size and no fields.
-- **Tried first:** naming each struct once (`%struct.N.M`), which worked but
-  needed definitions in every module, ordered outermost first as
-  `StructType::checkBody` walks the structs already read. Bytes need neither.
-- **Not done:** the step after `flow` that turns places into addresses and
-  `Check`s, which would also end the interpreter's copy of the walk
-  (`places.rs`). `browser smoke` crashes node now
-  and then: 1 in 40 at `728f799e`, before flat arrays, and also seen on this
-  branch; older than this work, cause not found.
-- **Review:** comments, the plan and two fixture headers still said LLVM saw
-  struct or array types; they now say bytes. `run_struct_through_imports` went:
-  it guarded struct types reaching a module's LLVM text, and there are none.
-  `fields_placed` rebuilt a struct's list per access; fixed below (Field offsets).
-- **Printers:** a struct printed its fields inline at each `print`, so a struct
-  holding the last one twice wrote 2^n prints: 24 levels passed 2 GB at build.
-  Each struct or array type now has one `@print.N`, which calls the ones of what
-  it holds; 24 levels builds in 0.05 s. `printed_fields` and the name-length
-  guard went: names no longer grow with the path. Printers are `noinline
-  optnone`: clang's `-O2` on 20,000 of them in a chain took 21 s, 4.5 s with
-  this, against 0.4 s inline. Only such a chain pays; output is unchanged on
-  x86_64 and i686, debug and release, and on the interpreter. A run now recurses
-  one call per level. Printing 2 million structs in a loop went from 3,004 M to
-  3,934 M instructions, 0.79 s to 0.94 s: about 60% is `strlen` and `memmove` of
-  text split at each printer, 13% is `optnone`.
-
-## 2026-11-02 Fixtures on Windows and macOS (branch `fix/windows-fixtures`)
-
-- **Problem:** CI failed on both after the push of the struct work. The
-  interpreter's `write_printed` had no stack guard on a struct's fields, and
-  overflowed a debug build's 1 MB main thread at 400 levels (Windows only).
-  `negative_struct_pointers` expected the text `x86_64-linux`, the host's name,
-  and had failed on both before this work.
-- **Fix:** `source::grow` on the field, as on an array's element. The fixture
-  expects the text around the name, so it still runs on every host: a `target`
-  would skip it off x86-64 Linux.
-
-## 2026-11-02 Holder counts (branch `fix/holder-count`)
-
-- **Problem:** two walks over a struct's fields were left: `holders_in` in the
-  loan check, and `Types::holds_loans`, which `check` calls on results and
-  stores. Structs that each hold the last twice took 2^n steps: 40 levels hung
-  on `fn f(s: S39) -> S39`, with no reference anywhere. Without a stack guard, a
-  300,000-level chain overflowed the stack, 20,000 with a 1 MB stack. The fix for
-  such chains in `layout` and `printable` had not reached them.
-- **Fix:** `Type::Struct` keeps `holders` and `mutable_holder`, written by
-  `define_struct` from its fields, like `size` and `align`. `holders_in` moves to
-  `Types`, beside `holds_loans`. These and `size` and `align` are derived facts
-  stored on purpose, with the owner's yes (RULES 5.1).
-- **Limit:** when the innermost struct holds a real reference, the count itself
-  is 2^n, and each holder is kept apart, so storing it only moved the cost. A
-  struct now holds at most `MOST_HOLDERS`, 4,096, or P0011. Measured for one
-  function: 4,096 holders 0.06 s, 8,192 0.21 s, 16,384 0.50 s, 65,536 11.9 s.
-  A language rule, agreed by the owner.
-- **Evidence:** the ten stress programs finish; 300,000 levels check with a 1 MB
-  stack. Each of four bugs put back fails a test: the walk in `holds_loans`
-  hangs, no limit runs out of memory, a false `mutable_holder` fails
-  `run_struct_references`, a wrong count fails the limit's test.
-
-## 2026-11-02 Internals of a type (branch `fix/holder-count`)
-
-- **Problem:** `Type::Struct` and `Type::Array` mixed what the source says
-  (`definition`, `fields`, `element`, `length`) with what the compiler works out
-  (`size`, `align`, `holders`, `mutable_holder`, `base`, `count`).
-- **Fix:** the worked-out values move into `StructInternals` and
-  `ArrayInternals`, inside the type: every phase reads them, so a side table
-  would be a parallel list and an extra lookup. Output does not change. The name
-  is the owner's call: they are only for the compiler's own low-level work.
-
-## 2026-11-02 Playground projects (branch `feature/playground-project`)
-
-- **Problem:** the browser build invented the package name `playground`, so a
-  page could not be a real project: no `peeper.toml`, and a name that differed
-  from what the command line would use.
-- **Fix:** `manifest::parse` reads manifest text, `project::project_in` makes a
-  `Project` from a parsed manifest, and both `project::find` and the browser's
-  `load` use it, so the two cannot disagree. The browser takes `peeper.toml` and
-  `src/...` in its JSON. A missing or bad manifest is one entry on `peeper.toml`
-  at 1:1 with an empty code. The website side lives in the Website repository on
-  the same branch name.
-- **Evidence:** `scripts/check.sh` passes all ten steps; a Chrome run of the
-  playground covers `playground:helper`, a rename to `myapp`, and a bad
-  manifest. Four mutations put back in the compiler each fail a test.
-
-## 2026-11-03 Field offsets (branch `fix/field-offsets`)
-
-- **Problem:** `layout::fields_placed` laid out a struct's fields again at each
-  access and built a list of all of them: a 10,000-field struct read field by
-  field cost about 100 million field layouts. The interpreter kept its own cache
-  of the lists, with a wrapper over it (`field_place`).
-- **Fix:** `StructInternals` keeps `offsets`, from the `struct_layout` the
-  declaration already ran; `define_struct` takes that layout whole.
-  `layout::field_placed` gives one field in O(1) for a struct and lays out a
-  range's two or three fields when asked. The cache, its wrapper and
-  `fields_placed` went; the struct printer reads the offsets directly.
-- **After:** that program, `check -dump ll`, 4.0 s before the recent struct work,
-  now 1.2 s (check alone 1.0 s). Benchmark 3,788 M and 3,790 M, inside the noise
-  seen before (3,785 to 3,795 M). Output unchanged: every dump matched.
-- **Evidence:** with every stored offset 0, `ll_struct` and
-  `ll_struct_parameters` differ and the interpreter fails `run_struct_references`.
-
-## 2026-11-03 Index checks in lowering (branch `feature/place-addresses`)
-
-- **Problem:** the bounds rule for `a[i]` and `s[i]` had two owners. The LLVM
-  writer (`write_place_address`, with `renamed`, the extension, the compare and
-  the `traps` place arm) and the interpreter (`locate`) each checked the index
-  while finding the address, though `&s[i..j]` was already checked once, in
-  lowering. All indexes ran before any check: in `a[g()][h()] = f()` with `g`
-  outside, Peeper ran `f`, `g`, `h`; Rust runs `f`, `g` and stops. And
-  `grid[pick()].len` never checked its index.
-- **Fix:** lowering checks each index right after computing it
-  (`lower_index`, through `checked_usize`, split from `lower_slice_end`), and
-  the step keeps a `usize`; a constant index into an array stays unchecked, by
-  the checker's own test (`known_position`, shared with slice ends). A new
-  `length` instruction reads a slice's length for these checks and for slice
-  ends (it replaced `load` + `field`); the loan check treats it as Rust's
-  shallow read (`Access::own_storage`, which was `replaces`), so a loan of the
-  elements does not stop it. `Check` keeps its message as `Box<str>`, built from
-  the array's length. The backends only turn a place into an address: the LLVM
-  walker lost its checks, `traps` is a `bool` with no place arm, and the store
-  shortcut lost its trap condition; the interpreter lost its bound filters.
-- **Behavior:** the order above is Rust's (`run_panic_index_order`);
-  `grid[pick()].len` checks its index (`run_panic_index_length`). Two borrow
-  messages read better: `&s[1..2]` while a `&mut` of an element is in use says
-  "borrowed", not "read"; "slice used later here" points at `left[0]`, not the
-  whole assignment (`negative_slicing`). Nothing else changed: old and new
-  compilers compared on every fixture and example in check, run, release,
-  interpreter and `i686-linux` (1,140 cases), and on probes of wide, negative,
-  32-bit, compile-time, field, reference and pointer indexes.
-- **Speed:** benchmark 3,786.5 M and 3,786.4 M (3,790 to 3,798 M before; it has
-  no index). Old against new, user-space instructions (`perf stat`), medians:
-  3,000 functions of six indexes, `check` 216.5 to 228.7 M (+5.7%: more MIR
-  through the path checks), `check -dump ll` 1,189 to 1,147 M, `build` 11,100 to
-  10,835 M, `build -release` 17,767 to 17,733 M, LLVM text 20.89 to 19.47 MB: the
-  walker now loads a slice's length only for a borrow of all its elements, as
-  nothing else reads it, and writes no zero step before a load. A program of 128 M index
-  steps: the debug binary 10,196 to 9,812 M (-3.8%), the release binary the
-  same 1,870 M; `run -interpret` 6,332 to 7,258 M (+14.6%), each check now
-  three or four MIR instructions run one by one (dispatch, `run_instruction`,
-  `run_from` and `operand`, is a third of its time).
-- **Evidence:** with `length` a deep read, `negative_array_loops` and
-  `negative_slicing` (a new case, `&s[1..2]` while `&mut s[0]` is in use) fail.
-  With the array check off by one, `run_panic_index_length` fails (no run
-  fixture had an array index equal to the length before); with the slice check
-  off by one, `run_panic_index_order` and `run_panic_slice_bounds` fail. An index
-  compared after it is cut to 32 bits, or a wide negative one not refused, fails
-  `run_i686_panic_index_wide`. `scripts/check.sh` passes all ten steps.
-- **Review:** the open finding on `write_place_address`, to extract its index
-  check, is gone from the plan: it has no index check now, and is 126 lines, not
-  175. `slice_length` had one caller left, so `.len` writes its `field` itself.
-- **Step limit:** a compile-time run counts each MIR instruction, so checks
-  use up its 1,000,000 steps: a constant of 48,000 passes over `a[i]` fits on
-  `main` and not here (about 16% fewer passes). Left as it is; the owner has
-  not decided.
-- **Not done:** the loan check does not refuse changing a slice inside its own
-  index (Rust's E0510); nothing can today (T0043 on every way to write a slice
-  through a reference, pointer or array), and that rule must come with the
-  first. Division, shift and array-part checks are still written by each
-  backend from the operation.
-
-## 2026-11-03 Machine division up to 64 bits (`bigint`)
-
-- **Problem:** `bigint::divide` and `remainder` walked a value bit by bit, with
-  allocations, even for one limb. A loop of `%` spent 22% of its interpreted
-  time in `divide_magnitudes`.
-- **Fix:** a value of one limb uses the machine's division; wider ones still
-  walk. The magnitudes, signs and wrapping stay where they were.
-- **After:** that loop under `run -interpret`, 3,000 passes of 64 steps: 7,245 to
-  4,882 M instructions (-33%); `main` was 6,332 M. A loop with no division: no
-  change. A special path with no `Vec`s measured 4,717 M: not worth a second
-  copy of the sign handling.
-- **Evidence:** a new test compares `divide` and `remainder` with `i128`
-  arithmetic: every pair of values at 1 to 8 bits, signed and unsigned, and edge
-  values at 31 to 126 bits, wrapping at the signed minimum. It passed on the old
-  code first. A wrong quotient or remainder in the new path fails it.
-
-## 2026-11-03 A borrow of a whole slice reads the slice
-
-- **Problem:** after index checks moved to lowering, only a borrow of all a
-  slice's elements (`s.*`, as in passing `s` to a call) needed a slice's length
-  from the address walk. The LLVM writer worked out which run held it in two
-  places, took the slice apart and built it again; the interpreter read the
-  length on every step through a slice for this one case.
-- **Fix:** `Place::slice_of_elements` gives the slice such a borrow is all of,
-  and both backends read it whole. Neither walk touches the length now, and
-  `Located` lost its `length`.
-- **After:** 3,000 functions passing two `&mut []` slices four times: LLVM text
-  12.85 to 8.94 MB, `check -dump ll` 727 to 608 M instructions, `build` 6,812 to
-  5,916 M. A loop of `s[i]` under `run -interpret`: 3,186 to 3,148 M. Output the
-  same on mixed programs in debug, release, interpreter and `i686-linux`.
-- **Evidence:** a wrong slice from `slice_of_elements`, the LLVM writer or the
-  interpreter fails run fixtures; `ll_slices` pins the text, with `lend`.
-
-## 2026-11-03 CI on ARM Linux
-
-- **Change (`6f0d0a93`, branch `feature/more-machines`):** `ci.yml` has an
-  `ubuntu-24.04-arm` row. The i686 Rust target and `gcc-multilib` install only on
-  x86-64 Linux; `wasm32-wasip1` on all Linux.
-- **Evidence:** CI run 41613278877 passed on all four machines. The ARM job ran on
-  image `ubuntu-24.04-arm` with Rust `aarch64-unknown-linux-gnu` and
-  `toolchain-linux-arm64-llvm-23.1.4-rddfb5ccb28fa`, in 2 min 17 s. No compiler
-  source needed a change.
-- **Not done:** no ARM Linux release archive or installer yet. `target = "i686-linux"`
-  fixtures are skipped there by design (`runs_i686`).
-
-## 2026-11-03 Pack and CI on ARM Windows
-
-- **Change (`4a46a92b`, merge `f7d8979f`):** `windows-11-arm` rows in `ci.yml` and
-  `build-toolchains.yml`; the runtime's Rust target follows `runner.arch`. Pack
-  `toolchain-windows-arm64-llvm-mingw-20261020-rb20404288da9` replaces the old zip,
-  193.9 to 180.4 MB. `setup.ps1` drops its remark on zip packs.
-- **Evidence:** pack run 41614574297 published only this pack; the other four came
-  out identical and were "already published". CI run 41615233104 passed on all five
-  machines; the ARM Windows job took 4 min 52 s, with Rust `aarch64-pc-windows-msvc`.
-  No compiler source needed a change.
-- **Found:** after the owner's approval on PR #179, `auto-merge-toolchain.yml` stopped
-  at "GitHub does not report this PR as clean: unstable", seemingly because its own
-  job was still running. Its manual trigger with `pr_number=179` merged it. Fixed below.
-- **Not done:** no release archive or installer for this machine yet. The lock's
-  `format` field has no reader now (`pack.rs` writes it, `main.rs` parses it).
-
-## 2026-11-03 LLVM for Intel Macs, and the toolchain auto-merge
-
-- **Done:** `build-llvm-intel-mac.yml` builds LLVM on `macos-15-intel` and publishes
-  it as our own release; the bot pinned it as `llvm-darwin-amd64` (PR #180,
-  `9d040210`).
-- **Evidence:** run 41617288179 passed: compile 4 h 31 min of the job's 6 hours, file
-  `LLVM-23.1.4-macOS-X64.tar.xz` 58.4 MB, `clang-23`, `lld`, `llvm-ar` and `lli` each
-  `minos 13.0` and needing only what a Mac comes with, and a C program linked and ran.
-  Listing the file showed every path `pack.rs` reads, with `libclang_rt.osx.a`.
-- **Fixed:** `auto-merge-toolchain.yml` had never merged a pull request on an approval
-  in the runs read (`f4a2af8c`). It asked GitHub for `mergeable_state`, "unstable"
-  while its own job runs, so that check is gone. `check_suite` does not fire for
-  suites GitHub Actions made, so a too-early approval was never retried: it is now
-  `workflow_run` on CI, finding the pull request by commit because the run's own list
-  was empty on the merged bot pull requests read. Closed ones are refused by state.
-- **Evidence:** the check script, run locally against real pull requests, stopped or
-  went on as it should; not yet run live: the next bot pull request is its test.
-- **Evidence, live:** bot PR #181 merged by itself 5 s after approval (`94ab8066`): the
-  `workflow_run` run read the approval, and the review run then stopped on the closed
-  pull request. Approving well after CI has finished is not yet seen live.
-- **Pack:** `toolchain pack` needed no change. Run 41661204845 published
-  `toolchain-darwin-amd64-llvm-23.1.4-refeaa4f1aed4`, 82.8 MB against the old 670 MB;
-  the Intel job took 2 min 13 s. The ARM Mac pack is 137 MB; ours is likely smaller for
-  its two LLVM targets (not compared file by file).
-- **CI:** run 41663551454 (`aafaf013`) passed on all six machines; the Intel Mac job took
-  8 min 51 s from a cold cache, on the new pack. No compiler source needed a change.
-- **Not done:** no Intel Mac release archive or installer. The old pack's release stays
-  until the owner's cleanup.
-- **Found:** `main` has no branch protection and no rulesets, though `RULES.md` 10.1
-  says it does. Owner's call.
-
-## 2026-11-03 Release archives and installers for the new machines
-
-- **Done:** `release.yml` builds archives for `linux-arm64`, `darwin-amd64` and
-  `windows-arm64`, with its Rust targets chosen as in `ci.yml`. `install.sh` no longer
-  has a list of allowed machines: all four it maps have archives, and the Rosetta check
-  stays. `install.ps1` maps AMD64 and ARM64 as `setup.ps1` does. `install-check.yml` has
-  rows for the three machines.
-- **Evidence:** `install.sh` run with stand-in `uname`, `sysctl` and `curl` names the right
-  archive for Linux and macOS on both processors and under Rosetta, and refuses FreeBSD and
-  riscv64. The two workflow files parse.
-- **Evidence, test release:** tag `v0.3.0-rc1` at `ba3dfe77`, run 41670753822, passed on all
-  six machines, fixtures on each unpacked archive. Sizes 85.8 MB (`darwin-amd64`),
-  221.7 MB (`linux-arm64`), 183.0 MB (`windows-arm64`). Each new archive's `peeper` is for
-  its processor, its checksum matches, and the ARM Windows `peeper.exe` names no Visual C++
-  runtime. The draft and the tag were then deleted.
-- **Not done:** `install.ps1`, `install.sh` against a real release and `install-check.yml`
-  have not run: PowerShell is not installed here, and the install check needs a published
-  release, so the next release is their first run.
-- **Fixed:** `install.ps1` ran `tar` from the PATH, where `setup.ps1` runs
-  `System32\tar.exe` because a GNU tar takes `C:` for another machine. It now does too.
-
-## 2026-11-04 Methods undone
-
-- **Decided (owner):** the first methods try is undone. It treated a method as
-  a feature of its own (its own scope table, lookups, call path and errors)
-  instead of a function that lives and is found as any function is.
-- **Done:** `feature/methods` reset to `dc7b2247`; the four commits are kept in
-  `backup/methods-first-try`, the uncommitted work in the stash "methods first
-  try: uncommitted".
-- **Next:** a one-page design reviewed by the owner before any code.
-- **Evidence:** `bash scripts/check.sh` passed on the reset branch; the bundle
-  rejects `fn P::new()` ("expected `(`, found `::`").
-
-## 2026-11-04 Duplicate cleanup and a code database
-
-- **Done:** a code database in `.claude/codedb/` (one file per crate, and
-  `similar.md` for duplicates across crates), written by low-effort agents and
-  refreshed after the cleanup; it is git-ignored. On `fix/duplicate-cleanup`:
-  - `through_pointer` replaces four copies of "go through a reference or
-    pointer" (field, index, slice, reborrow);
-  - assigning to a module constant now points at its declaration, as a local
-    constant's error did; one branch builds both;
-  - `project::declaration` replaces the declaration-by-id lookup, and
-    `llvm` `symbol`, `debug_info` and `lsp` `checked.rs` reuse
-    `declared_text` / `declared_name`;
-  - `SourcesLock::position` replaces two lock lookups in the toolchain.
-- **Not done:** one owner for a type's text in messages (waits on the owner);
-  sharing the print text of structs and arrays (a marked shortcut, already
-  compared by the run fixtures).
-- **Evidence:** `bash scripts/check.sh` passed; the new label test fails
-  without the change.
-
-## 2026-11-04 One owner for a type's text in messages
-
-- **Decided:** `project::type_text` names a type with each declaration's own
-  name; `Checker::type_text` stays as the checker's one-line call (27 uses
-  would otherwise repeat `self.modules, &self.types`).
-- **Done:** the LSP's own `type_text` is deleted, and the LLVM debug info's
-  inline copy uses the shared function. Behavior is unchanged.
-- **Kept:** the three `check/declaration.rs` sites still index their own
-  module's tree, which they keep using.
-- **Evidence:** `bash scripts/check.sh` passed.
-
-## 2026-11-04 One way to run a tool and to name a file error
-
-- **Done:** `llvm::link::run_tool` runs a tool and shows what it printed as
-  errors only when it fails; `call_tool` adds what the run was for. The
-  toolchain's own `run` is deleted. `llvm::link::file_error` writes "cannot
-  {action} {path}: {error}" for both crates; the toolchain's copy and nine
-  hand-written texts are gone. `llvm/build.rs` keeps its own panic text, as
-  a build script cannot use the crate.
-- **Checked, no change:** the other groups of `.claude/codedb/similar.md`
-  keep one rule in the interpreter and the backend, whose texts and layouts
-  are already shared, or only look alike.
-- **Evidence:** `bash scripts/check.sh` passed; the new test
-  `a_failing_tool_is_named_with_what_it_printed` fails when `call_tool`
-  drops its prefix.
-
-## 2026-11-04 Names that say what they do
-
-- **Done:** 34 items across every crate renamed after a review against
-  RULES.md section 5 (`.claude/codedb/renames/`). Examples: `cannot` →
-  `file_error`, `Scanner::fail` → `report`,
-  `source::grow` → `grow_stack`, `Body::calls` → `has_call`,
-  `eval::interpreter::run` → `run_function`, `Interpreter::charge`/`spend` →
-  `count_copy`/`count_steps`, `Checker::global` → `resolve_global`, the lsp
-  `handle_notification` → `apply_notification`. Comments and docs follow.
-- **Kept on purpose:** `call_tool`, `Parser::tok`/`stmt`/`end` (the owner
-  kept them), `compile::run` (always read with its crate),
-  `fix::chosen`/`fix::write`, `Interpreter::operand`/`allocated`, the
-  private `Types::types`/`ids`, llvm `shift_count` (the interpreter's twin
-  has the same name), `ThirBuilder::names`.
-- **Decided, no change:** the `types` field and parameter (the semantic
-  type table) keeps its name; the owner: "types already mean the semantic
-  type".
-- **Evidence:** `bash scripts/check.sh` passed.
-
-## 2026-11-04 Methods: one name table keyed by (owner, name)
-
-- **Decided (owner):** a method is a top-level declaration with an owner
-  (`ast::Function.owner`), found in the module's one name table under
-  (owner's `DefId`, name), so interface methods later use the same lookup.
-  The single-level key `(Option<DefId>, &'p str)`, with names borrowed from
-  the program's text, was chosen over two levels
-  (`Option<DefId>` -> `Box<str>` -> symbol).
-- **Benchmark** (`scripts/bench-instructions.py`, instructions per compile,
-  a program with no type functions):
-
-  | Version | Runs | Mean | Range | vs `main` |
-  | --- | --- | --- | --- | --- |
-  | `main` (`22b9728b`) | 5 | 3,787.7 M | 3,780.4 - 3,797.1 | |
-  | single level (chosen) | 6 | 3,784.8 M | 3,775.6 - 3,792.7 | -0.08% (noise) |
-  | two levels | 5 | 3,815.2 M | 3,801.6 - 3,821.9 | +0.73% |
-
-  One run varies by up to 0.45%, so each version ran five or six times; the
-  two-level range does not overlap the others.
-
-## 2026-11-04 Methods step 1: a type's functions, called by path
-
-- `fn Point::name(...)` is a top-level declaration with an owner
-  (`ast::Function.owner`). `scope::collect` declares it under the struct's
-  `DefId`; the owner must be a struct of the same module
-  (`` `X` is not a struct declared in this module ``). `resolve_path` reads
-  `Type::name` and `module::Type::name` in one loop. Nothing below check
-  changed.
-- `project::declared_path` gives `Point::name` for the link name
-  (`module.Point::name`) and the debug info name.
-- Fixed on the way: `fn App::main` was taken as the entry point; moving a
-  function to another type did not check importers again; `i32::f()` said
-  "`i32` is not a module or a type".
-- Tests: parser dump, `scope` (duplicate "in this type"), two `compile` tests
-  (each fails without its fix), fixtures `run_type_functions`,
-  `run_i686_type_functions`, `negative_type_functions`.
-- `bash scripts/check.sh` passed.
-- After review: `-dump thir`/`-dump mir` and cycle errors name a type's
-  function `Point::Sum` too (`mir::Body::text`/`thir::Body::text` take any
-  printable name, as `Types::text` does). Tests: fixture
-  `mir_type_functions`, a `Point::E` cycle in `a_cycle_is_reported_once_with_its_path`.
-  `check.sh` passed again.
-- Second review: `Status::Ready` on an enum said "unknown name `Ready` in
-  type `Status`" (it said "not supported yet" before). `scope::has_functions`
-  now holds the one rule, only a struct has functions, for `collect` and
-  `resolve_path`; the enum gets "`Status` has no functions"
-  (`negative_type_functions`). `check.sh` passed.
-- Not done: LSP hover and rename for a type's function were not looked at.
-
-## 2026-11-05 Methods step 2: `self`
-
-- `self`, `mut self`, `&self`, `&mut self` are the first ordinary parameter,
-  of the new syntax node `ast::Type::Owner` (the owner's choice over pointing
-  at the owner's name). The Go receiver `fn (p: T) name()` and
-  `Signature.receiver` are gone. Binding `self`, `in self`, the function's
-  type, MIR, the interpreter and LLVM did not change.
-- Check resolves `Owner` from the declaration being checked
-  (`checking.last()`, as `current_module`), through `Scope::struct_named`,
-  which `collect` uses too. `check_function` holds the rules: `self` first,
-  and only in a type's function. First built in the parser; moved to check
-  after the owner's correction ("Parsers main job is to parse").
-- A panic found by a probe: `fn plain(&self)` reached `Owner` with no owner.
-  Now `check_function` refuses it before any type is resolved.
-- Benchmark (`scripts/bench-instructions.py`, one compile, no methods in the
-  program):
-
-  | Version | Runs | Mean | Range |
-  | --- | --- | --- | --- |
-  | `1bffb550` (step 1) | 5 | 3,795.3 M | 3,790.2 - 3,798.5 |
-  | step 2 | 5 | 3,808.5 M | 3,805.9 - 3,810.6 |
-  | step 2 without the parser's `self` lookahead | 3 | 3,799.9 M | 3,793.9 - 3,805.2 |
-
-  +0.35%; about two thirds of it goes with the parser's lookahead (a text
-  compare with `self` on each of the 40,000 parameters). A sampled
-  `perf record` per function was too noisy to use.
-- The two designs for `self`'s type, run back to back (5 runs each):
-  owner type node (kept) 3,802.4 M (3,799.7 - 3,805.7); pointing at the
-  owner's name 3,806.1 M (3,798.8 - 3,820.9, one high run). The same within
-  noise: the program has no `self`, and both share the parser's lookahead.
-  Pointing at the name needs the parser to refuse `self` without an owner,
-  cannot type an interface's `self`, reports `fn Missing::f(&self)` twice,
-  and check must find `self` by its text. Patches:
-  `target/self-owner-node.patch`, `target/self-owner-name.patch`.
-- `self` is a special name (owner, 2026-11-05): "like true, false. binding
-  but a special one", not a keyword and not colored as one. `token` has a
-  `#[names]` section (`false`, `self`, `true`) with its own `NAMES` list;
-  `KEYWORDS` no longer holds `true`/`false`, so error output stops coloring
-  them like `fn`. The parser compares token kinds only (`TokenKind::SelfValue`
-  in `parameter`, `starts_parameter`, an `origin` reader for `in self`, and
-  a prefix rule for `self` in expressions); `let self = 1` is now a parse
-  error.
-- Speed of the token (5 runs each, against `1bffb550`):
-
-  | Version | Mean | Range | vs `1bffb550` |
-  | --- | --- | --- | --- |
-  | text compare in the parser | 3,808.5 M | 3,805.9 - 3,810.6 | +0.35% |
-  | `self` token, second lexer table for names | 3,838.6 M | 3,828.7 - 3,849.2 | +1.0% |
-  | `self` token, one merged table (kept) | 3,777.5 M | 3,772.7 - 3,783.3 | +0.02% (noise) |
-
-  The second table cost a lookup on every word that is not a keyword; the
-  lexer now merges `KEYWORDS` and `NAMES` by first byte at compile time
-  (`WORDS`), so each word costs one lookup as before.
-- Not done: an interface method must take `self` first. The parser rule was
-  removed (parsers only parse); check refuses interfaces as not supported,
-  so the rule is added to check when interfaces are checked.
-- Tests: parser (four forms, the dump, the Go receiver is a parse error),
-  check (`errors_are_located`: both `self` rules), fixtures
-  `run_type_functions`, `run_i686_type_functions` (all four forms and
-  `in self`; LLVM and the interpreter agree), `negative_type_functions`.
-  `bash scripts/check.sh` passed.
-
-## 2026-11-05 Methods step 3: calls with a dot
-
-- `p.sum()` calls the function `sum` of `p`'s struct and gives `p` as its
-  `self`. Taken as recommended when the owner said "continue": `Point::sum(p)`
-  does not borrow `p` by itself (as in Rust); a function may share a field's
-  name (`c.value` and `c.value()`); the call stays
-  `Call { callee: Selector }`, with no new node.
-- How: `check_call`'s dot branch (`ThirBuilder::method`) checks `p`, goes
-  through a reference (`through_pointer`), and looks the name up with the
-  struct's `DefId` as owner through `Checker::member`, taken out of
-  `resolve_path` so a path and a dot share one lookup, suggestion and
-  export rule. `takes_self` refuses a function without `self` ("call it as
-  `Point::new(...)`"); `is_self` is shared with `check_function`. `&self`
-  and `&mut self` borrow the place with `check_borrow`; `self` takes the
-  place itself, so moves and loans come from the existing flow checks.
-  Nothing below check changed: the MIR of `line.Sum()` is the MIR of
-  `Line::Sum(&line)`.
-- Differs from the plan's table: `&mut self` on a temporary
-  (`P::New(1).Bump()`) is accepted, the same as writing `&mut P::New(1)`.
-- Speed (5 runs each, against `2aff6689`): 3,777.3 M (3,769.1 - 3,788.1)
-  against 3,778.4 M (3,775.9 - 3,781.9), noise. The benchmark program has
-  no dot calls. Log: `target/bench-dot-calls.log`.
-- Tests: fixtures `run_type_functions`, `run_i686_type_functions` (through
-  `&`, `&mut`, a temporary, a by-value chain; LLVM and the interpreter
-  agree), `negative_type_functions` (no `self`, unknown and unexported
-  names, wrong count, `&mut` of an immutable place),
-  `negative_method_moves` (moving out of a reference, use after a move),
-  `mir_type_functions`. The `.` hover doc now names dot calls.
-  `bash scripts/check.sh` passed.
-- Not done: LSP hover and rename on a dot call are not checked.
-
-## 2026-11-05 Methods step 4: docs, `self` hover, example
-
-- Hover on `self`, on the parameter and on each use, shows its binding with
-  the owner's type, `self: &P` or `mut self: P`, then the doc of `self`
-  (owner, 2026-11-05). `token_doc_at` finds the variable fact at the token,
-  or the declaration a use points at, as it finds a literal's type; the
-  binding's text (`binding`) is shared with `declaration_of`.
-- `self` takes no type (owner, 2026-11-05): `self: i32` stays a parse
-  error, the grammar's, not a meaning rule. Its doc says none is written.
-- The `fn` doc names a type's functions and both ways to call them; the
-  `.` doc names dot calls (step 3).
-- Editor: hover and go to definition on `p.Sum` and on `P::Sum` reach the
-  declaration. The LSP has no rename.
-- Hover on a struct lists its functions under it, each up to its body
-  (owner, 2026-11-05); from another module only the exported ones, as only
-  those can be called there. `write_functions` walks the struct's module
-  once: a type's functions are declared there, where its name names one
-  declaration. `is_exported` moved from check's `scope` to `project`, so
-  check and the editor share one export rule.
-- `examples/18_type_functions.peep`: by path, `&self`, `&mut self`, `self`,
-  through a reference, on a temporary; the same output on x86-64 and i686.
-- Tests: `answers_on_a_types_functions` (both `self` hovers, `mut self`,
-  hover and definition by dot and by path, a struct with a private
-  function); `names_across_modules` (another module's struct hides its
-  private function). Each fails without its change.
-
-## Slices written `&[]T` (2026-11-05, branch `feature/slice-syntax`, uncommitted)
-
-- Owner decision: a slice is `&[]T` / `&mut []T`, so it reads like a
-  reference to an array (`&[4]T`) without the length, and every view shows
-  its `&` in front (text `&str` and interfaces `&Shape` to follow). `[&]T` is
-  gone with no old-syntax path; bare `[]T` keeps P0011, whose label now
-  names `&[]T`.
-- Parser only: `reference_type` reads `&`/`&mut` and then `[]T` as the same
-  `Type::Slice` node; `&&` in a type is two references (the lexer reads one
-  token), so `&&[]T` reaches check's "references to slices are not
-  supported yet". Messages and `real_text` print `&[]T` / `&mut []T`.
-- All `.peep`, fixture, doc and comment spellings rewritten; test
-  `parses_two_references_written_as_one_token`. `scripts/check.sh` green.
-- Side repos: tree-sitter-peeper already reads `&[]T` (its old `[]T` rule);
-  VSCodeExt `tm-test.mjs` case updated (73 pass); Website
-  `content/docs/language/arrays.mdx` on its own `feature/slice-syntax`.
-- Step 2 of text (owned `string`) is in `git stash` on `feature/text`.
-
-## Text written `&str` and `&cstr` (2026-11-06, `feature/text`)
-
-- Owner decisions (by questions, 2026-11-05/06): text alone has no fixed
-  size, so `str` and `cstr` are refused and only `&str` / `&cstr` are
-  values; text views are read only (no `&mut str`); no UTF-8 promise;
-  `&cstr` is one address; a `c"..."` literal may not hold a zero byte.
-- Check: `&str` / `&cstr` resolve to `Type::Str` / `Type::CString`, which
-  print as `&str` / `&cstr`; a plain one is P0011 "`str` is text of any
-  length, so it has no fixed size"; `&mut str` is P0011 too. Lexer: L0001
-  "C text cannot hold a zero byte". Parser: a plain `[]T` is read whole and
-  named in P0011, and parsing goes on.
-- Not done: text is not a loan holder (`Type::borrows`, `shortcut:`);
-  making it one refused a literal returned from a function with no
-  parameters and arrays of text (tried, undone).
-- Fixture `negative_text_views`; lexer test
-  `a_c_literal_holds_no_zero_byte`; `mir_comptime_calls` keeps its zero
-  byte in a `&str`. `scripts/check.sh` green.
-
-## Borrowed interfaces (2026-11-06, `feature/interfaces`, not committed)
-
-- Owner decisions (by questions, 2026-11-06): a struct implements an
-  interface when it has every method by name and exact type (`self` the
-  struct); nothing is declared. `&T` becomes `&Shape` by itself where a
-  `&Shape` is expected (`&mut T` also to `&mut Shape`, `&mut Shape` to
-  `&Shape`). `&Shape` calls `&self` methods, `&mut Shape` also `&mut self`
-  ones (T0007 otherwise); a `self` method may be declared, not called
-  through a reference. Generic methods: the existing "generic functions"
-  refusal.
-- Model: `Type::Interface { definition, methods }` (method function types,
-  `self` an `InterfaceReference`) made by `Types::define_interface` over
-  the `Named` id; `Type::InterfaceReference { mutable, interface }`, two
-  words, a loan holder like a reference; `Conversion::ToInterface`;
-  `Callee { Function, Method(slot) }` in THIR's and MIR's `Call`;
-  `ToInterface { reference, methods }` in both; `Place::split_last`
-  (replaces `slice_of_elements`; one borrow branch per backend reads a
-  slice or interface reference lent again whole).
-- Check: `check_interface`, `signature_type` (split from `check_function`,
-  shared), `implementation` (lookup by `Scope::get`, compare with
-  `method_type`), `value_type` refuses a bare interface ("owned interface
-  values"), `held_type` refuses interfaces and interface references held
-  in arrays, pointers and references; calls through `interface_method`.
-- Flow: `ToInterface` copies the reference's loans; a method call's result
-  borrows by the interface's origins.
-- Interpreter: `Register::Interface { address, table }`, the table being
-  the `ImplementationId`'s index. LLVM: `{ ptr, ptr }` inline (no header
-  change, so no other dump moved), `@.table.N` private constants per
-  module, call loads the slot. Compile-time runs reach table methods.
-- Module interface hash covers interface methods.
-- Fixtures: `run_interfaces`, `run_i686_interfaces` (two modules),
-  `negative_interfaces`, `negative_interface_loans`, `ll_interfaces`; test
-  `interface_references`. `scripts/check.sh`: tests and fixtures green;
-  clippy fixed after.
-- Review fixes: a `&mut T` made `&I` is lent as `&T`, so `f(r, r)` with two
-  `&I` parameters passes (it was T0037); an interface with a method
-  declared twice is invalid, so conversions to it add no second error;
-  `interface_method` lists method names only for the "did you mean" hint.
-  `run_interfaces` prints `both`, `negative_interfaces` has 15 errors.
-  `scripts/check.sh` all ok.
-- Implementations numbered: the checker finds a struct and interface
-  pair's methods once (`Checker::implementations`, successes only, so a
-  failing pair is still reported at each conversion) and stores them in
-  `Types` by `ImplementationId`. THIR and MIR `ToInterface` carry the id;
-  the interpreter's `tables`/`table_ids` are gone (the id is the table
-  word); LLVM writes `@.table.<id>`, the same number in every module, and
-  `Written::tables` is a set of ids. Reuse: MIR is never kept between
-  compiles (`compile::run` makes a new `Checker` and `Types` each time;
-  only the LSP passes `previous`, and keeps diagnostics), so ids need not
-  survive. `negative_interfaces` checks a failing pair twice (16 errors).
-  `scripts/check.sh` all ok; `ll_interfaces` unchanged.
-- Not done: export rules for methods matched from another module (a
-  private method can satisfy an interface); `&Alias` of an interface is
-  refused as an owned value; `s.*` read as a value says "cannot move out
-  of a reference" rather than naming owned interfaces.
-
-## Match borrowed values instead of `ref` (2026-11-06)
-
-- Every `ref`/`ref mut` binding (155, 31 files) is gone: the matched value
-  is borrowed (`match &x`, `let P = &x else`), or its `*` dropped when it
-  was already a reference; uses of Copy fields read `*field`.
-- `method_type` clones the matched `Type::Function` whole (the same
-  allocations as cloning its parameters and origins).
-- `clippy::ref_patterns` is on in the workspace lints, and `rust-style.md`
-  states the rule.
-- `scripts/check.sh` all ok; no fixture or dump changed.
-
-## Manual freeing stays; free hook dropped (2026-11-06, `feature/free-hook`)
-
-- Owner: memory taken by hand is freed by hand; memory the compiler takes
-  itself, the compiler frees. No free hook now; `defer` or destructors
-  later, if a real program needs them.
-- Why: a probe of a `#[free]` method on real programs (a file handle, a
-  byte buffer, a list of buffers, a consuming method) found the hook needs
-  more language first: moving a value out of raw memory, pointer offsets,
-  and ending a value without its hook (else `File::Finish(self)` closes
-  twice). None of that is needed while freeing stays manual.
-- Kept: `core:allocator`'s `Malloc` is `Allocate` now, and `Free` keeps
-  its name (owner; runtime symbols unchanged). The `free` keyword is gone (token, parser rule,
-  `ast::Expr::Free`, the checker's refusal): it existed only for freeing
-  by hand. The parser's `builtin` reads only print now and is named
-  `print`.
-- `x_test/run_allocator`: `Allocate`/`Free`, and `free` as a function
-  name (fails with `P0002` when the keyword is put back).
-
-## Browser smoke: Node's WASI fast-call crash (2026-11-06, `feature/allocator-interface`)
-
-- `smoke.mjs` segfaulted Node 22.23.1 after the deep-recursion request once
-  `allocator.peep` grew: gdb shows a full GC inside `uvwasi_fd_read`, called
-  as a V8 fast API call, failing in `IterateTurbofanOptimizedFrame`. Same
-  crash with the committed compiler and the new library; a Node bug
-  (nodejs/node#46777, #53087, both closed stale and unfixed; reports say
-  Node 24 stops crashing without fixing it).
-- `smoke.mjs` turns fast API calls off (`setFlagsFromString`) before
-  compiling the module, with a `shortcut:` comment to drop it once no
-  supported Node needs it. It covers `check.sh` and `release.yml`. The
-  Website runs the wasm with its own WASI functions in the browser, so it
-  is not affected.
-
-## Pointer offsets: `rawptr + usize` (2026-11-06, `feature/allocator-interface`)
-
-- Owner: real allocators need an address some bytes on; only `rawptr +
-  usize`, giving a `rawptr`. `*T + n`, `n + p`, `p - n`, `p + p` and
-  `p + i32` stay refused.
-- Check (`check_binary`): the right operand is checked as `usize`; an
-  offset is never folded. A raw-pointer constant that is not `none` is
-  refused as "an address is known only when the program runs".
-- LLVM: `getelementptr i8, ptr, iN` (not `inbounds`). Interpreter: the
-  address plus the offset, wrapped at the pointer's bits; refused in a
-  constant's run ("a pointer offset cannot run at compile time, ...").
-- Fixtures: `run_pointer_offsets` (+ i686), `ll_pointer_offsets`,
-  `negative_pointer_offsets` (proven to fail when `*T + n` is let
-  through).
-- Not done: messages name `usize` as `u64` (`u32` on i686): the type
-  table holds one type for both, as before.
-
-## Allocator interface (2026-11-06, `feature/allocator-interface`)
-
-- Owner: the allocator comes before `String`; `String` will take a
-  `&mut Allocator` on each call that allocates or frees, since a struct
-  cannot hold a reference yet.
-- `core:allocator` gains `iface Allocator { Allocate(&mut self, size) ->
-  rawptr, Free(&mut self, memory) }` and `struct Heap {}`, whose methods
-  call the raw `Allocate`/`Free`. No compiler change: borrowed interfaces
-  already do it.
-- Left out until a program needs it: alignment, the size on free, resize.
-  An arena cannot be written yet (no pointer offsets).
-- Fixtures `run_allocator_interface` and `run_i686_allocator_interface`:
-  the heap and a counting allocator through one `&mut Allocator`
-  function; the interpreter matches. A struct missing `Free` gets T0001
-  "`Half` does not implement `Allocator`: it has no method `Free`".
-- Owner: the raw functions are private (`allocate`, `free`); every caller
-  goes through `Heap` (fixtures `run_allocator`, `run_struct_pointers`,
-  `run_i686_struct_pointers`, `run_outside_sizes`, `examples/modules`).
-- Website: not touched until the allocator work is complete (owner);
-  `modules.mdx` still calls `allocator::Allocate`/`Free` and must move to
-  `Heap` then.
-
-## Allocators in `core:allocator` (2026-11-06, `feature/allocator-interface`)
-
-- Owner: keep `align`. `Allocate(&mut self, size, align)`; `align` must be a
-  power of two up to 16, else `none`: without `rawptr as usize` an
-  allocator can only round offsets, which is right up to the 16 its heap
-  block starts at.
-- `Heap`; `Arena` (pieces one after another, `Free` gives nothing back,
-  `Reset`, `Release`); `Pool` (chunks of one size, a free list kept in the
-  free chunks, overflow of `chunk * count` checked); `Stack` (a private
-  `mark` of the stack before each piece; `Free` of any piece but the
-  newest panics; it is an `Arena` plus the newest piece and its mark).
-  Each gets its block from a `Heap` and gives it back with `Release` (no
-  destructors).
-- Review fixes: a chunk size near the top of `usize` wrapped to 0 when
-  rounded, so a pool handed one address to every caller; now it has no
-  chunks (`run_allocators` fails without the fix). The i686 offsets test
-  checks that an offset wraps at 32 bits.
-- Fixtures: `run_allocators` (+ i686): each allocator through one
-  `&mut Allocator` function, alignment, reuse, room, wrong `align`, and the
-  out-of-order panic; every caller passes an alignment now.
-- Website: still to do when the allocator work is complete.
-
-## `size_of` and `align_of` (2026-11-06, `feature/size-of`)
-
-- Owner: a type can be an argument (step 1 of type parameters); any type
-  works. `size_of(T)` and `align_of(T)` give a `usize` the checker works
-  out from `model::layout::layout` for the target, so they are constants
-  (`const B = size_of(Node);`). They are built-in names, which no
-  declaration hides, like the built-in types.
-- Parser: a spelling that can only be a type is read as `ast::Expr::Type`
-  where a value could go: `*T`, `rawptr`, `[N]T` with no `{` after it,
-  `&[]T`, `&mut []T`. `[_]T` still needs its values. Shared spellings (a
-  name, a path, `&T`, `range[T]`, parentheses) parse as values; the
-  checker reads them as a type where the argument takes one
-  (`Checker::expression_type`). `?T`, `fn(..)` and inline `struct` types
-  are not read there: the checker does not support them yet.
-- A type used as a value: T0004 "`*Node` is a type, not a value"; for `*p`
-  of a variable `p`, help "write `p.*` to use the value `p` points to".
-- Refused: `str`, `cstr` (no fixed size), an interface (not supported), a
-  value ("`1 + 2` is a value, not a type", and "`x` is a value, not a
-  type" for a variable no type is named as), a wrong argument count. `*p =
-  5;` gets the `p.*` help too. `&[]i32{ 1, 2 }`, which used to get "`[]i32`
-  is any number of `i32`s", now gets "`&[]i32` is a slice type, so it
-  takes no values" with a fix to `&[_]i32{ 1, 2 }`.
-- Users: `Stack::Allocate` in `core:allocator` sizes its `mark` with
-  `size_of(mark)` (was a guessed 24 bytes, 12 on i686), and the struct
-  allocations in `run_allocators`, `run_allocator_interface` and
-  `run_struct_pointers` (+ i686) use `size_of(Node)`. On i686 a node is 8
-  bytes, so more fit: `run_i686_allocators` asks for more nodes (8 in the
-  arena, 20 in the stack) so running out of room is still tested (sums
-  21, 28 after reset, 55).
-- Fixtures: `run_size_of` (+ i686: `Node` 16/8 and 8/4, references,
-  slices, `&Shape`, arrays, `range[i32]`, a later struct, a constant;
-  compiled and interpreted agree), `ll_size_of` (only the number is left:
-  `mul i64 %i1, 16`), `negative_size_of` (14 errors). Parser tests
-  `type_expressions`, `slice_type_with_values`; `[_]i32;` in
-  `expression_errors` (fails without the `[_]` guard, checked).
-- Review fix: `value_type` keeps sending a struct's `self` taken whole
-  through `declared_type`, as before; `reference_to` is the one place a
-  `&T` target becomes a value's type (`resolve_type`, `expression_type`).
-- tree-sitter-peeper (`feature/size-of`): the four type spellings are
-  expressions; an array literal wins when `{` follows. Every `.peep` file
-  in the repo parses as before or better (3 more parse).
-- `scripts/check.sh` passed.
-
-## `const` parameters, `core:memory` (2026-11-07, `feature/size-of`)
-
-- Owner: allocators move to `core:memory`, which gains `Realloc` (a method
-  of `Allocator`), `Replace` and `New`; `const` parameters take types and,
-  later the same day, values known when compiling.
-- `core:allocator` is now `core:memory`. `Realloc(&mut self, memory,
-  old_size, new_size, align) -> rawptr` on `Heap` (C `realloc`, size at
-  least 1, so 0 does not free), `Arena` (the newest piece in place, else a
-  new piece and a copy), `Pool` (the same chunk, else `none`), `Stack`
-  (newest piece only, else a panic). Runtime `peeper_rt_v1_realloc`;
-  interpreter `realloc`. Fixtures `run_realloc` (+ i686).
-- `New(const T: type, allocator) -> *T` and `Replace(const T: type, place:
-  &mut T, value: T) -> T` (the bytes of `value` and `place` traded).
-- `ast::Param.constant`, `ast::Type::Type` (`type` as a parameter's type).
-- A call names a `FunctionCopy` (`DefId` and `ConstArguments`, an interned
-  list of `ConstArgument::Type` or `::Value`); a plain function is its copy
-  with `NONE`. MIR, the interpreter (`mir_of`), LLVM (`copy_symbol`:
-  `path.Name<module.Type>`, `Name<3>`), dumps and the queue (by the module
-  whose compile built it) all take copies. Debug info points a copy at its
-  own file (`Metadata::file_node`).
-- Checker: `Checking.arguments`; `resolve_global` reads a `const T: type`
-  from the innermost entry. A copy's signature is checked on its first
-  call (`copy_type`) and its body by the compile after the module
-  (`next_copy`). A `const` value is a constant of the body. Errors in a
-  copy are reported in the calling module with "in `Name<T>`, the copy
-  made for this call" at the call; the same error in two copies once. A
-  copy made in a copy's body reports where the outer one does; its
-  signature's errors go to the call's module first, so the outer copy
-  counts them.
-- A function with `const` parameters gets its own signature checked, with
-  invalid types for `T`; an error there makes it invalid. Its body is
-  checked only through copies (open QUESTION 3 default).
-- Refused: `const mut`, `const ...`, `type` on a plain parameter,
-  `const x: T` (not supported yet), `extern`, interface methods, a struct
-  method with `const` parameters as an interface's, a `main` with them, a
-  non-constant argument (the `const` statement's messages). Copies nested
-  64 deep: one error, and no more copies are built.
-- The interface hash includes the text of a function with `const`
-  parameters: an importer's copy is built from its body (test
-  `a_type_parameter_body_edit_checks_its_importers`, fails without it).
-- Fixtures: `run_const_parameters` (+ i686: two modules calling the same
-  copies, a copy calling a copy, a method, a constant running a copy,
-  values, `New`, `Replace`), `ll_const_parameters`,
-  `negative_const_parameters` (16 errors), `negative_const_parameters_main`,
-  `negative_endless_copies`. Panic lines in the allocator and realloc
-  fixtures moved down 23 lines.
-- tree-sitter-peeper (`feature/size-of`): `const` before a parameter (the
-  old `comptime` there removed), `type` as its type; corpus test.
-- Benchmark (`perf stat`, one compile = (3 runs - 1 run) / 2): 3,824.6 M
-  at the step-1 checkpoint, 3,854.6 M now, +0.8%. Removed: a per-name scan
-  in `resolve_global` (now only for entries given arguments), a per
-  variable file lookup in LLVM. The sampled profile misses about half the
-  instructions there and does not show where the rest goes; switching
-  single checks off moved the count by 10-15 M either way.
-- `scripts/check.sh`: all pass but `whitespace`, which flags the blank
-  last line the compiler writes after a module's `declare` lines in
-  `ll_size_of/expected.ll` (marked `git add -N`); committed `ll` fixtures
-  end the same way.
-
-### Review fixes for `const` parameters (2026-11-07)
-
-- A copy no longer checks code its constants rule out: an `if` on a
-  constant `bool` keeps only the way it takes, and when that way always
-  leaves the block (`leaves`), the rest of the block is not checked. Code
-  after a written `return`, or after an `if` decided at run time, is still
-  checked, as in a plain function. `Count(const n: u64)` recursing to
-  `Count(n - 1)` stops at 0 instead of nesting 64 deep or failing on
-  `0 - 1`.
-- LLVM names a float argument by its bits (`copy_symbol`): `Same(NAN)` and
-  `Same(-NAN)` printed alike and made one name twice, which clang refused.
-- `copy_called`: a missing `const` argument hands back the function's own
-  type, so `check_call` reports the one argument count (counting the
-  `const` parameters); a failed argument sets a `failed` flag instead of an
-  invalid-type marker in the list.
-- `record`: skips only a real copy (one in `copies`), so a function's own
-  signature records its facts; `const_value_type` turns facts off while it
-  reads a value parameter's type again for a call. Test
-  `a_function_with_const_parameters_records_its_signature_once` (fails with
-  either half undone).
-- Fixtures: `run_const_parameters` and its i686 copy gain `Count` (run and
-  in a constant), `Sign` (a decided `else`) and the NaN copies;
-  `negative_const_parameters` gains `Scaled()` and `Dead`, a type error
-  after a written `return` in a copy (18 errors; without the written-`if`
-  rule the `Dead` error is gone).
-- Speed: `scripts/bench-instructions.py`, three runs each: checkpoint
-  3,815.9 to 3,823.7 M, now 3,856.0 to 3,861.5 M, +0.9%. A profile with
-  enough samples (period 200,000, 11 compiles against 1) puts +23 M in
-  `check`, spread over about ten places of 1 to 4 M each (the new checks
-  per function and call, the `FunctionCopy` table). Tried, each within
-  noise (about 5 M): sizing the `bodies` table up front, `#[inline]` on
-  `record`, switching off the `const` scans in `check_call`,
-  `compile_module` and the interface hash. Not fixed: no single cause.
-- `scripts/check.sh`: all pass but `whitespace` (the `ll_size_of` blank
-  last line, as above).
-
-### Libraries as projects (`feature/library-manifest`, 2026-11-07)
-
-Branched from `9920cf40` in its own worktree, to merge into
-`feature/size-of` later.
-- The browser embeds every file under `_builtin_library/` through a
-  build.rs list (`LIBRARY_FILES`), not a hand-written `CORE_FILES`; its
-  libraries come from their embedded `peeper.toml`. Test
-  `every_core_module_is_built_in` (fails when the list misses a file).
-- `Manifest::build` (`Build::Program | Build::Library`): `build = "program"`,
-  `build = "lib"`, or none for a program; anything else is an error. Not
-  required, so existing projects and the website's playground manifest keep
-  working.
-- `Project::entry` is `None` for a library: `load` starts from each `.peep`
-  file of its `src/`, folders too; `Program::entry` is `None`.
-- A bundled library is a folder of `libs/` whose `peeper.toml` says
-  `build = "lib"`, named by that file, not by the folder. A library project
-  of a bundled library's name takes its place (working on `core` checks
-  that `core`); a program of that name is still refused.
-- `_builtin_library/core/peeper.toml`: `name = "core"`, `build = "lib"`, so
-  `peeper check _builtin_library/core` checks every core file, and the
-  editor checks a core file as part of `core`, not alone.
-- `peeper build`, `run` and `run -interpret` refuse a library: "`name` is a
-  library (`build = "lib"`), so it has no `main` to build or run".
-- Editor: a check is kept by the entry file, or a library's folder
-  (`checked_key`); `project_of` also finds the project of that folder. Its
-  tests wrote `build = "bin"`, which was never read; now `"program"`.
-- Tests: `reads_what_the_project_builds`, `a_library_loads_each_of_its_files`,
-  `a_bundled_library_is_named_by_its_manifest`,
-  `checks_a_library_by_its_folder` (fails with a wrong key). Fixtures:
-  `negative_library_files` (an error in a file nothing imports),
-  `run_library`; the fixture runner also checks each bundled library alone
-  (fails on a broken core file). The 13 `build = "lib"` fixtures pass as
-  libraries.
-- Review fixes: the browser's run refuses a library with the same message
-  as `peeper run` (`manifest::LIBRARY_HAS_NO_MAIN`, one text for both),
-  where it showed nothing before (test `a_library_does_not_run`); a link to
-  a folder inside a library, or a bundled library, is not followed, as one
-  back up loaded each file again on each way round (in
-  `a_library_loads_each_of_its_files`).
-- Merged into `feature/size-of` as uncommitted changes (nothing is
-  committed on either branch): a three-way merge of each file against
-  `9920cf40`; two conflicts, the browser's file list (the generated list
-  kept) and this log's end (both sections kept). The core test now looks
-  for `core:memory`. `scripts/check.sh` after the merge: all pass but
-  `whitespace` (the `ll_size_of` blank last line, as before); `core`, with
-  `New` and `Replace`, checks clean alone. Codedb rows updated. Backup of
-  the size-of state before the merge: `playground/backup-size-of-2026-11-07/`.
-- Not done: the website (its docs on `peeper.toml`), once the feature is
-  complete.
-
-### Review of the `size_of` step and the merged tree (2026-11-07)
-
-- A `const` type parameter given `&str` or `&cstr` was taken for bare
-  text: `Replace(&str, ...)` and `v: T` were refused ("`T` is text of any
-  length"), and `size_of(&T)` gave 16 for `&&str` (8 is right). The text
-  rules in `named_type_at` and `text_view` now look at the written name
-  (`Types::builtin`), not at what the name resolves to. Fixtures:
-  `run_const_parameters`, `run_i686_const_parameters` (`Referred`,
-  `Replace(&str, ...)`); each half of the fix, undone, fails them.
-- A top-level function named `size_of` or `align_of` was accepted, and a
-  call of it went to the built-in with a far-off error. `scope::collect`
-  now reports "`size_of` is a built-in function" at the declaration
-  (`negative_size_of`, 15 errors; fails without the check). This gives
-  `layout_function` a second caller, so it stays.
-- `scripts/check.sh`: all pass but `whitespace` (the `ll_size_of` blank
-  last line, gone once committed).
-- Decided: a `const T: type` argument is always written at the call, even
-  where a later argument fixes it (`Replace(i64, &mut n, 9)`); working it
-  out from the arguments is left to `<T>` generics.
-
-### Committed (2026-11-07, `feature/size-of`)
-
-The work was split into four signed commits, each passing
-`scripts/check.sh` on its own tree:
-
-- 8560886a `size_of` and `align_of`. It includes the refusal of a function
-  named `size_of`. `core:allocator`'s `Stack` uses `size_of(mark)`, and
-  the allocator fixtures use `size_of(Node)`.
-- 5f548a56 `core:memory` and `Realloc`. It also takes the browser's core
-  file list in name order and the `REALLOC` import in order, which the
-  next step had fixed: without them this commit failed its tests and
-  format.
-- ee867ac0 `const` parameters, `New` and `Replace`, with the `&str` type
-  argument fix.
-- 6f56683d Libraries as projects. This log's entries written after the
-  merge are in this commit.
-
-Each commit's tree was built in a separate index file, and the working
-files were not touched. Checking was done in a temporary worktree, removed
-after. Backups: `playground/backup-commit-2026-11-07/`.
-
-### Review fixes after the PR (2026-11-07, `feature/size-of`, 95c9e838, eb1b80ad)
-
-From PR #182's Windows CI run and two reviews of the branch:
-
-- CI (`windows-11-arm`): `run_realloc` printed `heap: 0 3` for `heap: 10 3`.
-  The fixture read `grown` after `heap.Realloc(grown, 4096, 2, 8)`, which
-  on Windows moves the piece and frees `grown`; glibc and macOS shrink in
-  place. The sum is now read before the shrink, in `run_realloc` and
-  `run_i686_realloc`. Proved by reading only: Linux cannot show it. The
-  interpreter printed 10 for the freed read: it does not notice a read of
-  memory a move freed (not changed).
-- The browser build (`build.rs`) embedded every file in `_builtin_library`;
-  a file that is not UTF-8 (`.DS_Store`, a swap file) stopped the crate
-  compiling. Now only peeper.toml and `.peep` files. Checked both ways
-  with a binary `.DS_Store` in `core`: the old script fails, the new one
-  builds.
-- A library whose `src` was missing, unreadable or empty checked clean.
-  `load` now gives M0001 "read library: {folder}: {error}" or "no source
-  files in {folder}" when no file of the library is open in an editor or on
-  a page (the browser's library files are never on disk), and the program
-  is not checked. Test: `a_library_without_files_is_an_error`.
-- `bundled_libraries` dropped a folder with no or a bad peeper.toml, or a
-  program, and let two libraries of one name replace each other: losing
-  `core` lost the prelude with no word. Each is now an error from `find`
-  and `create`; a file beside the folders (a README) is skipped; no
-  libraries folder still means none. The editor logs the error and shows
-  nothing for the file. Test: `a_bad_bundled_library_is_an_error`; the old
-  test no longer has bad folders in its libraries. The browser still
-  reads its embedded manifests on its own (it panics on a bad one).
-- The editor kept a project's last check by its entry, or a library's
-  folder; when `build` changed, the old entry and its diagnostics stayed.
-  `Server::check` now takes over the files the check under the other key
-  published, so they are cleared (`project::entry` made public for it).
-  Test: `checks_a_library_by_its_folder` switches the library to a
-  program; it fails without the fix.
-- The browser's `run` loaded a library before refusing it; `load` is split
-  into `project_of` and `load`, and `run` refuses in between, as
-  `peeper run` does.
-- Vault: the 01-product declaration-check line (copies), its "Not done"
-  and "Planned order" lines (allocator done, interfaces borrowed only),
-  the "Since then" dates; 06-plan's header and item 3; 0.9% for the
-  slowdown; 03-vocabulary fixture counts (check 91, run 89, mir 19, ll
-  13).
-- `scripts/check.sh`: all pass. The new library error first failed
-  `checks_a_project`, whose `libs/core` had no peeper.toml; it has one now.
-
-### Untangling the codebase (2026-11-07, `refactor/untangle`, 0e1edf53)
-
-A pass for hidden links (copies that must change together), needless links
-and special cases, in ten fixes and one recheck round by three subagents.
-The decision log, with every item kept and why, is
-`playground/untangle-log.md`; the whole diff is
-`playground/untangle-final.patch` (119 files, +2256 −1427).
-
-- Loading and projects: `project::library_packages` is the one owner of
-  "folders and manifests to bundled libraries" (the CLI, the editor and the
-  browser use it); `LIBRARIES_FOLDER`; a loader worker's panic is caught
-  and raised again on the main thread; `installation_dir` is a `Result`;
-  a link to a library folder counts; a path that cannot be made canonical
-  is an error. A missing core stays "no libraries", on purpose (eb1b80ad).
-  The editor keys a project's last check by its folder (or lone file).
-- `compile::run` decides "may start": `entry_point` needs no loading or
-  checking error and `require_main`; `run` gives nothing for an
-  uncheckable program. `CheckedFunction::into_mir` is the one way to the
-  cleaned MIR. `peeper` has a library target, `write_program`, that the
-  binary and the bench share.
-- Check: `Symbol::TypeArgument` (a `const T: type` parameter is no
-  built-in); `Types::builtin` reads its own `usize`; `checking_in`,
-  `in_copy`, `records_facts`; T0043 only when a type parameter is named;
-  built-in function names refused for every top-level name.
-- MIR users: `Place::lent_again`, `slice_field`, `Type::is_slice_shaped`,
-  `thir::Stmt::Let { keeps_temporaries }`; loans and `traps` list every
-  MIR kind.
-- Interpreter and backend: `binary_instruction`, `write_unary`,
-  `cast_instruction`, `saturating_conversion` in `llvm::function::
-  arithmetic`, used by the backend and `eval`'s `llvm_parity` test, which
-  `scripts/check.sh` now runs on Linux (about 30 s). `constant_refusal`
-  refuses any type that lends mutably.
-- Smaller: `source::MAX_FILE_BYTES` (loader refuses longer files; span and
-  list casts keep a debug assert, a checked cast measured +4.5%);
-  `machine::Os`; `Limbs` storage private; `TOOLCHAIN_FOLDER`; runtime
-  source path spelled once; `fix::write` keeps the path; arena dependency
-  dropped from `peeper` and `compile`; `peeper init` writes
-  `println("Hello from Peeper!");`.
-- Tests: new fixtures `negative_const_value_type_reported`,
-  `negative_const_copy_error_in_constant`,
-  `negative_interface_reference_move`,
-  `negative_const_mutable_interface_reference`,
-  `run_const_parameter_hides_builtin`; `negative_size_of` gains `const
-  align_of` (16 errors). Rust tests: `a_loading_error_leaves_no_entry_point`,
-  `a_linked_bundled_library_is_found`, `core_streams_are_the_runtimes`;
-  the browser test reads every error count. Each new test was seen to fail
-  without its fix.
-- Behavior: the old (472a9e5c) and new compilers give the same `check`
-  output, `-dump mir` and `-dump ll` on every fixture and example except
-  the six fixtures above. `peeper check` on the 10×2000-function program:
-  1.35–1.37e9 instructions, as before.
-- `scripts/check.sh`: all pass.
-- Open for the owner: L0003 used by check; the lexer ends a line at a bare
-  `\r` while line numbers count `\n` only; whether to delete the fixtures'
-  unused `program_args` support.
-
-### Loans per holder (2026-11-08, `feature/reference-arrays`)
-
-- Owner: accept what Peeper proves safe even when Rust refuses it; refuse
-  only real hazards. Structs change too; one set of loans per array element.
-- `flow::loans`: reading a place uses only the holders under it; a store to
-  a place naming its holders exactly (fields, constant indexes) replaces
-  their loans and ends the `loans_through` entries under it.
-- Fixtures: five safe cases moved from `negative_struct_loans` to the new
-  `run_struct_field_loans` (the old compiler refuses all of them);
-  `negative_struct_loans` gains four real hazards (30 errors), one of them
-  two fields deep. Breaking the prefix match was seen to drop an error.
-- Old against new `check` on every fixture and example: only
-  `negative_struct_loans` changed (6 errors gone). Benchmark 3,883.5 M to
-  3,876.7 M instructions.
-
-### References in arrays and slices (2026-11-08, `feature/reference-arrays`)
-
-- Types: `holders_in([N]T)` is `N * holders_in(T)` (saturating),
-  `holds_loans([N]T)` is `T`'s. Arrays and slices take any element but an
-  owned interface (`Checker::element_type`); references may refer to
-  references and slices. Raw pointers still reach no reference, slice or
-  interface reference (`written_pointer_target`), and nothing holding one
-  through `.*` or `@` (`reached_through_pointer`). An array holds at most 4,096
-  references and slices (P0011), as a struct does.
-- `flow::loans`: a constant index narrows a place to one element; an index
-  known only when the program runs names every element, a read using all
-  and a store adding to each; `ArrayParts` (a spread) gives every element
-  the loans of every part.
-- Bug found and fixed: a borrow of a slice place was always taken as the
-  slice lent again (its elements), in lowering and in the write check, so
-  `&view` as `&&[]i32` crashed at run time and `&mut view` of a `let mut`
-  slice was refused. One owner now: `Types::lends_slice_elements`.
-- T0016 reads "a result holding references needs a parameter that holds
-  one"; the `extern` refusal names what the reference reaches.
-- Fixtures: `run_reference_arrays` and `run_i686_reference_arrays`;
-  `negative_reference_arrays` (18 errors, each a real hazard);
-  `negative_arrays`, `negative_interfaces`, `negative_references`,
-  `negative_slices`, `negative_struct_references` lose the cases now
-  accepted. Rust test `arrays_hold_each_elements_holders`. Constant indexes
-  of 1 in the run fixture were seen to fail when the element offset was
-  not multiplied by the element's holders.
-- Old (622f13e0) against new `check` on every fixture and example: only
-  the six fixtures above differ, by the removed refusals, step 1's six and
-  the T0016 wording.
-- Cost: benchmark 3,886.4 M instructions (+0.07% on 622f13e0, +0.25% on
-  step 1). A function holding `[4096]&i32` checks in 0.29 s and 8 MB.
-- References nest as deep as the source now: `hash_type` and
-  `Types::real_text` walk them inside `source::grow_stack`, as for raw
-  pointers; `checks_deeply_nested_statements` builds 50,000 levels of
-  `& &[]` and overflowed the stack without each.
-- Open: a chain of borrows each holding the one before (`& & & x`, or
-  `let r2 = &r1.*;` repeated) checks in about cubic time, as every borrow
-  holds all the loans inside it: 1,000 deep 0.79 s, 4,000 deep 60 s.
-  622f13e0 takes 44.8 s at 1,000 and over 120 s at 2,000, so per-holder
-  liveness made it faster; not fixed here.
-- Review fixes (2026-11-08): two indexes known while compiling overlap only
-  when equal, so `&mut muts[0]` and `&mut muts[1]` live together (seen to
-  fail without it); the 4,096 limit's message is built once
-  (`reports_too_many_holders`); the raw pointer checks share one body and
-  lose their always-same `holder` words; `step_store`'s ended filter is
-  flattened. `negative_reference_arrays` gains the same index twice (19);
-  `negative_array_flow`'s `lent` borrows at a run-time index, as
-  `&mut values[0]` then `values[1] = 3` is now accepted. Seven overlap
-  attacks (same constant, run-time against constant both ways, subslice,
-  row, same nested cell, whole array) stay refused.
-- Rust test `array_elements_keep_their_own_loans` (compile crate, as `flow`
-  cannot read source): element offset, nested arrays, run-time index store
-  and read, ended loans through a repointed element, overlap of constant
-  and run-time indexes. Breaking each of those four parts of `flow::loans`
-  was seen to fail it.
-- `scripts/check.sh`: all pass.
-
-## Owned interfaces, step 1 (2026-11-08, `feature/owned-interfaces`)
-
-Design with the owner in `owned-interfaces.localplan.md`: a `Shape` is made
-by a plain move and lives as long as the struct it took; step 1 is stack
-data only, two words, no `Release` (its first use is step 2).
-
-- `Type::Interface` is the owned interface's type, laid out as an
-  `InterfaceReference` (`layout`, LLVM `{ ptr, ptr }`, debug info, the
-  interpreter's `Register::Interface`). `holds_loans` is `Some(true)` and
-  `holders_in` is 1: it holds a `&mut` loan.
-- A struct where a `Shape` is expected is `Conversion::ToInterface`;
-  `ThirBuilder::owned_interface` moves it into a hidden `Temporary` and
-  makes a `ToInterface` of a `&mut` `Borrow` of it. `keep_temporary` looks
-  through `ToInterface`, so a `let` keeps it to the end of its block; this
-  also accepts `let r: &Shape = &Square.{ ... };`, refused before.
-- Calls on a `Shape` find the method in its table; a `self` method is
-  allowed only on an owned one and moves it. `&s` and `&self` lower to a
-  `Borrow` of `s.*` (`behind`, which replaces `slice_elements`), which
-  `Place::lent_again` gives as `s`'s two words; a place a `&Shape` views
-  already ends in that step, so none is added.
-- Refused for now (T0043): a `Shape` struct field, array element, type
-  argument, `extern` parameter, raw pointer target. Escape errors name the
-  interface: T0016 "a `Shape` result needs a parameter to come from",
-  T0036 "returns an interface holding a temporary value".
-- Known limit: `let s: Shape; s = square;` and `let t = back(Square.{ ...
-  });` are refused, as only a `let` of the conversion keeps the hidden
-  variable.
-- Found for step 2: loans are decided by type, so `fn Make(..., heap: &mut
-  Heap) -> Shape` would tie every result to `heap`; the loan check must
-  decide per value (owner agreed to design it in step 2).
-- Fixtures: `run_owned_interfaces`, `run_i686_owned_interfaces` (native,
-  release and the interpreter agree), `negative_owned_interfaces` (7
-  errors). `negative_interfaces`, `negative_size_of`,
-  `negative_reference_arrays` get the new refusals. The Rust test of
-  interface conversions checks struct-to-`Shape`, its loan facts and its
-  layout on x86_64 and i686. Seen to fail: `holds_loans` of `Shape` as
-  `None`, `keep_temporary` not looking through `ToInterface`, and the extra
-  `Dereference` added to a `&Shape`'s place (a crash in
-  `run_i686_interfaces`).
-- Not done: the benchmark was not run; the Website waits until the feature
-  is complete.
-- `scripts/check.sh`: all pass.
-
-## Owned interfaces, step 2: built, then removed (2026-11-09, `feature/owned-interfaces`)
-
-Built: a function giving `Shape` with no `in` returned one struct, which
-each call moved into a `Shape` of its own. Removed by the owner before any
-commit ("what kind of nonsense design is it? ... A functional system should
-work on its own"):
-
-- The function's real result, the struct, was not in its type, so nine
-  places kept it in a side table (`Checker::returned_structs`) or a special
-  case: `Types::makes_interface`, `result_origins`, `check_call`,
-  `lower_function`, `check_interface`, the module hash, and
-  `ThirBuilder::returned_struct` and `made_struct`, which dug the struct back
-  out of a conversion it had built.
-- One struct per function gives no choice while the program runs; that
-  already works through general rules (the section below).
-- Found while testing it, now gone with it: `lower_function` reported an
-  error through `Checker::error` after the body's check had ended, which
-  crashed (no declaration being checked).
-- If hiding a struct's type from callers is wanted later, it needs a
-  general feature: a result type worked out from the body, for any type.
-
-## Temporaries kept as long as their holder (2026-11-09, `feature/owned-interfaces`)
-
-Owner: "fix the first three, better error for the loop", then: no
-type-specific code.
-
-- The value a `let` gives its variable, or an assignment gives a whole
-  variable, keeps every temporary made in computing it as long as that
-  variable (`Body::keep_temporaries`, over `Body::any_part`, as a list, not
-  recursion). THIR's `Temporary::kept_by` is that variable (it was a flag).
-  A first version followed only what the value holds a loan on (`&`, an
-  interface, an `in` argument); the untangle review found it copied the
-  loan rules and missed struct and array literals, so it was replaced.
-  Keeping one nothing holds refuses nothing: the loan check follows uses.
-- `Stmt::Let`'s `keeps_temporaries` flag is gone: the `for` loop's hidden
-  `let` of its array is a `let` like any other. The loop variable's `let`
-  needs no call: its value is made of variables only.
-- Lowering finds them before any code and puts each in `declared` just
-  before its variable (`Lowering::declare`, used by `let`s, parameters and
-  loop variables), so it ends with it on every path, a `return` before the
-  assignment too. Every other temporary ends with its statement
-  (`close_scopes`, the `let` too). The `ScopeEnd` code is unchanged.
-- Accepted now: `s = Square.{ side = 2 };`, `if c { s = Circle.{ radius =
-  1 }; }`, `for i in 0..4 { keep = Square.{ side = i }; }`, `let t =
-  back(back(Square.{ side = 3 }));`, `let r: &Shape = &back(Square.{ side
-  = 4 });`, `let late: Shape; late = ...;`. Plain references too, a change
-  from the earlier rule: `r = &num();`, `let r = id(&num());`, `let e =
-  &view(&make())[0];`, `let r = largest(7, 8);`, `let p = Pair.{ first =
-  &5, second = &6 };`, `let both = [2]&[3]i32{&make(), &make()};`.
-- Still refused: a temporary kept by a `let` in an inner block, used after
-  it; one a `for` loop keeps, used after the loop; one changed while an
-  older holder uses it (one slot each pass of a loop).
-- The loan message is the general one. Its help, "keep the value in a
-  variable with `let`", is wrong for a temporary already kept by a `let`:
-  owner to choose the words (changed after the commit, below).
-- Fixtures: `run_owned_interfaces` and `run_i686_owned_interfaces` add the
-  kept forms; `negative_owned_interfaces` 9 errors (moved out of a loop,
-  changed while viewed); `run_temporaries` 15, 18, 19 (a struct and an
-  array literal) and 20 (a method's `self`) and `run_variadics` 23 show
-  plain references kept; `negative_temporaries` (13 errors),
-  `negative_variadics` (24) and `negative_struct_loans` (29, without
-  `TemporaryInField`) lose the cases now accepted; `mir_temporaries` moves
-  its `&&` into an `if` so a side's temporaries still end with it; the
-  unit test `statement::tests::temporaries` shows the new marks. Seen to
-  fail: the walk not going into parts, each of the three calls (`let`,
-  assignment, loop array) off, kept temporaries left out of `declared` (a
-  struct moved out of a loop then dangles unseen: the negative fixtures
-  catch it). The accepted forms also run in a `const`, whose run checks
-  each memory block is open (128).
-
-Committed as 1193d2c7.
-
-## Loan help for a temporary (2026-11-09, `feature/owned-interfaces`)
-
-The help of a loan error on a temporary said "keep the value in a variable
-with `let`, so it lasts as long as the reference": wrong once a `let` or an
-assignment keeps it (moved out of the loop body that keeps it, or replaced
-while an older copy uses it). Owner chose one general line, true in every
-case: "a temporary lasts until its statement ends, or as long as the
-variable a `let` or `=` gives it to" (`Loans::broken_loan`). Naming the
-keeping variable was not done: the loan check reads MIR, which does not
-record it. `negative_temporaries` checks the new words; `docs/ir-design.md`
-updated.
-
-## Owned interfaces, step 3 (2026-11-09, `feature/owned-interfaces`)
-
-Owner: finish owned interfaces before the feature-interface redesign
-(`feature-interface.localplan.md`), so it starts from a complete system.
-
-- A struct field, an array or slice element can be a `Shape`. The model
-  already answered for one as a container needs (`layout` two words,
-  `holds_loans` `&mut`, `holders_in` 1, `is_copy` no); two guards blocked
-  it: `not_supported("owned interfaces in structs")` in the struct check
-  and `element_type`'s "{holder} interfaces", whose reason ("an interface
-  held whole has no size") stopped being true with step 1. Both removed;
-  `element_type` lost its unused `holder` and `span`, and so did
-  `reference_type`, `reference_to` and `check_borrow` up the chain.
-- `*Shape` is now refused where it is reached, as `*Holder` of any struct
-  holding loans (`reached_through_pointer`); `loan_holder_text` names it
-  "owned interfaces" (it fell into "structs holding references").
-- An assignment to a place in a variable's own storage (no pointer on the
-  path, `place_root`) keeps its value's temporaries as long as that
-  variable, not only a whole variable: `h.shape = Circle.{ radius = 2 };`,
-  `all[1] = Circle.{ radius = 3 };`, and for plain references
-  `p.first = &read(&40);`. One behind a reference or slice is not kept
-  (storage the variable does not own); assigning a loan holder through a
-  reference stays refused by the existing rule (T0043, lifetimes of
-  references in structs, Later).
-- Still refused, by the general rules: a field or element moved out
-  (T0035), a function returning a struct holding a `Shape` with nothing to
-  borrow from (T0016), a struct made in a loop body kept in an outer array,
-  an element set in each pass while an older one views the same storage.
-- Fixtures: `run_owned_interfaces`, `run_i686_owned_interfaces` (held 7 16,
-  all 3 31, grown all 16 12); `negative_owned_interfaces` 14 errors (five
-  holder cases); `negative_interfaces` 13 (`struct Holder` gone, `*Shape`
-  reached at 34:39); `negative_reference_arrays` 18 (`[2]Shape` gone);
-  `run_temporaries` 21 (a field and an element set). Seen to fail: the
-  place rule back to whole variables only (both run fixtures fail). A
-  `const` run with held shapes (memory checked) gives 83, as native,
-  interpreter and i686 do.
-- Not done: a `Shape` as a type argument, in `extern` functions, or set
-  through a reference (each its own rule, refused).
+- Review fixes (Fuad: "fix all"), all from step 11's lowering, found by
+  the review of the speed work: (1) a constant of the class `Wide` was
+  built in nine places (`-x`'s zero, the zero test before `/`, range
+  counts and counters; a `u128` range counts in `Wide(129)`); the
+  interpreter read it as an index into `wides`, so `const N = neg(5)` on
+  `i256` gave 0 and `div(100, 100)` a false division by zero. Now
+  `class_constant` (core lowering) keeps every wide constant as
+  read-only data, and `Operand::integer` asserts no `Wide` class. (2) `~x`
+  flipped only 128 bits (`u256` `~0` was 2^128-1). (3) A spread part
+  after one counted at run time truncated its `usize` position as if it
+  were the wide count (`[4]u128{(0..n)..., 9}` put 204 for 9). New
+  fixture `run_wide_integers` (const and run, interpreter = native);
+  lowering test `a_wide_constant_is_loaded_from_read_only_data`, seen to
+  fail on the assert with the old negation. `check.sh` exit 0;
+  `compare.sh` the same 11; CPU counts unchanged.
+
+## Middle cleanup, step 13: the LLVM writer on the MIR of core concepts (2026-11-11, not committed)
+
+- `crates/backend/llvm/src/body.rs` (new) writes a function's `define`
+  from `model::core_mir`: slots are `alloca [size x i8]`, a place's steps
+  fold into one `getelementptr`, a `Check` branches to a panic block and a
+  new block, no `phi`. `function.rs` and `function/*` are deleted;
+  `text.rs` keeps only `symbol`, `copy_symbol`, `quoted`.
+- C calls: lowering computes how C passes each value
+  (`lower/core/c_abi.rs`, by `Machine::c_abi`, 32-bit included) into the
+  call's `CSignature`; the writer only follows it.
+- Debug info from `DebugTypes`, written from a work list
+  (`Metadata::debug_type`); `DEEPEST_DEBUG_TYPE` back to 5,000.
+- `print` is what lowering emits; structs print inline, so a struct that
+  holds the one before it twice doubles per level: test
+  `structs_holding_structs_twice_print_in_one_function_each` ignored,
+  waiting on Fuad.
+- Gate: compare.sh 981 identical, 139 differ; `.native`, `.interpret`,
+  `.check` all identical except the two fixtures step 12 changed
+  (negative_comptime_calls, run_print); the rest is `.ll` and step-12
+  `.mir`. Workspace tests pass except the 13 `ll_` fixtures (new text,
+  awaiting review before PEEPER_BLESS). `llvm_parity` ported; it fails
+  when the MIN / -1 guard is broken on purpose.
+- Cost: debug build of big.peep 17.4 s to 19.2-20.1 s; `-dump ll` 2.37 s
+  to 2.69 s; release build 58.4 s to 61.1 s; LLVM text 9% bigger (allocas
+  +40%, stores +57%), from the MIR's shape: slots for `&&`/`||`, copied
+  temporaries, byte-array allocas.
+- Removed `mir::Body::constant_text`: its only caller was the old print
+  writer.
+
+### Step 13 review fixes (2026-11-11, Fuad: "fix all", not committed)
+
+- One operator mapping: `lower/src/core/binary.rs` (`binary_operation`),
+  used by `lower_binary` and eval's `llvm_parity` test (its own copy
+  removed; `compare_integers` removed). Breaking `>` in lowering on purpose
+  now fails the parity test.
+- `core_mir::Body::named_functions`: the one list of functions a body may
+  run, for `check` (`evaluate_call`) and the LLVM queue.
+- `add_body` takes its parameter types from `peeper_types`.
+- No more needless copies: a parameter passed in memory is the caller's
+  copy (`Body::parameter_in_memory`; writer names it `%a<n>`, no alloca;
+  interpreter uses the passed address), and `lower_into` builds a literal,
+  slice, range, `&str`, interface value or call result right where it goes
+  when the place is new (`let`, argument copy, result, a field of one).
+  Assignments still build apart. New test
+  `a_struct_parameter_is_the_callers_copy` (fails with the old copy).
+  `negative_comptime_calls`: the million-step limit now trips one line
+  earlier (`let held = values;`), as fewer instructions run; expectation
+  moved.
+- Gate: compare.sh 981 identical, 139 differ, the same set as before; no
+  `.native`, `.interpret` or `.check` change beyond step 12's two fixtures.
+  check.sh: only the 13 `ll_` fixtures fail (not blessed).
+- Measured on big.peep (no struct copies in it, so fix A does not show):
+  debug build 15.6 s base vs 19.3 s; release 44.0 s vs 49.1 s; LLVM text
+  +16% lines, allocas +40%, stores +57%. Cause, found by comparing `f0`:
+  each `&&`/`||` join is a 1-byte slot with two stores and a load where the
+  old writer had a `phi` (exactly +2 allocas, +4 stores per function), and
+  an unused `zext` after each comparison. Not fixed; for Fuad.
+- Phi vs slot measured (2026-11-11, `target/step12-probes/phi/`): the new
+  writer's `.ll` with each hidden `&&`/`||` slot rewritten to a `phi` by
+  script (`to_phi.py`), all else equal. Loop program (`main.peep`, 300M
+  iterations): -O0 slot 1992-2013 ms, phi 2263-2309 ms (phi slower, 85 vs
+  79 instructions); -O2 slot 444-447 ms, phi 391-431 ms (code differs,
+  both vectorized). big.peep clang time: -O0 17.2 s vs 16.7 s, -O2 84.7 s
+  vs 84.0 s (text -4%). Phi is not the cause of the debug build slowdown.
+- Branch lowering of `&&`/`||` measured (2026-11-11, same probes,
+  `to_branch.py`: joins become direct branches, no slot, no `zext`; dead
+  blocks kept). Loop program: -O0 1913 ms vs slot 2266-2289 ms, phi
+  2646-2678 ms; -O2 1218-1235 ms vs slot 524-548 ms, phi 477-522 ms: with
+  branches LLVM does not vectorize the loop (46 vs 190 instructions).
+  The same loop in C through clang -O2 (its front end also branches):
+  1131 ms. big.peep clang time: -O0 17.0 s slot vs 14.8 s branch (-13%),
+  -O2 84.9 s vs 82.3 s (-3%); text -12%.
+- Trims measured (2026-11-11, `trim.py`: unused `zext` lines; jump-only
+  blocks threaded and unreachable blocks dropped). big.peep: 48,000 `zext`
+  and 112,001 blocks removed; text 2.46M -> 2.19M lines (old writer:
+  2.13M). clang -O0: slot 16.8-16.9 s, zext 16.4, blocks 16.2, both
+  16.0 s; old writer's text 16.4 s. clang -O2: all 84.8-85.5 s, old 82.9 s
+  (no gain). Loop -O2 machine code identical with and without the trims;
+  -O0 runs within noise (73 vs 79 instructions).
+- Full debug build re-timed, alternating, 3 runs each: old 18.6-19.1 s,
+  new 20.2-20.4 s (+9%, not the +24% of the first, noisy run); dump ll
+  2.53 -> 3.07 s. So about 0.5 s is peeper's own work, 0.4 s clang.
+- Trims done in the LLVM writer (2026-11-11, Fuad: "go ahead with the
+  trims", not committed): `jump_targets` (a jump goes past blocks that
+  write nothing and only jump), `reached_blocks` (unreached blocks not
+  written), `values_read` (a comparison's `zext` only when read as a
+  byte). In the writer, not lowering: the MIR keeps those blocks for
+  W0001 and the path checks (step 14), and `Dead` for the interpreter.
+  big.peep text 2,192,035 lines, as `trim.py` gave. Tests
+  `jumps_skip_empty_blocks_and_unreached_ones_are_left_out`,
+  `comparisons_widen_only_when_kept` (each fails with its trim off).
+  check.sh: only the 13 `ll_` fixtures fail. Timed (3 runs, alternating):
+  debug build old 17.5-17.7 s, new 18.3-18.6 s (+5%, was +9%); dump ll
+  2.32-2.38 vs 2.74-2.92 s; release build 60.5 vs 63.5 s. Loop program
+  built by peeper: debug 2261 vs 2297 ms, release old 1178 ms, new 520 ms.
+- `ll_struct` reviewed by Fuad and blessed (2026-11-11): comment rewritten
+  for the bytes layout and in-place literals; expected.ll written as the
+  fixture test writes it (dump, folder path as `<fixture>`), not with
+  PEEPER_BLESS. 12 `ll_` fixtures left to review.
+- `ll_struct_parameters` reviewed by Fuad and blessed (2026-11-11), same
+  way; comment unchanged (still true). 11 `ll_` fixtures left.
+- `ll_slices` reviewed by Fuad and blessed (2026-11-11): comment rewritten
+  (two words in memory, passed by the address of the caller's copy). 10
+  `ll_` fixtures left.
+- Nine more `ll_` fixtures blessed (2026-11-11, Fuad: "do all in once"):
+  const_parameters, debug_scopes, extern_integers, interfaces,
+  pointer_offsets, print_arrays, release, size_of, slicing. Comments
+  rewritten: print_arrays (inline loops), slicing (count is an `i128`).
+  extern_integers re-run against a rewritten C checker
+  (`target/step12-probes/extern/checks.c`): exit 0 at -O0 and -O2; a broken
+  check exits 40. Narrow integers now pass as `i8`/`i64` (clang: `i1`,
+  `i5`, `i64`), the same register bits on x86-64.
+- `ll_array_ranges` held: `range_count`'s constant path never runs (its
+  one caller, `part_count`, passes loads of the stored range), so constant
+  ranges get a run-time count and check. Lowering bug from step 11.
+- Seen, not fixed (debug-only cost): an interface reference copied to a
+  temporary before each method call; nested array literals built apart and
+  copied; a spread copies each element by `memcpy`; an unused position add
+  after a spread.
+- `ll_array_ranges` bug fixed (2026-11-11, Fuad: "yes fix it", not
+  committed): an array literal's range spread is lowered to its walk
+  (`walk_range`, an `enum Part { Value, Range }` per part), not stored and
+  read back, so `range_count` sees constants and no length check is
+  emitted; `fill_range` takes the walk. Test
+  `a_constant_range_spread_needs_no_check` (fails with the reload put
+  back). `known()` in the fixture: ~100 -> ~50 lines, no check, no udiv.
+  check.sh: only `ll_array_ranges` fails, waiting on review.
+- `ll_array_ranges` blessed (2026-11-11), comment rewritten. All 13 `ll_`
+  fixtures blessed; `bash scripts/check.sh` exits 0, every gate ok.
+- Step 14 start (2026-11-11), commit c6bba520: the core MIR gets the facts
+  the path checks read from types. Origins move onto every `Signature`
+  (`Body::origins` gone). `read()` emits `Moved` for register values (a
+  moved `&mut T` gave none; test fails with the old `read()`). `Moved`
+  carries `lent_again` and `size`; `Step::Index` carries `count`; `Borrow`
+  and `Address` carry `size`. Fuad chose byte ranges for the loan check:
+  a slice of an array covers start..array end, so `a[0] = 9` while
+  `&mut a[1..]` is live becomes accepted (old: refused, probe
+  `target/step12-probes/step14/slicing.peep`). check.sh ok after fmt.
+  Nothing reads the new fields until the checks are ported.
+- Struct and array printing removed (2026-11-11, Fuad: "keep only scalar
+  type printing"). Inline printing of a struct that holds another twice
+  grew 2^depth (`peeper build` at depth 18: 1.4 s, 400 MB). `check`
+  `printable` takes numbers, `bool`, `&cstr`, `&str`, raw pointers and
+  references to them; core `print.rs` lost its struct and array arms.
+  20 fixtures print element by element, values checked against the old
+  output (`target/step12-probes/step14/verify_prints.py`);
+  `run_print_arrays`, `run_print_deep_struct`, `ll_print_arrays` and two
+  tests that printed a whole aggregate deleted; `negative_print` refuses a
+  struct, an array and `&Point`. Design page section 11 records it.
+  Later (Fuad): `print` a library function, a type prints by an interface.
+- Step 14 (2026-11-11): the path checks read the core MIR. `loans.rs`
+  rewritten on byte ranges (`report_loan_errors(body, pointer_bytes, ..)`);
+  `variable_state.rs` on core events; `flow::mir_predecessors` gone. Fuad
+  accepted four checks that now pass where the old refused: `.len` keeps
+  no loan, disjoint slice parts, two-phase `&mut` through memory
+  arguments, a spread of known length is exact (`x_test/loans`). New
+  `loans_i686` and `negative_loans_i686` (a 4-byte pointer; the negative
+  one fails with 8). Found while removing print: core lowering's
+  `add_holders` walked every field of a struct with no references, so
+  `check` hung on `checks_structs_holding_structs_twice` (`same` alone:
+  20 s+; now 0.00 s); it returns on `holders_in == 0`. Register parts of
+  a literal now carry the literal's span: 4 `ll_` dumps re-blessed (debug
+  locations only). `path_check_memory` bound 45 MB while `check` builds
+  both MIRs (back to 30 at step 16).
+- Steps 15 and 16 together (2026-11-11, this commit): one MIR. The MIR of
+  core concepts is `model::mir` (decision 9.3, the name stays) and
+  `lower::core` is the `lower` crate root; the old MIR, its lowering
+  (`ranges.rs`, `slices.rs`, old `expression.rs`/`statement.rs`),
+  `flow::cleanup` and `semantic_types::slice_field` are deleted, and
+  `compile` no longer depends on `flow`. Check lowers each body once, into
+  throwaway debug types, for the path checks and compile-time runs; a
+  backend or a dump lowers it again into the program's debug types through
+  `CheckedFunction::mir`, which gives none when `has_errors`. `lower_call`
+  returns on an argument of an invalid type (a reused-module test
+  panicked). The MIR printer lists each body's globals after its blocks;
+  blocks no path reaches stay in dumps and the LLVM writer skips them. The
+  19 `mir_` dumps re-blessed after review. `path_check_memory` `branching`
+  bound back to 30 MB (25 MB measured). Docs: `ir-design.md` MIR section
+  rewritten for slots, places and `dead`; design page status done.
+  New test `a_function_whose_path_checks_fail_gives_no_mir`: with the
+  `has_errors` check removed no other test failed; this one does
+  (`[true, true]`). check.sh ok.
+- Old vs new MIR, measured 2026-11-11 (`a77e760c`, before the MIR work,
+  vs `784d4831`; `target/step12-probes/perf/`, fastest of 5 runs, taking
+  turns). 54k-line `mixed` program (structs, arrays, slices, loops, `&&`):
+  `check` 0.27 -> 0.40 s; `check -dump mir` 0.43 -> 0.66 s; `build`
+  7.41 -> 6.73 s; `build -release` 23.5 -> 24.3 s; memory the same.
+  `run -interpret` of a 2M-round loop 6.79 -> 3.15 s. Built loop of 200M
+  rounds: debug 4.49 -> 3.92 s, release 1.19 -> 1.17 s. Benchmark (no
+  clang) 3,890 -> 4,697 M instructions (+21%). Profile of `check`
+  (samples): loan check 251 -> 539, lowering 94 -> 204, malloc 345 -> 430.
+  MIR is 41% longer (3,640 -> 5,151 lines for 30 functions: hidden slots
+  in place of `phi`, `dead` lines, a literal stored field by field); LLVM
+  text 8% longer (37 -> 39 MB).
+- Cause of the slower `check` (2026-11-11, `perf stat` instructions of
+  `check mixed`): old 1,016 M, new 1,378 M. Loan check 444 -> 642 M: it
+  walks 29% more lines (291,360 -> 375,567, `dead`s included in both) at
+  12% more per line (1,524 -> 1,709). The rest 572 -> 736 M (variable
+  state only 10 M). A quarter of the MIR is lowering's hidden slots (301
+  `dead`, 871 loads and stores, most of them `for` loop state). Prototype
+  (`target/step12-probes/perf/skip-lines.patch`, not applied): the loan
+  check walks only lines that can give, use or break a loan (20% of
+  them), found once from its own `defines`/`uses`/`accesses`: 1,196 M,
+  0.33 s (was 0.40); building that set costs 172 M. A line is 96 bytes
+  (old 48): `Operand` 24 (old 8), constants inline.
+- Fix 1 applied (2026-11-11, Fuad: "yes apply fix 1"): `Loans::matters`,
+  found once by `instructions_that_matter` from `defines`, `uses`,
+  `accesses` and the places written; every walk skips the rest. `check
+  mixed` 1,378 -> 1,194 M instructions, 0.40 -> 0.34 s (old 0.27).
+  Mutation: without the borrowed-slot access part `negative_array_flow`
+  fails; without the uses part `negative_loans`(`_i686`); the defines and
+  holder-write parts are caught by no test (with today's lowering each
+  such line also uses a holder or holds no loan), kept as the walks'
+  mirror. check.sh ok.
+- Untangle (2026-11-11, Fuad: "use untangled to fix all issues including
+  past commits", "ok go on"); decision log
+  `target/step12-probes/untangle/decisions.md`, fixes 1-11, then
+  comments, then tests.
+- Untangle fix 1, lower once: `Checker::debug_types` is the program's one
+  table, which every lowering writes (the path checks' and a run at
+  compile time's too). `CheckedFunction` carries the path-checked
+  `mir: Option<mir::Body>` and `&DebugTypes`; `ty`, `has_errors` and
+  `CheckedFunction::mir` (which lowered again) are gone, with the four
+  throwaway tables and their `shortcut:` comments. `DebugTypes::types` is
+  private (`get`); `FunctionQueue::add` takes the table and, in a debug
+  build, copies the types made since its last copy (`copy_new`): the last
+  batch goes after the checker is dropped. The backend now writes the
+  MIR the path checks read; a build lowers each function once (twice
+  when a constant ran it: the run's build is not reused). Mutation: with
+  `copy_new` copying nothing, 8+ llvm tests fail. check.sh ok. Speed not
+  measured.
+- Untangle fix 2, one table of what each instruction touches:
+  `InstructionKind::accesses` gives each place with its `AccessKind`
+  (read, write, borrow, address, move) and its width
+  (`PlaceAccess::width`), `InstructionKind::operands` each value operand,
+  `Place::operands` a place's address and indexes. Readers moved onto
+  them: variable_state's `accesses` (gone) and one `whole_slot_change`
+  for `Facts::step`, `move_sites` and `tracked_slots`; loans `uses`,
+  `defines`, `accesses` and the lines-that-matter scan; llvm
+  `values_read`. Not moved: loans `step_held` (a transfer per kind),
+  `holds`, `move_of_read` (still relies on lowering's order), mir
+  `own_class` (another question). Removed the wrong "events" comment over
+  `Borrow`. Speed (`check mixed`, instructions): an iterator table cost
+  +23% (1,165 -> 1,433 M; not inlined across crates, then arrays and
+  chains built per line); as `#[inline]` functions taking a closure it is
+  1,193 M (+2%: `uses` now dispatches on the kind three times). Mutation:
+  a move read as a read, a store as a read, a copy's write dropped, a
+  store's value dropped each fail the fixtures; call arguments dropped
+  failed nothing, though clang refuses `f(a == 2)` then: added that case
+  to `comparisons_widen_only_when_kept`, which fails on it (2 vs 3).
+  check.sh ok.
+  Then (Fuad: "yes do a and b"): `Dead` is in the table as
+  `AccessKind::End` of all of its slot; `PlaceAccess` holds a
+  `PlaceRef` (root and steps, borrowed; `Place::as_place_ref`), which
+  now owns `whole_slot`, `is_behind_pointer` and `operands`.
+  variable_state's `SlotChange`/`whole_slot_change` and the loan check's
+  hand-made "gone" access and `Dead` arm went; the loan check's `Access`
+  holds a `PlaceRef`. `AccessKind::Borrow` lost `words` (message text):
+  `Loans::accesses` reads them from the `Borrow` until fix 3's per-loan
+  lookup. A `Dead`'s width is now `None` (all there is) for `Some(size)`:
+  the same bytes. Mutation: `Dead` giving no access fails the fixtures.
+  `check mixed` 1,207 M (was 1,193). check.sh ok.
+- Untangle fix 3, the loan check built in one step (Fuad: "Yes"):
+  `Holders` (body, pointer bytes, borrows, holder starts, loans through)
+  owns every per-place and per-line query and the steps (`uses`,
+  `defines`, `step_live`, `step_held`, `step_write`); `reserved_loans`
+  and `lines_that_matter` are its methods returning values; `Loans {
+  holders, reserved, lines }` is one literal, no placeholder. The lines
+  that matter are stored by block and are what every walk walks (no
+  filter); `next_use` walks them too (a line not among them uses and sets
+  no holder). `Holders::lent` gives a loan's `Borrowed` (instruction,
+  place, size, mutable, words) or `Parameter(position)`: five hand
+  destructures and four numbering decodes gone; `loan_count`,
+  `first_level`, `value_holder`, `call_arguments` (destination and
+  written arguments, the hidden count decided once; `origin_holders`
+  takes them) each replace two or three copies; `holder_words` indexes
+  the instruction instead of `ids().nth`; `returned` is
+  `returned_holders`; `step_write` finds the result kept in memory by
+  its holders. Left: the literal `Root::At(Parameter(0))` (lowering's,
+  next fix), `sorted_union` beside `loans_of` (different jobs),
+  `mir::Holder` (same idea, not named here). Mutation: a parameter
+  loan's position, the hidden split, the result write each fail the
+  fixtures; `holder_words`' `Borrow` branch cannot be seen (a slice
+  borrow is stored to a slot before use; a reference's words are the
+  fallback's). `check mixed` 1,207 -> 1,178 M. check.sh ok.
+- Untangle fix 4, first part: three MIR facts stored twice removed.
+  `Signature::variadic` was written by lowering and never read (the C
+  signature carries a variadic call's extra arguments); `Body.parameters`
+  was always `signature.parameters.len()`; `Slot.hidden` was always
+  `debug_type.is_none()` (lowering gives a debug type to each written
+  variable and none to a slot made for a value). Readers: loans
+  (`loan_count`, `held_at_starts`, `slot_name`, `broken_loan`), llvm
+  debug info, the MIR dump. check.sh ok. Left for fix 4: the result kept
+  in memory and a call's hidden first argument, constants' decode, panic
+  messages, runtime callees' signatures, extern-ness.
+- Untangle fix 4, second part (Fuad: "go with Root::Result"): a result
+  kept in memory is the place `Root::Result`, not `Root::At(Parameter(0))`,
+  and `Operand::Parameter(i)` is always written parameter `i`. Gone: the
+  `hidden` shift in lowering's parameter stores, `parameter_in_memory`,
+  `class_of`, the loan check's parameter loans and its literal
+  `Root::At(Parameter(0))` match. Only the machine level counts the
+  hidden argument now: LLVM names it `%result` (written parameters keep
+  `%a0`..), the interpreter reads it at the frame's first register. A call
+  still passes the destination as its first argument (`call_arguments`).
+  Six dumps re-blessed: only `%a0` -> `%result`, `at arg0` -> `result`,
+  and the written parameters renumbered from 0. Mutation: the loan
+  check's `Root::Result` giving no holders, and the interpreter without
+  the shift, each fail the fixtures. check.sh ok.
+- Untangle fix 4, third part (Fuad: option 1): a call names the place it
+  writes a result kept in memory into, `Call { .., result: Option<(Place,
+  u64)> }`, instead of an `Address` instruction passed as its first
+  argument. The access table gives it as a `Write` of that place, so the
+  loan check's `call_arguments` (split off the first argument, then find
+  the `Address` that made it, two `unreachable!`s) and the `Call` arm of
+  `defines` are gone; `uses`, `reserved_loans` and `step_held` read the
+  arguments and the place directly. LLVM writes the place's address and
+  passes it first (`write_call`'s `result_at`); the interpreter pushes it
+  as the first register. The write now happens at the call, not before
+  the arguments: every place lowering writes a call result into
+  (`lower_into`'s four callers) is a new variable, `Root::Result`, part
+  of a value being built or an argument's copy, which no reference can
+  reach; `x = grow(&x)` already goes through a temporary (probe in
+  `target/step12-probes/alias`). Dump: `call make() into 16 p.0`. Four
+  dumps re-blessed, numbering only; LLVM writes the same instructions.
+  Mutation: the table giving no write for the call passed every test, so
+  `x_test/run_call_result_each_pass` was added (a slice result in a loop:
+  without the write the next pass keeps the last pass's slice live and
+  `values[0] = ..` is refused); the loan check skipping the place fails
+  the fixtures. `check mixed` 1,174-1,180 M (was 1,178). check.sh ok.
+- Untangle fix 4, fourth part: one rule and one reader for constants.
+  Every producer already kept the bits above a constant's class zero
+  (`bigint`'s results clear them; each `Operand::integer` caller passes a
+  value that fits), but the readers each guessed: the interpreter masked
+  to the class, LLVM's division check masked, the dump and LLVM joined
+  the two words by hand. The rule is now written on `Operand::Constant`
+  and asserted in `Operand::integer`; `mir::constant_value` joins the
+  words for the dump, `constant_text`, `divides_by_other_than_minus_one`
+  and the interpreter (no mask). Low-word reads (`bits[0]`) of classes up
+  to 64 bits stay: the rule makes them exact. Mutation: `constant_value`
+  dropping the high word fails the browser run fixtures. check.sh ok.
+  Uncommitted together with the third part; that part is saved as
+  `target/step12-probes/untangle/call-result*.patch` to commit alone.
+- Untangle fix 4, fifth part: a `panic`'s message is on its terminator,
+  `Terminator::Panic { message: Box<[u8]>, span }`, as a `Check`'s is on
+  its instruction, instead of an index into the body's globals. The
+  globals entry was read back by LLVM and the interpreter through an
+  `unreachable!` that it was bytes, and LLVM wrote it as an `@.str` that
+  nothing used (the panic writes its own "panic: ... -->" text). The
+  two terminator matches now match on a reference. `mir_panic` dump:
+  `panic "too big"`, no `global 0`. Mutation: the interpreter writing
+  the message short fails the browser run tests. check.sh ok.
+- Untangle fix 4, sixth part (Fuad: "go with the enum"): a runtime call
+  names its function by `runtime_abi::symbols::Runtime` (PanicWrite,
+  PanicExit, PrintText, PrintBytes, PrintInt, PrintFloat, PrintPointer,
+  Flush; `Runtime::signature` holds the old eight constants' table), not
+  by its symbol string: `Callee::Runtime(Runtime)`. The interpreter
+  `match`es it (was six string compares and an `unreachable!` for any
+  other name; the two panic arms now say lowering makes none). How a
+  carrier is passed is decided once, `mir::Signature::of_runtime`, for
+  lowering and for LLVM's panic calls, which now declare through the same
+  `declaration`/`peeper_types` as every other call (was a second
+  `Carrier` map in `write_runtime_call`). `model` depends on
+  `runtime_abi`. No dump changes. Mutation: the interpreter printing a
+  pointer off by one fails the browser run tests; `of_runtime` giving
+  `usize` as `i32` fails the 64-bit LLVM dumps. check.sh ok.
+- Untangle fix 4, last part: a C call's C signature names the C function,
+  `CSignature::symbol`, which lowering already looked up to decide the
+  call is a C call. The interpreter reads it there instead of asking the
+  driver through `ProgramFacts` (deleted: the struct, `Host`'s field and
+  lifetime, `program::run`'s parameter, the closure in `compile`); LLVM's
+  `write_c_call` reads it there instead of its symbol map, and no longer
+  needs the `Callee::Function` pattern or a too-many-arguments allowance.
+  Left: `llvm/text.rs::symbol` still names an `extern` function by its C
+  name for the symbol map, which only tables read; no `extern` function
+  can be in a table today (a probe of `#[extern] fn P::size(self)` is
+  refused), so it is naming, not a second decision. Mutation: a wrong C
+  name fails the browser run tests. check.sh ok.
+- Untangle fix 5, one owner for class and passing decisions:
+  `Passing::register_class` (a value in memory travels as its address)
+  replaces three copies of that match: `Body::class_of`, the
+  interpreter's `fits`, LLVM's `peeper_types`. `Comparison::integer_less`
+  picks signed or unsigned `<`/`<=` once for `binary_operation` and the
+  two for-range comparisons. Lowering's `class` reuses `float_class`, as
+  float negate now does. `Lowering::signature` turns a function type into
+  a MIR signature once, for a body's own signature and for each interface
+  table entry. The table entry's receiver override (`self` as a pointer
+  register) is dropped: the entry is built from the interface's method
+  types, where `self` is `&Shape` (a pointer register) or an owned `Shape`
+  (memory, passed by address), and the only reader (LLVM's `declare`)
+  writes `ptr` for both. No dump
+  changes. Mutation: `register_class` giving `I64` for memory and
+  `integer_less` swapping signed both fail the browser run tests; dropping
+  the override failed nothing, which is how it was found dead. Skipped:
+  layout's size bands (alignment, not a class), `Class::bits` on Pointer,
+  `class` vs `in_memory`, the call-site signature (it carries C variadic
+  arguments the type does not), "void means none". check.sh ok.
+- Untangle fix 11, `flow` needs no semantic types:
+  `report_missing_return` asks the MIR whether the function gives a
+  result (`signature.result`, as LLVM's `FallOff` already does) instead of
+  comparing the result `TypeId` with `VOID`, and takes the result type's
+  name as `result_text`, a closure the checker passes, called only when
+  the error is reported. `flow` no longer imports `Types`, `TypeId` or
+  `DefId`. Same answer: `void` cannot be written as a type (a probe of
+  `type Nothing = void;` is refused, T0002), so no alias of it exists.
+  No message changes. Mutation: a fixed label fails
+  `negative_missing_return_causes`. check.sh ok.
+- Untangle, reachability on `mir::Body`: `Body::reachable` and
+  `Body::mark_reachable` (moved from `flow`, unchanged) are the one walk
+  of which blocks the entry reaches. LLVM's `reached_blocks` (deleted, a
+  second walk over jumps already sent past empty blocks) is now
+  `reachable[b] && targets[b] == b`: the same set, since `jump_targets`
+  is stable (a target targets itself, and an endless chain of empty
+  blocks stops on one that does). A probe of two endless `for {}` loops
+  writes the same `.ll` before and after. Mutation: dropping either half
+  of the filter fails `jumps_skip_empty_blocks_and_unreached_ones_are_left_out`.
+  check.sh ok.
+- Untangle, `flow` split into modules (Fuad: "yes, modules, in that
+  order"): `lib.rs` keeps only the engine (`dataflow`, `predecessors`,
+  `Bits`); `missing_return.rs` and `unreachable.rs` hold the two small
+  checks; `loans.rs` became `loans/` with `mod.rs` (`Holder`, `Loan`,
+  `Holders`, `Loans`, `report_loan_errors`, `holder_ids`, the walk
+  `Loans::report`), `places.rs`, `holders.rs`, `two_phase.rs`,
+  `passes.rs` (with `sorted_union`, used only there) and `errors.rs`.
+  Each file adds its job's methods in its own `impl` block; items a
+  sibling uses are `pub(super)`, nothing wider. The checker calls
+  `flow::missing_return::report_missing_return` and
+  `flow::unreachable::warn_unreachable_code`; no re-exports. A pure move:
+  the old and new files hold the same lines, apart from imports, `impl`
+  wrappers, `pub(super)` and two signatures rustfmt wrapped. `check
+  mixed`: 1,181-1,185 M instructions after, 1,180-1,193 M before. The
+  code database's flow rows were regenerated from the source (they named
+  items deleted before this, such as `Loans::variable_name`). check.sh ok.
+- Untangle fix 6, the interpreter has one run mode (Fuad: "go with
+  Memory owning the mode"): `Memory::run`, an `enum Run { Constant(open
+  blocks), Program }`, is the one record of which run this is; it
+  replaces `Memory.constant_blocks: Option` and `Interpreter.host:
+  Option`, which had to agree. The host is always there (empty for a
+  constant), `Memory::is_constant` answers the ten branches, and
+  `Memory::leave_call` ends a constant's frame where `close_block` used
+  to be called as a silent no-op in a program. A slot not started is
+  `None` (`Option<NonZeroU64>`), not 0. The two `STEP_LIMIT`s are
+  `CONSTANT_STEP_LIMIT` and `PROGRAM_STEP_LIMIT`. `Failure` lost
+  `Exited`: an internal `Halt { Failed(Failure), Exited }` carries it,
+  and only `program::run` turns it into an exit code, so the checker's
+  `unreachable!` arm is gone and compile's names `NoMir`. `float_class`
+  moved from lowering to `Class::float` in `model::mir`, which the
+  interpreter now shares with lowering and the parity test; the
+  interpreter's float constants reuse `float_bits`/`float_value`.
+  Skipped: dropping `body` from `run_function` (the checker looks the
+  body up first to tell a cycle from a run). Mutations: `usable` always
+  true and a slot block never closed fail the browser check tests; a
+  constant's missing-MIR call sent to the C path failed nothing, as the
+  only fixture called the `extern` straight from the constant, which
+  never runs; `negative_comptime_calls` now also calls one from a
+  function the constant runs (`const WRITES`), which catches it.
+  `check mixed` unchanged (1,183-1,184 M). check.sh ok.
+- Untangle fix 7, one meaning for each operator (Fuad: "go with one
+  core"): the interpreter's register operations moved from
+  `interpreter/instructions.rs` to `eval::operations` (integer, float,
+  compare, convert, with `RegisterValue { Narrow(u128), Wide(Cow<Limbs>) }`
+  so one entry covers both widths). The interpreter calls them through
+  `register`/`hold`; its `convert` method's wide and float-to-integer
+  paths are now `operations::convert`. The constant folder
+  (`operators`, `conversions`) no longer has its own arithmetic: it takes
+  the MIR operation lowering emits (`binary_operation`, moved from
+  `lower/src/binary.rs` to `model::mir`, so eval drops its `lower`
+  dev-dependency) and runs it through `operations` at the type's own
+  width. Unary is lowering's forms: `0 - x`, `-0.0 - x` (the old sign
+  flip differed only in which NaN), `x xor ones`. A shift count is read
+  unsigned and kept out of range, as lowering's check does. So the
+  llvm_parity test, which runs the folder, now checks the interpreter's
+  arithmetic too, and eval/lib.rs's "cannot disagree" is true. Not done:
+  which `Conversion` an `as` is, and the unary forms, are still chosen in
+  both lowering and the folder (the meaning of each is one). Mutations
+  of the core (signed divide, signed less, float subtract, sign extend,
+  `swapped` ignored, shift count not clamped) each fail a folder test or
+  the interpreter's run fixtures. `check mixed` 1,176-1,179 M (was
+  1,183-1,184 M); `run -interpret loop_2000000` 16,465 M, was 16,413 M
+  (+0.3%, the register value built per operation). check.sh ok.
+- Untangle fix 8, `compile::run`'s switches have names: `require_main`
+  and `record_facts`, two bare bools in a row at 23 calls (five driver
+  calls, eighteen in tests), become `compile::Options { require_main,
+  record_facts }` with `Default`; a caller names only the one it turns on
+  (`Options { record_facts: true, ..Options::default() }` in the
+  language server), and the two `// names are for editors` comments go.
+  `previous` stays an argument: it is a value, not a switch. In the
+  checker, `build_function` and `check_body` took `to_run` and used it
+  only as `records_facts: !to_run`; the parameter is now `records_facts`
+  (the compile passes `true`, `evaluate_call` `false`; four test calls
+  flipped with it). Mutations: the compile's build or the run's build
+  recording the wrong way, `require_main` ignored and `record_facts`
+  ignored each fail compile tests. No hot path changed, so no
+  measurement.
+- Untangle fix 9, lowering's own copies, in seven steps (patches
+  fix9a..g under target/step12-probes/untangle):
+  - surplus: `through_slice` (a `.then(Step::Through)` wrapper, also used
+    for an interface's struct), `field_offset` and `read_for_print` (one
+    caller each) and `runtime_call`'s unused result are gone; the dead
+    `| Type::Str` borrow arm too (`borrows()` is `None` for `&str`).
+    `types[types.real(x)]` is `types[x]`: indexing looks through aliases.
+    The slice debug type uses `add` like the others (reserve and define
+    with nothing recursive between); no dump changes, as the writer
+    numbers metadata itself.
+  - two words: four hand-written `.then(Step::Offset(pointer_bytes))`
+    use `second_word`; an interface's two stores are `interface_words`,
+    beside `slice_words`.
+  - constants and converts: a `usize` constant is
+    `Operand::integer(self.usize, n)` everywhere (its assert holds: the
+    checker refuses an array length past `usize`, probed on i686);
+    `integer_constant` takes an `Integer`, so zeros and the shift width
+    use it; all six hand-built `Convert`s go through `convert`.
+  - `RangeWalk` is a struct of five named fields, built by name, moved to
+    and from a range value by `range_field` name (`RangeWalk::fields`);
+    `range_integers` unpacks a range type at three sites.
+  - `lower_expr` builds the seven in-memory kinds through `lower_into`
+    (`in_temporary`), so each is built in one place.
+  - `copy_elements` and `fill_range` share `for_each_index`, which
+    replaces `counter_slot` and `step_counter`.
+  - special cases: `checked_usize` takes the `Comparison` (no `BinaryOp`
+    and no `unreachable!`); the method receiver is lowered before the
+    argument loop, not found by `target == None` in it; `return`, `panic`
+    and `break`/`continue` end with `finish_and_leave`. `return` alone
+    truncates `declared` because only it has an expression, whose
+    temporaries it ended; that is now said where it happens.
+  Not done: the slice debug type's `len` still makes its own `usize`
+  basic type per slice type, as the language `usize` is named `u64` in
+  debug info (asked). No MIR or LLVM dump changed. `check mixed`
+  1,172-1,175 M (was 1,176-1,179 M). 247 lines in, 345 out.
+- Untangle fix 10, the LLVM writer's own copies (patch fix10 under
+  target/step12-probes/untangle):
+  - a `FallOff` reached in a function with a result wrote `unreachable`;
+    it cannot happen (the missing-return check gives the function an
+    error, and `build_function` gives a function with an error no MIR),
+    so it is `unreachable!`.
+  - `Module::declare_function` notes a Peeper-convention `declare` and
+    gives the global name; it replaces `declaration` and the four
+    `declare(..declaration..)` + `global` copies (`add_table`,
+    `write_call`'s identical function and runtime arms,
+    `write_runtime_call`).
+  - `folded` gives `None` for a step that moves nowhere, so
+    `write_operand` and `write_place` no longer each test `Offset(0)`;
+    `Writer::root` names a place's root for both.
+  - `global` and `comma_separated` move from body.rs to text.rs (used
+    by lib.rs and debug_info.rs too); `slot_name`'s doc, which sat on
+    `jump_targets`, is back on `slot_name`.
+  The `.ll` of every x_test project, host and i686, is byte-identical
+  to the last commit's (260 non-empty dumps). Mutations (an offset of 0
+  kept, `%result` renamed, the declare under the wrong symbol, the
+  comma written without its space) each fail tests. check.sh ok. No
+  hot path changed, so no measurement.
+  Not done, asked: two `#[extern("abs")]` functions with different C
+  types (`i32`, `i64`) both compile, and the second call is written
+  against the first `declare i32 @"abs"(i32)`, unreported
+  (probe untangle/declare-clash); and the seven `pub` items in
+  `llvm::body` (and `pub mod body`) exist only for eval's
+  llvm_parity test.
+- Untangle comments pass (patch comments under
+  target/step12-probes/untangle), the comments the four reports listed,
+  found by their text at 784d4831 since the lines have moved:
+  - stale, fixed: llvm_parity named `lower_cast` (now `lower_convert`),
+    "ir" for eval and lib.rs for src/tests.rs; `Failure::NoMir` named
+    `run`, its caller is `run_function`'s; flow's doc said the checks
+    are called by `compile` (the checker's `lower_function` calls
+    them); the loan check's doc named only T0037, it reports T0036 and
+    T0016 too; `Holder` said one per instruction giving a pointer (only
+    a `Borrow`, `Load` or `Call`); `Value::Moving` named `print` among
+    its takers (an expression statement is the third); `compare` said
+    `class` is an `I8` (the result is); `Class`'s `Display` said LLVM
+    uses its names (not for floats); `DebugTypes` said one per language
+    type (`push` adds ones for none); an orphan test comment whose test
+    is gone.
+  - repeated, cut to one place: why only live holders are kept (module
+    doc; `held_at_starts` and the walk point to it); why debug types
+    stop at `DEEPEST_DEBUG_TYPE` (its doc; the shortcut names the limit).
+  - restating, removed: the docs of `load`, `store`, `convert_integer`,
+    `compare_integers_le`, `write_block`, `write_instruction`,
+    `Metadata::add`/`define`, `Module::file`/`text`, `holder_ids`,
+    `i32_argument`, `set_value`, `wants_ll`.
+  Kept, though listed: docs that say more than the signature
+  (`slice_words`' word order, `emit_scope_ends`' newest-first,
+  `global`'s read-only data, `read_word`, `live_set`, `parameter_loan`,
+  `join`, `is_empty`, the driver's "find the project"). Not a finding:
+  `ThirBuilder::reborrow` does exist. Already gone in earlier fixes:
+  the compile's "gives its MIR" comments, the `return`/`panic`/jump
+  "unreachable block" comments, the events comment in mir.rs, the
+  second "names are for editors". Comments only; check.sh ok.
+- Untangle tests pass (patch tests under target/step12-probes/untangle):
+  - lowering: `every_fixture_lowers` is gone. It copied the compile's
+    walk, and its one assert (a body's text is not empty) could not
+    fail; the fixture test lowers every fixture through the real walk
+    (a panic put in lowering fails it). The print test reads runtime
+    names from `Runtime::*.signature().symbol`, not `peeper_rt_v1_*`.
+  - debug depth: lowering's tests check that pointer and struct debug
+    types stop exactly at `DEEPEST_DEBUG_TYPE` (`lower_main` now gives
+    the MIR and debug types beside the dump); the LLVM tests no longer
+    copy 5_000 and only check the writer writes deep chains, ending in
+    `baseType: null`.
+  - `as`: `model::mir::cast_conversion` picks the `Conversion` of a
+    cast; lowering's `lower_convert` (its float and pointer arms become
+    one) and `convert_integer`, eval's `convert` and llvm_parity use it,
+    where each chose on its own. The `.ll` of every x_test project,
+    host and i686, is unchanged.
+  - loans: `Bytes::meets` had no case where the spans overlap but no
+    run is met, so an always-true `run_meets` passed; added that case,
+    runs of two strides, and runs of unknown count (saturating span).
+  - compile: the newest-first scope-end test moves to lowering's tests
+    (it tests lowering, and needs no compile run); the three copies of
+    the `at` closure are one `messages_on`.
+  Mutations (debug depth off by one, both ways; scope ends oldest first;
+  `run_meets` always true; strides taken apart; span not saturating;
+  signed integers zero-extended) each fail a test. check.sh ok.
+  Not done: tests pinning `%N`/`!dbg` numbers stay (full texts are the
+  spec; numbers move only when lowering changes); the unary choice
+  (`0 - x`, `-0.0 - x`, `x ^ ones`) is still made in lowering, eval and
+  llvm_parity; llvm_parity's `binary_lines` writes with the writer's
+  `pub` mappings, waiting on the `pub` question. The interpreter's
+  arithmetic is the folder's since fix 7 (`operations`), so the folder's
+  parity covers it.
+- Untangle check 2, bugs (fresh reviewers after the tests pass; each
+  reproduced on the bundle first; patches bug1..bug7 under
+  target/step12-probes/untangle):
+  1. `.len` of a call giving `&[N]T` crashed lowering: `check_field`
+     went through the pointer only for a slice or `&str`. It now does
+     for every value read; `lower_length`'s `pointee` fallback is gone.
+     Fixture run_array_length (`passed_on(&values).len`).
+  2. A deep `&[]&[]...` type overflowed the stack in
+     `debug_type_at_depth`: the slice arm now nests like a pointer's
+     (depth + 1, `grow_stack`, stop at `DEEPEST_DEBUG_TYPE`), and
+     `Types::text` writes into one String (`write_real_text`), which was
+     cubic for such a chain. Test: the depth test has a `&[]` chain.
+  3. A shift count of a signed type too narrow to reach the width always
+     panicked (`i32 << i5`: 32 cut to an `i5` is 0). Such a count is now
+     checked only for being negative (`slt`); a count that can reach the
+     width keeps the unsigned check. Fixtures run_shift_narrow_counts,
+     run_panic_shift_negative_narrow; the lowering test asserts the `slt`
+     and an `i7`'s `ule`.
+  4. `MIN / -1` of a narrow signed type was 16 for `i5` at run time and
+     -16 folded: `arithmetic` now cuts a `SignedDivide` back like `Add`.
+     Fixture run_divide_narrow_lowest (widths 5, 13, 100, folded and
+     run, remainders); lowering test of the `shl`/`sshr` after `sdiv`.
+  5. The interpreter counted a `realloc`'s size as steps when no block
+     was made, so a failed huge one stopped the run: it counts only a
+     made block, as `allocated` does. run_realloc has the too-large case
+     (64-bit only: a 2 GiB request on i686 may succeed).
+  6. Use after move named moves in code that never runs, with a false
+     "earlier pass of the loop" note: `flow::predecessors` now lists only
+     blocks that run, so no backward walk enters others; the skip by hand
+     in `missing_return_causes` and its parameter are gone. Compile test
+     `a_move_that_never_runs_is_not_named`. Check output of every fixture
+     unchanged.
+  7. "`p` may already be set here" for a variable set on every path, after
+     a move: a move no longer clears `always`; a use needs `always` and not
+     `moved`, which gives the same answer for every use. Fixture
+     negative_assigned_twice (`d`); every other fixture's messages
+     unchanged.
+  Each test failed with its fix undone. check.sh ok.
+- Untangle check 2, cleanups:
+  - one owner: `Machine::pointer_bytes` (layout, check, lowering; lowering's
+    stored copy is gone); `lower_binary` takes a number's class from
+    `class`; `debug_struct` takes offsets from `field_placed` and size from
+    `layout`, not a second `struct_layout`; eval's step limit comes from
+    the memory's run (field and parameter gone); `hold` keeps a wide
+    register, `Interpreter::of_limbs` is gone, `constant_of` reads limbs
+    through `RegisterValue`.
+  - surplus: the dead `bool` `&`/`|`/`^` arms in lowering and eval (check
+    refuses them) and the test that reached them; `str_constant`,
+    `compare_integers_le`, `own_class`, `Module::file`, `Writer::type_of`
+    and `next_use` merged into their one caller; `loans_of` is `Held`'s;
+    a C call's argument types are read only for a C call; the `for`
+    index is read from THIR by its own id; `reserve`, `define`,
+    `llvm_type`, `sorted_union` and `DebugTypeId`'s field are private.
+  - debug info: a function's own block is always its subprogram, as for a
+    function with parameters; a parameterless function lost the lexical
+    block around its whole body. Six ll fixtures re-blessed; with node
+    numbers masked the only change is those lines.
+  - comments: the MIR header names the loan words as its exception;
+    `Signature.c` (no variadic), `Class::bits`, `Operand::integer`,
+    `Call.result` (why it keeps the size), flow lib (`lower::lower`
+    refuses), missing_return (no copy, no comparison), unreachable (what
+    counts as code), loans (why one error per instruction), compile
+    `interpret`.
+  - tests: the two slice tests move from the LLVM writer to lowering; new
+    writer tests for an empty endless loop and for the -1 divisor guard
+    (fails without the mask); eval's test comparing its own helper is gone.
+  The `.ll` of every x_test project, host and i686, is byte-identical
+  with only the debug-scope change undone. Not done, with reasons: the
+  "result in memory" matches in the writer (each reads `Passing::Memory`,
+  the one owner; no decision repeats); `write_c_call`'s two matches print
+  two parts on either side of the call line; `c_function` is a local,
+  not a stored copy; `copy_type` stays `pub` (lowering's tests call it);
+  `register_slot`'s alignment (over-aligning only, low value).
+- Untangle check 3 (fresh reviewers after check 2), bugs (uncommitted;
+  reports and probes in target/step12-probes/untangle/check3*):
+  1. `.len` of a call skipped the checks on what used it: lowering gave a
+     MIR constant, which reads as "the checker checked it". `x /
+     make().len` with `[0]` died by SIGFPE, `1 << make().len` printed 256,
+     a zero step looped forever or crashed lowering, and a spread count
+     wrote 5 values into a `[3]`. `lower_length` now gives a register
+     (store and load). Lower test `the_length_of_a_call_is_checked_where_it_is_used`;
+     fixtures run_panic_divide_by_call_length,
+     run_panic_spread_count_of_call_length; mir_array_length re-blessed.
+  2-3. An array literal's part, or an assignment's value, kept in memory
+     was copied after later code ran: `[4]i32{a..., bump(&mut a)}` gave
+     100 2 3 7, `rows[bump(&mut a)] = a` stored the changed array, and the
+     move-after-borrow forms compiled. `settled` copies such a value at
+     once when a call runs before it is read (`Thir::has_call`); print
+     uses it too, so it no longer copies a value no call can change
+     (mir_text re-blessed). Fixtures run_evaluation_order and two cases in
+     negative_use_after_move. `has_call` now walks a list, not recursion:
+     print's use of it overflowed the stack on `a[0]...` 50,000 deep.
+  4. "it was moved in an earlier pass of the loop" for `p.left = Use(p);`
+     with no loop: a move inside the use's own span ran just before it.
+     Compile test `only_a_move_from_a_loop_pass_says_so`.
+  5. Two unreachable warnings for `return; for i in 0..3 {}`: a `for`
+     works out its range before the name. A stretch now starts at a block
+     nothing jumps to and warns at its earliest code; `mark_reachable`
+     gives each newly marked block to a callback. warn_unreachable_code
+     (`LoopAfterReturn`, 7 warnings).
+  6. The folder read a narrow signed shift count unsigned: `(1 as i64) <<
+     (-1 as i5)` folded to 2147483648, and `known_trap` let the run-time
+     form through unchecked (native 1<<63, i686 0). eval `shift_count`
+     reads the count with its sign. Unit test; negative_check_numbers.
+  7. The interpreter's wide store and load covered the slot's padding (32
+     bytes for a `u200`, LLVM writes 25). run_wide_integers `store:` line.
+  8. A write to a descriptor that is no output was checked against the
+     output limit (and read its buffer): the stream is picked first, -1
+     for any other. run_write_and_exit_code.
+  Each test and fixture failed on the old bundle or with its fix undone.
+- Untangle check 3, cleanups: `debug_type` takes the depth (the forwarder
+  is gone); `holders` lost its always-0 `at`; `range_count` merged into
+  `part_count`; `emit_scope_ends`/`lower_statement` private; layout takes
+  an integer's size from `Class::bytes` (same for every width 1-4096, both
+  `i64_align`s); the writer's Release arm is gone (the table is empty
+  then); the interpreter keeps the `Machine`, not a copy of its pointer
+  bits; `read_word` and `keep_output` merged into their callers;
+  `Host.output` private; comments (MIR header's two exceptions,
+  `class_of`'s `None`, `add_debug_info`, `typed`, `narrow_integer`, eval
+  lib, the depth comments name slices, `moved` is cleared by `End` too);
+  tests: an unsigned count too narrow for any check, the LLVM assert that
+  could not fail and eval's helper-only assert are gone. check.sh ok.
+  Not done, with reasons: `Convert.from` repeats `class_of(value)` as
+  `Store` and `Integer` carry their class, so only that one would differ;
+  lowering and the writer both call `Class::integer(pointer_bits)`, the
+  one owner, not a second decision; `check::lower_function` keeps its one
+  caller (near the 60-line line). Found, not fixed: `check` of a parameter
+  50,000 arrays deep takes about 12 s, before and after this work.
+- Untangle check 3, review fixes: run_evaluation_order also prints a
+  `&str` a later call changes (`println(text, change(&mut text))`, expects
+  `before 1`; with print's `called_later` forced off it printed `after 1`).
+  `Thir::has_call` starts from the expression itself, so its list stays
+  empty, unallocated, for one with no parts (every plain assignment
+  target). `mir.rs`: `AccessWidth::Class(Class)` is `Register(Class)` and
+  `PlaceAccess`'s field `width` is `touched`, so neither shares a name with
+  what it holds or with the `width()` method. check.sh ok.
+- `.len` of an array is folded only where computing the array runs
+  nothing (Fuad: "len issue have to be fixed"): `grid[row].len` with
+  `row` 7 printed 3, and `[2]i32{1, 7 / zero}.len` printed 2; both skipped
+  what Rust runs (an index check, a division). `check_field` folds only a
+  variable or constant, its fields and dereferences, and array elements at constant
+  indexes (checked by the checker); anything else is `Length`, which
+  lowering computes. Fixtures run_panic_index_length_variable and
+  run_panic_length_of_literal_divide (native, -interpret, i686); both exit
+  0 without the fix. Every other fixture's output unchanged.
+- Loan errors (Fuad: "yes report both"): one set of reported loans was
+  shared by return errors and conflicts, so a loan both changed and
+  returned showed one of the two, picked by block order (`x = 2; return r;`
+  the return, `x = 2; if c { return r; }` the change). `Loans::report` now
+  checks every `return` first into its own set, then walks the conflicts
+  with theirs; a place ending under a loan a `return` reported is skipped
+  (`broken_loan`'s `skip` takes the loan too; `Access::ends`), so
+  `return &x;` stays one error. Fixture negative_loan_and_return_errors
+  (6 errors; 4 without the fix). `check` output of every other fixture
+  byte-identical. A local ending in an inner block before the `return` of
+  its reference is now reported as the return ("gone once the function
+  returns"), not as "gone" at the `}`. check.sh ok.
+- Review of the two fixes (pony + untangle lens; Fuad: "fix all"): the
+  constant-index fold had no test; run_array_length has
+  `const ROW = grid[0].len;` (with the fold's index branch off it fails,
+  T0004). No other finding; the "gone"-after-return skip is the one special
+  case, and its reason is in its comment. Note: `unset.len` of an unset
+  array compiles on purpose (run_array_length "unset: 7").
+- Step 17 draft (2026-11-13, Fuad: "write the step 17 design page"):
+  docs/feature-front.md, not committed, waits for review. Measured on
+  745b61ce with target/step12-probes/front/*.py: ranges span 17 files in
+  5 crates; 68 functions match two or more features' types; 17 functions
+  match six or more kinds of one node enum; the parser is already
+  table-driven by token. Proposes: features meet only through core
+  concepts (number, elements, members, view, and the per-type facts);
+  the four middle leaks first (18a); node representation A (handle and
+  trait object) or B (generic core, features listed in a top crate), lean
+  B; six open questions.
+- Step 18a (2026-11-13, Fuad: "start the work"; not committed): nothing
+  after lowering names `semantic_types` or `thir` now. Five leaks moved:
+  (1) copy symbols and debugger names: `model::program::symbol`,
+  `copy_symbol`, `copy_name` (now also the one spelling of a copy's name for
+  check's messages and the dumps), called by the driver and passed to
+  `FunctionQueue::add` as closures; the queue holds no `Program`.
+  (2) the constant run's typing: eval's `ConstantShape` (Bool, Integer,
+  Float, RawPointer, CString, Str, Refused(reason)), built by
+  `Checker::evaluate_call`; `constant_refusal` moved to check/function.rs.
+  (3) the folder (`operators.rs`, `conversions.rs`, their tests,
+  tests/llvm_parity.rs) moved to `check::fold`; the arithmetic stays in
+  `eval::operations`, now public (owner 2026-10-26 "move them to eval"
+  still holds for it). (4) `binary_operation`, `cast_conversion`,
+  `BinaryOperation` moved to `lower::arithmetic`. (5) found while doing it:
+  `mir::DebugTypes` kept a map from `TypeId`; the map is now lowering's
+  (`lower::ProgramDebugTypes`), the MIR's table is read by id only.
+  `Class::float` became `Float::class` (front type knows its core class,
+  not the other way). check.sh gained "middle boundary" (a grep; planted
+  import made it fail). The "no feature crate names another" check waits
+  for the first feature crate (it cannot fail with none).
+  Found by the byte-identical gate: `-NAN` folded to `NAN`'s bits once the
+  folder called `eval::operations::float` across a crate (no inlining);
+  before, rustc inlined `-0.0 - x` and LLVM turned it into a sign flip, so
+  the folded value depended on the host compiler's optimizer.
+  run_const_parameters lost its second `Same` copy. Float `Negate` now
+  folds as a sign flip (unit test fails without it). Gate after the fix:
+  every fixture, native and i686, `check -dump` output, exit code, THIR,
+  MIR and debug LLVM IR byte-identical to 745b61ce (2,501 files,
+  target/step12-probes/front/leaks/compare.sh).
+  /simplify (four reviews): `copy_name` shared by check, the dumps and
+  debug info; the three helpers take `modules`; stale docs fixed; the
+  boundary grep narrowed to `model::thir` and marked a shortcut, as
+  `model` still carries the checker's types to eval, flow and llvm
+  (`FunctionCopy::arguments`, `machine.rs`, `constant.rs`) and llvm reads
+  the syntax tree through `Program`: the crate split (section 9) is the
+  real check. Left for Fuad: a MIR float negate so lowering, the
+  interpreter and the folder flip a NaN's sign alike.
+  Then (Fuad: "continue") the model core: `mir`, `machine`, `constant` and
+  the ids in `lib.rs` reached the checker's types, so `ConstArguments`
+  moved to `lib.rs`, `Integer::MAX_BITS` to `machine::MAX_INTEGER_BITS`,
+  `Constant` and `value_text` to `semantic_types`. The core files now name
+  no front module. "middle boundary" checks four things (core files,
+  `lib.rs` imports, flow and eval, llvm); each fails on a planted line.
+  Left: llvm reads the syntax tree through `Program` (file, declared name,
+  entry symbol), with the syntax tree's move (section 9).
+  `run_function` took `arguments` and `parameters` as two lists in step;
+  now one list of `(&Value, ConstantShape)` (Fuad: "do A"; RULES.md 5.1,
+  one record per thing).
+- Numbers decided (2026-11-13, Fuad: "add number view and floats to the
+  design page"): docs/feature-front.md 5.1 makes integers and floats one
+  core concept behind one `number()` view; open question 4 now asks only
+  about views and elements. A `number` bound programs can write waits for
+  `<T>` generics. Page only, no code.
+- Operations decided (2026-11-13, Fuad: "features implement the operation
+  logic and add to that list; core ... shows unsupported error"; folding
+  "b"): docs/feature-front.md 5.3. The core keeps each type's list of
+  operations and implements none; a feature registers operations on its
+  own types; a missing one is the shared "operator `+` cannot be applied"
+  error. `rawptr + n` is the raw pointer feature's (question 3 closed).
+  No separate folder: constant operations fold by running their MIR in
+  `eval`; measured before `check::fold` goes (gate 4). Page only.
+- Questions 1 and 2 decided (2026-11-13, Fuad: "go with B and crates"):
+  docs/feature-front.md sections 7, 9 and 12. The core is generic over one
+  `Language`, the features listed by `features!` in a top crate; one crate
+  per feature. Page only.
+- Questions 4 and 5 decided (2026-11-13, Fuad: "yes to views and
+  elements, 1% is fine"): docs/feature-front.md 5.1, 10 and 12. Only
+  question 6 (the feature list) is open. Page only.
+- Question 6 decided (2026-11-13, Fuad: "keep the 22 features"):
+  docs/feature-front.md 6 and 12. Every open question of the page is
+  answered; step 18b can start. Page only.
+- Step 18b, the syntax tree out of `model` (2026-11-13, Fuad: "o" to the
+  reordered plan, then "go with a"). `ast.rs` and `operators.rs` moved
+  unchanged to the new crate `syntax` at `crates/core/syntax` (section 9's
+  home); `model` depends on it (`thir` uses `BinaryOp`), the parser no
+  longer depends on `model`. 49 files changed, imports only. `check.sh`'s
+  middle boundary also forbids `syntax::` in `model`'s core files, `eval`,
+  `flow` and `llvm` (proved to fail on a planted import). Not done: `llvm`
+  still reaches the tree through `Program`, which holds it next to the
+  checker's `Types`; `project` still needs `model` for `Program`. The 5.2
+  views and the `TypeShape` trait moved to step 19 (docs/feature-front.md
+  section 11): with every type in one enum they would only rename matches,
+  and have no caller (RULES.md 1.1). Gates: 2,501 dump files identical to
+  745b61ce on the host and i686; `check.sh` all ok.
+- Step 19 piece 1, `llvm` off `Program` (2026-11-13, Fuad: "continue
+  next" to the pilot plan). A generic `Program<L>` would have made `llvm`
+  generic; it read only the project root, each module's file, a
+  function's declared name (its debug line) and the entry symbol. Now
+  `write_modules` takes `root` and `files`, `FunctionQueue::add` takes
+  `debug_name` giving the shown name and where the name is declared
+  (`Defined::declared_at`), and `add_entry_point` takes the symbol; the
+  driver computes them. `check.sh` now forbids `model::program` in
+  `llvm` (not its tests, which compile a whole program); proved to fail
+  on a planted line. Spikes for the pilot (not in the repo,
+  `target/step12-probes/front/spikes`): a per-language parser table as a
+  static in the top crate, built by `const` code from generic feature
+  rows, with a two-claims panic at build time; and `nodes!` impls for
+  nodes carrying `<L>` (the marker type must derive the node traits).
+  Gates: 2,501 dump files identical to 745b61ce (339 with debug info, 179
+  `.ll` with panics); `check.sh` all ok.
+- Step 19 piece 2, the syntax side and struct checking (2026-11-13, Fuad:
+  "go ahead", then "go with the default" for where tests go). Every tree
+  node, `Program`, the parser, the checker and lowering are generic over
+  `L: Language`. Each phase names what it asks of a feature in its own
+  trait: `syntax::ast::Language` (`Expr`, `Type`, `precedence`, `fields`),
+  `parser::Grammar` (the `Rules` table), `check::Checked` (`check_expr`,
+  `resolve_type`, `declare_type`). The table gained three row kinds a
+  feature can claim: a keyword type (`Rules::keyword_type`; enum and iface
+  became core rows of it), what continues a path (`Rules::after_path`,
+  read by `starts_path`, `opens_type_arguments` and `name_or_path`, so
+  `.{` is no longer written in the core), and declarations
+  (`Rules::declaration`). The new crate `crates/features/structs` holds
+  `StructLiteral` and `StructType`, their parse rows, and the checking of a
+  struct declaration and literal (moved unchanged from `check`), which
+  still give the core's `Type::Struct` and `ExprKind::StructLiteral`.
+  `Peeper` (`driver/compile/language.rs`) is the core plus structs, its
+  table built by `const` code; no `features!` macro while there is one
+  feature. `ast::Field` and `ast::FieldValue` stay core nodes (the core
+  reads fields: `point.x`, `field_names`); the struct pattern
+  (`let .{ a } = s`) is still a core node. Tests: `parser` and `check`
+  test in `Bare` (no feature); the struct cases of 8 parser tests became 8
+  tests in `structs` (looking at the tree, as the dump is the parser's
+  test code); 5 checker tests that need a struct moved unchanged to
+  `driver/compile/tests/checks_through_structs.rs`. No test name lost:
+  297 before, 305 after. Mutations proved both moved sets can fail.
+  `check.sh` gained a feature boundary check (no core crate depends on
+  `structs`; proved to fail on a planted line). Gates: 2,501 dump files
+  identical to 745b61ce (run twice: after the move and after the path
+  lookahead change); instructions +0.04% against 3ae1d4ec (stage 1
+  alone: -0.14%).
+- Step 19 pieces 3 and 4 merged (2026-11-13, Fuad: "go with 1, merge
+  piece 3 into 4"). `.name` (`ast::Expr::Selector`) is read by field
+  access, method calls (`calls.rs::method`), assignment targets
+  (`assigned_place`), the `&mut a.len` refusal and the parser's `|>`
+  check, which section 6 gives to different features; a members crate
+  would need hooks in each or a "method of a value" in the THIR. So
+  `.name` stays core syntax and members is a core concept (design page
+  5.1), asked as the `members` view once the core no longer names the
+  struct type. Docs and plan only.
+
+- **Step 19, piece 3, first of two commits (uncommitted, 2026-11-13).**
+  `Type::definition` and `Type::members` (`Members { definition, fields,
+  offsets }`) added in `model::semantic_types`; the core readers that
+  matched `Type::Struct` ask them instead: `layout::field_placed`,
+  `Types::conversion` (both arms), check `places.rs` (`check_field`,
+  `field_index`), `calls.rs::method`, `declaration.rs::implementation`,
+  `lib.rs::resolve_path`, `lower::add_holders`, `compile::interface`.
+  `constant_refusal` got a `shortcut:` comment. After the review,
+  `field_index` gives the field's type with its index, so `.name` and the
+  struct literal no longer copy the field list. Byte-identical gate 2,501
+  files, 0 differ; benchmark +0.01% against 5b29f226; `check.sh` all ok.
+  Not done: the struct type itself still lives in `model` (the second
+  commit), and Fuad asked whether the type list should stay closed, as
+  Zig's does, before that commit.
+
+- **Step 19, piece 3 closed (2026-11-13).** Committed the members view as
+  `3759987e` (gate 2,501 files, 0 differ; +0.01%). Mapping the readers left
+  of `Type::Struct` (layout, `in_memory`, `holds_loans`, `holders_in`,
+  `is_copy`, the type's text, `class`, `debug_type`, the interface hash)
+  showed each only reads back a fact `define_struct` stores once. Moving
+  the type into `structs` would have made about 37 files generic over the
+  language to hand those facts back through a trait. Fuad chose the Zig
+  shape: `semantic_types::Type` stays one closed list of shapes; a
+  feature builds a shape and owns its syntax and checking. No `TypeShape`
+  trait. Design page sections 2, 5.2, 7, 11 and 12 updated; the
+  `shortcut:` comment on `constant_refusal` removed, as the core naming
+  the struct type is no longer a shortcut. Not decided: whether
+  `thir::ExprKind` follows the same shape.
+
+- **Step 19, interfaces, the second feature (uncommitted, 2026-11-13).**
+  New crate `features/interfaces`: `InterfaceType<L> { methods }`, the
+  `iface` declaration and keyword-type rows with `interface_type` (from
+  `parser/types.rs`), and `check::declare` (was `Checker::check_interface`)
+  plus `resolve_type` ("interface types are not supported yet"). The core's
+  `ast::Type::Interface` is gone; `model::program::interface_methods`
+  asks the new `Language::methods`. `Peeper`'s written type is now the
+  enum `FeatureType { Struct, Interface }` in `driver/compile/language.rs`;
+  its expression stays the struct literal. Made pub: `named_signature`,
+  `signature_type`, `is_self`. The checked `Type::Interface`, interface
+  references, conversion and method tables stay core (closed list, 5.2).
+  Tests 305 -> 308 (3 interface parser tests moved out of the parser's,
+  none lost). Gate 2,501 files, 0 differ; benchmark -0.04% against
+  10753f90; `check.sh` all ok; the feature boundary check now also refuses
+  one feature crate naming another (a planted `structs` dependency in
+  `interfaces` failed it; after review the list of features is read from
+  `crates/features`, so a new feature crate is covered). Dropping the
+  interface rows from `Peeper`
+  failed 2 lower tests.
+
+- **Step 19, THIR decision and raw pointers, the third feature (uncommitted,
+  2026-11-13).** Fuad said "next" to the proposal: the checked program
+  (`thir::ExprKind`, `StmtKind`) stays one closed list of operations on
+  core shapes, as the checked types do; lowering, operations and folding
+  stay core, which reverses the feature-registered operations of design
+  page 5.3 (recorded there, with question 3). New crate
+  `features/raw_pointers`: `PointerType<L> { target }` (`*T`, or `rawptr`
+  without one), `RawAddress<L> { place }`, the `*`/`rawptr` keyword-type
+  and value rows and `@`, `resolve_type` and `check_address` (moved from
+  the checker unchanged). The core's `ast::Type::Pointer`, `RawPointer`
+  and `ast::Expr::RawAddress` are gone; the two core readers of a written
+  pointer (the type-parameter walk, the "write `p.*`" help) ask the new
+  `Language::pointee`. `Peeper`'s expression is now the enum `FeatureExpr`.
+  Made pub: `Checker::resolve_type`, `written_pointer_target`,
+  `ThirBuilder::check_address`. Tests 308 -> 311: three new raw pointer
+  tests; `parses_the_prelude` moved to `driver/compile/tests` (the prelude
+  writes `*u8`); `temporaries_cannot_be_written_or_addressed` moved to
+  `checks_through_features.rs` (renamed from `checks_through_structs.rs`);
+  pointer parts left the core parser tests for the feature's. Gate 2,501
+  files, 0 differ; benchmark +0.31% against da5356c9 (all three runs
+  higher, under the 1% limit); `check.sh` all ok. Dropping the pointer rows
+  from `Peeper` failed 2 compile tests.
+
+- **Step 19 closed: the feature moves stop at three (2026-11-13).**
+  Committed raw pointers as `7d8af6c4` (from the reviewed snapshot tree
+  `946d5514`). Counting the core tests that write each remaining feature's
+  syntax showed every move would be mostly test rewriting: reserved about
+  86 lines (parser dumps), text 32, ranges 26, arrays 24, slices 10; bools
+  7 checker tests and 2 parser tests; numbers, bindings, conditionals,
+  loops and operators nearly every checker test. With types and THIR
+  closed, a feature crate holds only parse rows and a check function.
+  Fuad chose to stop: structs, interfaces and raw pointers stay feature
+  crates, the rest stay core syntax, and new syntax comes as a feature
+  from its first line. Design page section 11 (19, 20) and question 6
+  updated. Not done: nothing.
+- **Plan items closed (2026-11-13).** Layout facts: reading `layout`,
+  `is_copy`, `holders_in` and `holds_loans` shows no walk left: a struct
+  answers from `StructInternals`, an array goes one step to its `base`
+  (never an array), so each is two calls deep; the 2026-11-10 note
+  predated those. A struct- and array-heavy probe
+  (`target/step12-probes/layout/heavy`, 60 nested structs, 3,000
+  functions) checks cleanly; perf sampling is refused here
+  (`perf_event_paranoid` 2). Build-each-body-once and `program` out of
+  `model` dropped, as recommended.

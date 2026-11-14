@@ -18,11 +18,11 @@ use lsp_types::NumberOrString;
 use lsp_types::Position;
 use lsp_types::PublishDiagnosticsParams;
 use lsp_types::Url;
-use model::operators::BinaryOp;
-use model::operators::UnaryOp;
 use serde_json::json;
 use source::SourceFile;
 use source::Span;
+use syntax::operators::BinaryOp;
+use syntax::operators::UnaryOp;
 
 use crate::DEBOUNCE;
 use crate::OpenFile;
@@ -32,6 +32,24 @@ use crate::convert::offset;
 use crate::convert::position;
 use crate::serve_connection;
 use crate::server::Server;
+
+/// The request params of the place of `uri`'s `text` at the `nth` `needle`:
+/// at the character it underlines with U+0332, else at its start.
+/// `"x - -̲1.0"` is the second `-`.
+fn place(uri: &Url, text: &str, needle: &str, nth: usize) -> serde_json::Value {
+    const UNDERLINE: char = '\u{332}';
+    let underlined = needle.find(UNDERLINE).map_or(0, |mark| {
+        needle[..mark].char_indices().last().map_or(0, |(at, _)| at)
+    });
+    let found = needle.replace(UNDERLINE, "");
+    let start = text
+        .match_indices(&found)
+        .nth(nth)
+        .unwrap_or_else(|| panic!("no {nth} {found:?}"))
+        .0;
+    let position = position(&SourceFile::new("t.peep", text), start + underlined);
+    json!({ "textDocument": { "uri": uri }, "position": position })
+}
 
 /// A file named from the root, as an editor names files; on Windows that
 /// needs a drive.
@@ -370,17 +388,17 @@ fn answers_definition_and_hover() {
         json!({ "textDocument": document }),
     );
     server.apply_notification(open).unwrap();
-    let ask = |method: &str, line: u32, character: u32| {
-        let place = json!({
-            "textDocument": { "uri": uri },
-            "position": { "line": line, "character": character },
-        });
-        let request = Request::new(RequestId::from(1), method.to_string(), place);
+    let ask = |method: &str, needle: &str| {
+        let request = Request::new(
+            RequestId::from(1),
+            method.to_string(),
+            place(&uri, text, needle, 0),
+        );
         let Response { result, error, .. } = server.answer_request(request);
         assert!(error.is_none(), "{error:?}");
         result.unwrap()
     };
-    let definition = ask("textDocument/definition", 3, 16);
+    let definition = ask("textDocument/definition", "more = to̲tal");
     assert_eq!(definition["uri"], json!(uri));
     assert_eq!(
         definition["range"]["start"],
@@ -391,124 +409,135 @@ fn answers_definition_and_hover() {
         json!({ "line": 2, "character": 13 })
     );
     // Right after a name, before the `;`, is on the name.
-    assert_eq!(ask("textDocument/definition", 3, 20), definition);
-    let hover = ask("textDocument/hover", 3, 16);
+    assert_eq!(ask("textDocument/definition", "more = total;̲"), definition);
+    let hover = ask("textDocument/hover", "more = to̲tal");
     assert_eq!(
         hover["contents"]["value"],
         json!("```peeper\ntotal: Meters (aka i64)\n```\n\n---\n\n*in* `main` *· line 3*\n")
     );
-    assert_eq!(ask("textDocument/hover", 2, 1), serde_json::Value::Null);
+    assert_eq!(
+        ask("textDocument/hover", "\n  ̲  let total"),
+        serde_json::Value::Null
+    );
     // A `...` parameter is a plain slice inside; its function, as written.
     assert_eq!(
-        ask("textDocument/hover", 34, 11)["contents"]["value"],
+        ask("textDocument/hover", "return v̲alues")["contents"]["value"],
         json!("```peeper\nvalues: &[]i32\n```\n\n---\n\n*in* `main` *· line 34*\n")
     );
     assert_eq!(
-        ask("textDocument/hover", 33, 3)["contents"]["value"],
+        ask("textDocument/hover", "fn m̲any")["contents"]["value"],
         json!(
-            "```peeper\nfn many(values: ...i32) -> &[]i32 in values\n```\n\n---\n\n*in* `main` *· line 34*\n"
+            "```peeper\nfn many(values: ...i32) -> &[]i32 in values { /* ... */ }\n```\n\n---\n\n*in* `main` *· line 34*\n"
         )
     );
     // A type's name: a declared one answers as its declaration does; a
     // built-in one, what it holds, and is declared nowhere.
     assert_eq!(
-        ask("textDocument/hover", 2, 15)["contents"]["value"],
+        ask("textDocument/hover", "total: M̲eters")["contents"]["value"],
         json!("```peeper\ntype Meters = i64;\n```\n\n---\n\n*in* `main` *· line 1*\n")
     );
     assert_eq!(
-        ask("textDocument/definition", 2, 15)["range"]["start"],
+        ask("textDocument/definition", "total: M̲eters")["range"]["start"],
         json!({ "line": 0, "character": 5 })
     );
     // In a struct field, outside any body.
     assert_eq!(
-        ask("textDocument/hover", 7, 12)["contents"]["value"],
-        ask("textDocument/hover", 2, 15)["contents"]["value"]
+        ask("textDocument/hover", "length: M̲eters")["contents"]["value"],
+        ask("textDocument/hover", "total: M̲eters")["contents"]["value"]
     );
     assert_eq!(
-        ask("textDocument/hover", 0, 14)["contents"]["value"],
+        ask("textDocument/hover", "type Meters = i̲64")["contents"]["value"],
         json!(
             "```peeper\ni64\n```\n\n---\n\nA signed 64-bit integer: from `-9223372036854775808` to `9223372036854775807`.\n"
         )
     );
     assert_eq!(
-        ask("textDocument/definition", 0, 14),
+        ask("textDocument/definition", "type Meters = i̲64"),
         serde_json::Value::Null
     );
     // A keyword answers what it does; the same word in a comment, nothing.
-    let keyword = ask("textDocument/hover", 2, 5);
+    let keyword = ask("textDocument/hover", "le̲t total");
     let keyword = keyword["contents"]["value"].as_str().unwrap();
     assert!(keyword.starts_with("```peeper\nlet\n```\n\n---\n\n Declares a variable."));
     assert_eq!(
-        ask("textDocument/definition", 2, 5),
+        ask("textDocument/definition", "le̲t total"),
         serde_json::Value::Null
     );
-    assert_eq!(ask("textDocument/hover", 5, 4), serde_json::Value::Null);
+    assert_eq!(
+        ask("textDocument/hover", "// le̲t me"),
+        serde_json::Value::Null
+    );
     // An operator right after a name is the operator; the name is still
     // the name. `-` subtracts or negates, as the tree says.
-    let hover = |line: u32, character: u32| {
-        ask("textDocument/hover", line, character)["contents"]["value"].clone()
-    };
+    let hover = |needle: &str| ask("textDocument/hover", needle)["contents"]["value"].clone();
     let doc =
         |symbol: &str, doc: &str| json!(format!("```peeper\n{symbol}\n```\n\n---\n\n{doc}\n"));
-    assert_eq!(hover(10, 13), doc("/", BinaryOp::Divide.doc()));
-    let name = hover(10, 12);
+    assert_eq!(hover("q = a/̲2"), doc("/", BinaryOp::Divide.doc()));
+    let name = hover("q = a̲/2");
     assert!(name.as_str().unwrap().starts_with("```peeper\na: i32\n```"));
-    assert_eq!(hover(11, 14), doc("-", UnaryOp::Negate.doc()));
-    assert_eq!(hover(11, 18), doc("/", BinaryOp::Divide.doc()));
-    assert_eq!(hover(12, 13), doc("-", BinaryOp::Subtract.doc()));
-    assert_eq!(hover(12, 15), doc("-", UnaryOp::Negate.doc()));
+    assert_eq!(hover("C = -̲(7"), doc("-", UnaryOp::Negate.doc()));
+    assert_eq!(hover("(7 /̲ 2)"), doc("/", BinaryOp::Divide.doc()));
+    assert_eq!(hover("x -̲ -1.0"), doc("-", BinaryOp::Subtract.doc()));
+    assert_eq!(hover("x - -̲1.0"), doc("-", UnaryOp::Negate.doc()));
     assert_eq!(
-        ask("textDocument/definition", 11, 18),
+        ask("textDocument/definition", "(7 /̲ 2)"),
         serde_json::Value::Null
     );
     // A token's own doc covers its uses that are not an operator of the
     // tree: `&` is a reference, but in `m & 3` a bit-and; the `*` of
     // `r.*` reads through `r`, and its `.` reaches into `r`.
-    let starts = |line: u32, character: u32, text: &str| {
-        let found = hover(line, character);
+    let starts = |needle: &str, text: &str| {
+        let found = hover(needle);
         let found = found.as_str().unwrap();
-        assert!(found.starts_with(text), "{line}:{character}: {found}");
+        assert!(found.starts_with(text), "{needle}: {found}");
     };
-    starts(15, 12, "```peeper\n&\n```\n\n---\n\n Refers to a value");
-    assert_eq!(hover(16, 17), doc("&", BinaryOp::BitAnd.doc()));
-    starts(18, 12, "```peeper\n@\n```\n\n---\n\n The address");
-    starts(19, 12, "```peeper\n[\n```\n\n---\n\n Indexes an array");
-    starts(20, 18, "```peeper\n[\n```\n\n---\n\n Indexes an array");
-    starts(20, 13, "```peeper\n*\n```\n\n---\n\n Points at a value");
-    starts(20, 12, "```peeper\n.\n```\n\n---\n\n Reaches into");
+    starts("r = &̲m", "```peeper\n&\n```\n\n---\n\n Refers to a value");
+    assert_eq!(hover("m &̲ 3"), doc("&", BinaryOp::BitAnd.doc()));
+    starts("p = @̲x", "```peeper\n@\n```\n\n---\n\n The address");
+    starts(
+        "s = [̲2]i32",
+        "```peeper\n[\n```\n\n---\n\n Indexes an array",
+    );
+    starts("s[̲0]", "```peeper\n[\n```\n\n---\n\n Indexes an array");
+    starts("r.*̲ +", "```peeper\n*\n```\n\n---\n\n Points at a value");
+    starts("r.̲* +", "```peeper\n.\n```\n\n---\n\n Reaches into");
     // A literal shows the type its check gave it, the type its place
     // expects or its own, though its value does not fit; an array
     // length, which is not checked as a value, its kind. Neither is declared anywhere, and the place after
     // one is not a name.
     let number = |ty: &str| format!("```peeper\n{ty}\n```\n\n---\n\n A number literal.\n");
-    starts(22, 18, &number("u8"));
-    starts(24, 20, &number("f32"));
-    assert_eq!(hover(25, 18), doc("-", UnaryOp::Negate.doc()));
-    starts(25, 20, &number("i8"));
-    starts(26, 13, "```peeper\n&str\n```\n\n---\n\n A string literal");
+    starts("SMALL: u8 = 2̲00", &number("u8"));
+    starts("f32 = 2̲", &number("f32"));
+    assert_eq!(hover("i8 = -̲128"), doc("-", UnaryOp::Negate.doc()));
+    starts("i8 = -12̲8", &number("i8"));
     starts(
-        26,
-        19,
+        "(\"h̲i\"",
+        "```peeper\n&str\n```\n\n---\n\n A string literal",
+    );
+    starts(
+        "c\"̲x\"",
         "```peeper\n&cstr\n```\n\n---\n\n A c string literal",
     );
-    starts(27, 18, &number("u8"));
-    starts(28, 15, &number("u8"));
-    starts(19, 13, &number("number"));
+    starts("u8 = 3̲00", &number("u8"));
+    starts("n * 3̲", &number("u8"));
+    starts("s = [2̲]i32", &number("number"));
     assert_eq!(
-        ask("textDocument/definition", 28, 15),
+        ask("textDocument/definition", "n * 3̲"),
         serde_json::Value::Null
     );
-    assert_eq!(ask("textDocument/hover", 28, 16), serde_json::Value::Null);
+    assert_eq!(ask("textDocument/hover", "n * 3;̲"), serde_json::Value::Null);
     // A declaration shows its attributes.
-    starts(32, 3, "```peeper\n#[extern(\"cap\")]\nfn cap() -> u8");
+    starts(
+        "fn c̲ap",
+        "```peeper\n#[extern(\"cap\")]\nfn cap() -> u8;\n```",
+    );
     // `range` is a built-in type, declared nowhere.
     starts(
-        30,
-        13,
+        "r: ra̲nge",
         "```peeper\nrange\n```\n\n---\n\n The integers from a start",
     );
     assert_eq!(
-        ask("textDocument/definition", 30, 13),
+        ask("textDocument/definition", "r: ra̲nge"),
         serde_json::Value::Null
     );
 }
@@ -552,14 +581,11 @@ fn P::half(&self) -> i32 {
     server.apply_notification(open).unwrap();
     // Asks `method` on the `nth` `needle` of the text.
     let ask = |method: &str, needle: &str, nth: usize| {
-        let at = text.match_indices(needle).nth(nth).unwrap().0;
-        let line = text[..at].matches('\n').count();
-        let character = at - text[..at].rfind('\n').map_or(0, |newline| newline + 1);
-        let place = json!({
-            "textDocument": { "uri": uri },
-            "position": { "line": line, "character": character },
-        });
-        let request = Request::new(RequestId::from(1), method.to_string(), place);
+        let request = Request::new(
+            RequestId::from(1),
+            method.to_string(),
+            place(&uri, text, needle, nth),
+        );
         let Response { result, error, .. } = server.answer_request(request);
         assert!(error.is_none(), "{error:?}");
         result.unwrap()
@@ -580,9 +606,9 @@ fn P::half(&self) -> i32 {
     // A struct lists its functions, a private one too in its own module.
     assert_eq!(
         hover("P", 0),
-        "```peeper\nstruct P { x: i32 }\n\nfn P::Sum(&self) -> i32\nfn P::Grow(mut self) -> P\nfn P::half(&self) -> i32\n```\n\n---\n\n*in* `main` *· line 1*\n"
+        "```peeper\nstruct P { x: i32 }\n\nfn P::Sum(&self) -> i32 { /* ... */ }\nfn P::Grow(mut self) -> P { /* ... */ }\nfn P::half(&self) -> i32 { /* ... */ }\n```\n\n---\n\n*in* `main` *· line 1*\n"
     );
-    let declared = "```peeper\nfn P::Sum(&self) -> i32\n```";
+    let declared = "```peeper\nfn P::Sum(&self) -> i32 { /* ... */ }\n```";
     for nth in [1, 2] {
         assert!(
             hover("Sum", nth).starts_with(declared),
@@ -645,17 +671,10 @@ const NAME: &str = \"Ada\";
         json!({ "textDocument": { "uri": uri, "languageId": "peeper", "version": 1, "text": text } })
     };
     notify(&mut server, "textDocument/didOpen", open(&main_file, main));
-    // The place of the `nth` `needle` in `main`.
-    let place = |needle: &str, nth: usize| {
-        let at = main.match_indices(needle).nth(nth).unwrap().0;
-        let position = position(&SourceFile::new("main.peep", main), at);
-        json!({
-            "textDocument": { "uri": Url::from_file_path(&main_file).unwrap() },
-            "position": position,
-        })
-    };
+    let main_uri = Url::from_file_path(&main_file).unwrap();
     let ask = |server: &Server, method: &str, needle: &str, nth: usize| {
-        let request = Request::new(RequestId::from(1), method.to_string(), place(needle, nth));
+        let params = place(&main_uri, main, needle, nth);
+        let request = Request::new(RequestId::from(1), method.to_string(), params);
         let Response { result, error, .. } = server.answer_request(request);
         assert!(error.is_none(), "{error:?}");
         result.unwrap()
@@ -700,7 +719,9 @@ const NAME: &str = \"Ada\";
     );
     assert_eq!(
         hover(&server, "main", 0),
-        json!("```peeper\nfn main(count: i64)\n```\n\n---\n\n*in* `app:main` *· line 2*\n")
+        json!(
+            "```peeper\nfn main(count: i64) { /* ... */ }\n```\n\n---\n\n*in* `app:main` *· line 2*\n"
+        )
     );
     assert_eq!(
         declared(&server, "main", 0),
@@ -709,7 +730,7 @@ const NAME: &str = \"Ada\";
     assert_eq!(
         hover(&server, "Add", 0),
         json!(
-            "```peeper\nfn Add(a: i32, b: i32) -> i32\n```\n\n---\n\n*in* `app:utils` *· line 1*\n"
+            "```peeper\nfn Add(a: i32, b: i32) -> i32 { /* ... */ }\n```\n\n---\n\n*in* `app:utils` *· line 1*\n"
         )
     );
     assert_eq!(
@@ -723,7 +744,7 @@ const NAME: &str = \"Ada\";
     assert_eq!(
         hover(&server, "Spot", 0),
         json!(
-            "```peeper\nstruct Spot { x: i32 }\n\nfn Spot::Get(&self) -> i32\n```\n\n---\n\n*in* `app:utils` *· line 8*\n"
+            "```peeper\nstruct Spot { x: i32 }\n\nfn Spot::Get(&self) -> i32 { /* ... */ }\n```\n\n---\n\n*in* `app:utils` *· line 8*\n"
         )
     );
     assert_eq!(
@@ -754,7 +775,9 @@ const NAME: &str = \"Ada\";
     // A name in a module constant's value, outside any body.
     assert_eq!(
         hover(&server, "Twice", 0),
-        json!("```peeper\nfn Twice(n: i32) -> i32\n```\n\n---\n\n*in* `app:utils` *· line 5*\n")
+        json!(
+            "```peeper\nfn Twice(n: i32) -> i32 { /* ... */ }\n```\n\n---\n\n*in* `app:utils` *· line 5*\n"
+        )
     );
     let i64_hover = "```peeper\ni64\n```\n\n---\n\nA signed 64-bit integer: from `-9223372036854775808` to `9223372036854775807`.\n";
     assert_eq!(hover(&server, "i64", 0), json!(i64_hover));

@@ -1,0 +1,8 @@
+const Limit: i32 = 3;
+
+struct Holder {
+    first: Missing, //~ error[T0002]: unknown type `Missing`
+    second: Limit, //~ error[T0021]: `Limit` is a value, not a type
+}
+
+fn main() {}

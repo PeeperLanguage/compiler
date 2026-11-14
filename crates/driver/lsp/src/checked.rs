@@ -1,6 +1,7 @@
 //! What the last check found, kept for the next one and for requests: the
 //! compile results, and each module's facts by name.
 
+use features::Peeper;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::path::Path;
@@ -8,9 +9,9 @@ use std::path::PathBuf;
 
 use lsp_types::CodeAction;
 use model::ModuleId;
-use model::constant::Constant;
-use model::constant::value_text;
+use model::semantic_types::Constant;
 use model::semantic_types::Types;
+use model::semantic_types::value_text;
 use model::thir;
 use model::thir::FactKind;
 use model::thir::Local;
@@ -27,7 +28,7 @@ pub(crate) struct Checked {
     /// The program as last compiled, and the facts of each of its modules'
     /// text and the names of its constants, by file: what definition and
     /// hover read.
-    pub(crate) program: Option<model::program::Program>,
+    pub(crate) program: Option<model::program::Program<Peeper>>,
     pub(crate) facts: HashMap<PathBuf, Vec<CachedFact>>,
     pub(crate) fix_all: HashMap<PathBuf, CodeAction>, // each file's sure fixes, as of the last check
 }
@@ -36,10 +37,10 @@ impl Checked {
     /// keeps the facts of each module's text and the names of its
     /// constants: a module the compile reused gave no facts, and the facts
     /// found before still fit it; a module checked again gets its new facts.
-    pub(crate) fn recompile(&mut self, program: &model::program::Program) {
+    pub(crate) fn recompile(&mut self, program: &model::program::Program<Peeper>) {
         let mut found: HashMap<ModuleId, Vec<CachedFact>> = HashMap::new();
         let previous = std::mem::take(&mut self.results);
-        let cache_facts = |output: compile::Output| match output {
+        let mut cache_facts = |output: compile::Output| match output {
             compile::Output::Function(compile::CheckedFunction {
                 module,
                 thir,
@@ -82,7 +83,16 @@ impl Checked {
         // shortcut: the editor checks for the host, so a `usize` constant that
         // fits it but not a `-target i686-linux` build is reported only by that
         // build; check for a project's target when a project can name one.
-        self.results = compile::run(program, host(), previous, false, true, cache_facts);
+        self.results = compile::run(
+            program,
+            host(),
+            previous,
+            compile::Options {
+                record_facts: true,
+                ..compile::Options::default()
+            },
+            &mut cache_facts,
+        );
         let reused: HashSet<&Path> = self
             .results
             .reused()
@@ -132,7 +142,7 @@ impl CachedFact {
     /// `fact`, about the text of a module of `program`, whose types are of
     /// `types`; a local's name comes with the `body` it belongs to.
     pub(crate) fn new(
-        program: &model::program::Program,
+        program: &model::program::Program<Peeper>,
         fact: &thir::Fact,
         body: Option<&thir::Body>,
         types: &Types,
@@ -188,7 +198,7 @@ pub(crate) struct ConstantText {
 impl ConstantText {
     /// `constant`, of `program`, whose type is in `types`.
     pub(crate) fn new(
-        program: &model::program::Program,
+        program: &model::program::Program<Peeper>,
         constant: &Constant,
         types: &Types,
     ) -> ConstantText {

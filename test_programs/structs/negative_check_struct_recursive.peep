@@ -1,0 +1,23 @@
+// A struct that holds itself by value, directly, through another struct or
+// through an alias, would have no finite size.
+struct Node { //~ error[T0013]: `Node` holds itself
+    value: i32,
+    next: Node, //~ label: `Node` holds `Node`, closing the cycle
+}
+
+struct Left { //~ error[T0013]: `Left` holds itself
+    right: Right, //~ label: `Left` holds `Right`
+}
+
+struct Right {
+    left: Left, //~ label: `Right` holds `Left`, closing the cycle
+}
+
+type Link = Chain; //~ error[T0013]: `Link` holds itself
+//~ label: `Link` is an alias of `Chain`
+
+struct Chain {
+    next: Link, //~ label: `Chain` holds `Link`, closing the cycle
+}
+
+fn main() {}

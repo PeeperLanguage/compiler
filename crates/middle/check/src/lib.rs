@@ -2,10 +2,11 @@
 //! the value of each constant, built into THIR in one walk per body
 //! (docs/ir-design.md). It starts with each module's scope.
 
-mod builder;
+pub mod builder;
 pub mod builtin;
 pub mod declaration;
 mod expression;
+pub mod fold;
 mod function;
 pub mod scope;
 mod statement;
@@ -16,68 +17,114 @@ use std::cell::RefCell;
 use std::sync::Arc;
 
 use arena::Id;
+use builder::ThirBuilder;
 use diagnostics::Code;
 use diagnostics::Diagnostic;
 use diagnostics::fix::Fix;
 use function::Built;
 use function::function_declaration;
+use lower::ProgramDebugTypes;
+use model::ConstArguments;
 use model::DefId;
 use model::FunctionCopy;
 use model::ModuleId;
-use model::ast;
-use model::constant::Constant;
 use model::machine::Machine;
 use model::semantic_types::ConstArgument;
-use model::semantic_types::ConstArguments;
+use model::semantic_types::Constant;
 use model::semantic_types::ImplementationId;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
 use model::semantic_types::Types;
+use model::thir;
 use model::thir::Fact;
 use model::thir::FactKind;
 use model::thir::Symbol;
 use rustc_hash::FxHashMap;
 use scope::Scope;
 use source::Span;
+use syntax::ast;
+use syntax::ast::Language;
+
+/// What the checker asks of a language: how each feature's nodes are
+/// checked (docs/feature-front.md, section 7).
+pub trait Checked: Language {
+    /// The feature expression `expr`, written at `span`, where a value of
+    /// the type `expected` is wanted, if one is.
+    fn check_expr(
+        builder: &mut ThirBuilder<'_, '_, Self>,
+        expr: Self::Expr,
+        span: Span,
+        expected: Option<TypeId>,
+    ) -> thir::Expr;
+
+    /// The feature statement `stmt`, written at `span`; `None` when it
+    /// leaves no statement, after an error.
+    fn check_stmt(
+        builder: &mut ThirBuilder<'_, '_, Self>,
+        stmt: Self::Stmt,
+        span: Span,
+    ) -> Option<thir::Stmt>;
+
+    /// The type the feature type `ty`, written at `span`, names.
+    fn resolve_type(checker: &mut Checker<'_, Self>, ty: Self::Type, span: Span) -> TypeId;
+
+    /// The type the module's type declaration `definition`, written
+    /// `written`, declares with the feature type `ty`.
+    fn declare_type(
+        checker: &mut Checker<'_, Self>,
+        definition: DefId,
+        written: ast::TypeDecl<Self>,
+        ty: Self::Type,
+    ) -> TypeId;
+}
 
 /// Checks a program's declarations. Each module-scope declaration (`DefId`)
 /// is checked once, the first time anything asks for it, and its result is
 /// kept in the table of its category: types, functions or constants. A body's
 /// own names (`Symbol::Local`) are checked in place with the body.
-pub struct Checker<'p> {
-    pub modules: &'p [model::program::Module], // in the program's order
+pub struct Checker<'p, L: Language> {
+    pub modules: &'p [model::program::Module<L>], // in the program's order
     /// What checking each module found so far, by `ModuleId`.
     pub module_checks: Vec<ModuleChecks<'p>>,
     pub types: Types, // the program's types, built-in and declared
-    /// Each struct and interface pair found to implement (`implementation`),
-    /// so its methods are looked up once.
-    implementations: FxHashMap<(TypeId, TypeId), ImplementationId>,
+    /// The debug type of each type the program's lowered bodies name so far
+    /// (`lower::lower`); only a backend reads them.
+    pub debug_types: ProgramDebugTypes,
     /// The machine the program is for: the width of `isize` and `usize` is
     /// its `pointer_bits`, and a value may take its `largest_object` bytes.
     pub target: &'static Machine,
+    internals: CheckerInternals,
+}
+
+/// What checking keeps track of on its way, which no declaration of the
+/// program states (`Checker::internals`).
+struct CheckerInternals {
+    /// Each struct and interface pair found to implement (`implementation`),
+    /// so its methods are looked up once.
+    known_implementations: FxHashMap<(TypeId, TypeId), ImplementationId>,
     /// Whether the facts found are recorded (`ModuleChecks::facts`), as for
     /// an editor.
-    record_facts: bool,
+    records_editor_facts: bool,
     /// The declarations being checked, outermost first: the innermost's
     /// module is the module being checked (`current_module`). One asked for
     /// again while it is here depends on itself.
-    checking: Vec<Checking>,
+    declarations_being_checked: Vec<Checking>,
     /// How far the body of each function, or each copy of one, is built
     /// (`build_function`).
-    bodies: FxHashMap<FunctionCopy, Built>,
+    built_bodies: FxHashMap<FunctionCopy, Built>,
     /// Each copy of a function with `const T: type` parameters made so far
     /// (`copy_type`).
-    copies: FxHashMap<FunctionCopy, Copied>,
+    function_copies: FxHashMap<FunctionCopy, Copied>,
     /// The copies made whose bodies the compile has not built yet, in the
     /// order made; it takes them (`next_copy`).
-    unbuilt_copies: Vec<FunctionCopy>,
+    copies_to_build: Vec<FunctionCopy>,
     /// Whether copies nested too deep (`COPY_DEPTH_LIMIT`): then no copy's
     /// body is built any more, as a function that makes two copies inside
     /// each would make twice as many at each depth.
-    copies_stopped: bool,
+    copies_too_deep: bool,
 }
 
-/// A copy of a function with `const T: type` parameters (`Checker::copies`).
+/// A copy of a function with `const T: type` parameters (`CheckerInternals::function_copies`).
 struct Copied {
     signature: TypeId, // its function type, invalid when it has an error
     /// The copies it is made inside, each in the body of the one before,
@@ -97,7 +144,7 @@ struct Copied {
 /// copies without end.
 const COPY_DEPTH_LIMIT: u32 = 64;
 
-/// A declaration being checked (`Checker::checking`).
+/// A declaration being checked (`CheckerInternals::declarations_being_checked`).
 struct Checking {
     definition: DefId,
     /// What its `const` parameters are given, when it is a function that
@@ -158,19 +205,19 @@ pub struct ModuleChecks<'p> {
 /// Where the check of one declaration is.
 #[derive(Clone, Debug)]
 pub enum State<T> {
-    NotStarted, // or being checked: then it is in `Checker::checking`
+    NotStarted, // or being checked: then it is in `CheckerInternals::declarations_being_checked`
     Done(T),
 }
 
-impl<'p> Checker<'p> {
+impl<'p, L: Checked> Checker<'p, L> {
     /// Nothing checked yet of `modules` but their scopes, whose errors are
     /// each module's first diagnostics, for `target`.
     /// Facts are recorded when `record_facts`, as for an editor.
     pub fn new(
-        modules: &'p [model::program::Module],
+        modules: &'p [model::program::Module<L>],
         target: &'static Machine,
         record_facts: bool,
-    ) -> Checker<'p> {
+    ) -> Checker<'p, L> {
         let module_checks = (0..modules.len())
             .map(|index| {
                 let mut diagnostics = Vec::new();
@@ -191,14 +238,17 @@ impl<'p> Checker<'p> {
             modules,
             module_checks,
             types: Types::new(target.pointer_bits),
-            implementations: FxHashMap::default(),
+            debug_types: ProgramDebugTypes::default(),
             target,
-            record_facts,
-            checking: Vec::new(),
-            bodies: FxHashMap::default(),
-            copies: FxHashMap::default(),
-            unbuilt_copies: Vec::new(),
-            copies_stopped: false,
+            internals: CheckerInternals {
+                known_implementations: FxHashMap::default(),
+                records_editor_facts: record_facts,
+                declarations_being_checked: Vec::new(),
+                built_bodies: FxHashMap::default(),
+                function_copies: FxHashMap::default(),
+                copies_to_build: Vec::new(),
+                copies_too_deep: false,
+            },
         }
     }
 
@@ -272,7 +322,7 @@ impl<'p> Checker<'p> {
         if let State::Done(result) = &table(&mut self.module_checks[module])[index] {
             return result.clone();
         }
-        let mut checking = self.checking.iter();
+        let mut checking = self.internals.declarations_being_checked.iter();
         if let Some(start) = checking.position(|checking| checking.definition == definition) {
             self.report_cycle(start, used_at);
             return on_cycle;
@@ -296,11 +346,11 @@ impl<'p> Checker<'p> {
     }
 
     /// What `check` finds with `checking` the innermost declaration being
-    /// checked (`Checker::checking`).
+    /// checked (`CheckerInternals::declarations_being_checked`).
     fn checking_in<T>(&mut self, checking: Checking, check: impl FnOnce(&mut Self) -> T) -> T {
-        self.checking.push(checking);
+        self.internals.declarations_being_checked.push(checking);
         let result = check(self);
-        self.checking.pop();
+        self.internals.declarations_being_checked.pop();
         result
     }
 
@@ -310,20 +360,23 @@ impl<'p> Checker<'p> {
     /// never built.
     pub(crate) fn in_copy(&self) -> bool {
         let checking = self
-            .checking
+            .internals
+            .declarations_being_checked
             .last()
             .expect("a declaration is being checked");
-        self.copies.contains_key(&checking.copy())
+        self.internals
+            .function_copies
+            .contains_key(&checking.copy())
     }
 
     /// The type `ty` as a message names it (`Types::text`).
-    pub(crate) fn type_text(&self, ty: TypeId) -> String {
+    pub fn type_text(&self, ty: TypeId) -> String {
         model::program::type_text(self.modules, &self.types, ty)
     }
 
     /// Both types as a message names them, with each one's module when two
     /// different declarations in them read the same: `a::Point`, `[1]b::Point`.
-    pub(crate) fn type_texts(&self, first: TypeId, second: TypeId) -> (String, String) {
+    pub fn type_texts(&self, first: TypeId, second: TypeId) -> (String, String) {
         let name = |definition: DefId| model::program::declared_text(self.modules, definition);
         // `Types::text` needs a closure it can copy, so this one cannot own the list.
         let written = RefCell::new(Vec::new());
@@ -358,7 +411,7 @@ impl<'p> Checker<'p> {
     /// declaration names the next.
     fn report_cycle(&mut self, start: usize, closing: Span) {
         let modules = self.modules;
-        let cycle = &self.checking[start..];
+        let cycle = &self.internals.declarations_being_checked[start..];
         let first = cycle[0].definition;
         let (first_name, first_file) = model::program::declared_name(modules, first);
         let only_aliases = (cycle.iter()).all(|asker| {
@@ -421,7 +474,7 @@ impl<'p> Checker<'p> {
 
     /// The module being checked: the innermost declaration's (`checking`).
     pub(crate) fn current_module(&self) -> ModuleId {
-        let checking = self.checking.last();
+        let checking = self.internals.declarations_being_checked.last();
         checking
             .expect("a declaration is being checked")
             .definition
@@ -429,7 +482,7 @@ impl<'p> Checker<'p> {
     }
 
     /// The module being checked.
-    pub(crate) fn module(&self) -> &'p model::program::Module {
+    pub fn module(&self) -> &'p model::program::Module<L> {
         &self.modules[self.current_module().index()]
     }
 
@@ -439,14 +492,14 @@ impl<'p> Checker<'p> {
     }
 
     /// Adds `diagnostic` to what the module being checked reported.
-    fn report(&mut self, diagnostic: Diagnostic) {
+    pub fn report(&mut self, diagnostic: Diagnostic) {
         let module = self.current_module().index();
         self.module_checks[module].diagnostics.push(diagnostic);
     }
 
     /// Reports the error `message` at `span` of the module, and gives the type
     /// of an error already reported, so nothing more is reported about it.
-    fn error(&mut self, code: Code, message: impl Into<String>, span: Span) -> TypeId {
+    pub fn error(&mut self, code: Code, message: impl Into<String>, span: Span) -> TypeId {
         let diagnostic = Diagnostic::new(code, message).label(&self.module().ast.file, span, "");
         self.report(diagnostic);
         TypeId::INVALID
@@ -457,7 +510,12 @@ impl<'p> Checker<'p> {
     /// are not (`Checking::records_facts`) or it is a copy (`in_copy`),
     /// whose facts are of what it is given only.
     pub(crate) fn record(&mut self, span: Span, kind: FactKind) {
-        let Some(checking) = self.checking.last().filter(|_| self.record_facts) else {
+        let Some(checking) = self
+            .internals
+            .declarations_being_checked
+            .last()
+            .filter(|_| self.internals.records_editor_facts)
+        else {
             return;
         };
         if checking.records_facts && !self.in_copy() {
@@ -474,7 +532,8 @@ impl<'p> Checker<'p> {
     /// the prelude.
     pub(crate) fn resolve_global(&mut self, name: &str) -> Option<Symbol> {
         let checking = self
-            .checking
+            .internals
+            .declarations_being_checked
             .last()
             .expect("a declaration is being checked");
         if checking.arguments != ConstArguments::NONE {
@@ -512,11 +571,11 @@ impl<'p> Checker<'p> {
     /// `module::Type::name`. A path that names nothing or is not supported is
     /// reported. Another module's name is reachable only if it starts with an
     /// upper case letter.
-    pub(crate) fn resolve_path(&mut self, path: Id<ast::Type>) -> Option<Symbol> {
+    pub(crate) fn resolve_path(&mut self, path: Id<ast::Type<L>>) -> Option<Symbol> {
         let tree = &self.module().ast;
         let span = tree.types.span(path);
         // A `Type::Generic` alone, as `Box<T>`, is one segment.
-        let segments: Vec<Id<ast::Type>> = match tree.types[path] {
+        let segments: Vec<Id<ast::Type<L>>> = match tree.types[path] {
             ast::Type::Path(segments) => tree.children.lists.items(segments).collect(),
             _ => vec![path],
         };
@@ -544,13 +603,8 @@ impl<'p> Checker<'p> {
             let owner = match symbol {
                 Symbol::Type(definition) => {
                     let named = self.named_type(definition, head_span);
-                    match self.types[self.types.real(named)] {
-                        Type::Named(owner)
-                        | Type::Struct {
-                            definition: owner, ..
-                        } => Some(owner).filter(|&owner| scope::has_functions(self.modules, owner)),
-                        _ => None,
-                    }
+                    let owner = self.types[self.types.real(named)].definition();
+                    owner.filter(|&owner| scope::has_functions(self.modules, owner))
                 }
                 _ => None,
             };
@@ -676,7 +730,7 @@ impl<'p> Checker<'p> {
 
     /// Reports syntax the checker does not handle yet, such as `what` =
     /// "reference types".
-    fn not_supported(&mut self, span: Span, what: &str) -> TypeId {
+    pub fn not_supported(&mut self, span: Span, what: &str) -> TypeId {
         let message = format!("{what} are not supported yet");
         self.error(diagnostics::NOT_SUPPORTED_YET, message, span)
     }

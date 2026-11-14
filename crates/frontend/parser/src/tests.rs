@@ -1,6 +1,62 @@
+use std::convert::Infallible;
+
+use syntax::ast::Decl;
+use syntax::ast::Field;
+use syntax::ast::StringKind;
+use syntax::ast::Type;
+use syntax::ast::WrittenRange;
+use syntax::operators::Precedence;
+
 use super::*;
 
-pub(crate) fn parse_text(text: &str) -> (Tree, Vec<Diagnostic>) {
+/// The language the parser's tests are written in: the core, with no
+/// feature, since the `features` crate depends on this one.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum Bare {}
+
+impl Language for Bare {
+    type Expr = Infallible;
+    type Type = Infallible;
+    type Stmt = Infallible;
+
+    fn precedence(expr: &Infallible) -> Precedence {
+        match *expr {}
+    }
+
+    fn fields(ty: &Infallible) -> Option<List<Field<Bare>>> {
+        match *ty {}
+    }
+
+    fn methods(ty: &Infallible) -> Option<List<Decl<Bare>>> {
+        match *ty {}
+    }
+
+    fn pointee(ty: &Infallible) -> Option<Id<Type<Bare>>> {
+        match *ty {}
+    }
+
+    fn element(ty: &Infallible) -> Option<Id<Type<Bare>>> {
+        match *ty {}
+    }
+
+    fn string_kind(expr: &Infallible) -> Option<StringKind> {
+        match *expr {}
+    }
+
+    fn written_range(expr: &Infallible) -> Option<WrittenRange<Bare>> {
+        match *expr {}
+    }
+}
+
+static RULES: Rules<Bare> = Rules::core();
+
+impl Grammar for Bare {
+    fn rules() -> &'static Rules<Bare> {
+        &RULES
+    }
+}
+
+pub(crate) fn parse_text(text: &str) -> (Tree<Bare>, Vec<Diagnostic>) {
     parse(&Arc::new(SourceFile::new("t.peep", text)))
 }
 
@@ -44,7 +100,7 @@ fn add(a: i32, b: i32) -> i32 {
 
 fn main() {
     let x = add(1, (2 + 3)) == 7;
-    log("hi");
+    log(x);
     return;
 }
 "#;
@@ -94,7 +150,7 @@ fn parses_a_program() {
       expression statement
         call expression
           name reference log
-          string literal "hi"
+          name reference x
       return statement return;
 "#;
     assert!(messages(PROGRAM).is_empty());
@@ -116,18 +172,11 @@ fn recovers_after_a_missing_semicolon() {
 fn underscore_binds_nothing() {
     let text = "fn f(_: i32) {
     for _, v in xs {}
-    match x {
-        A::B with _ => {}
-        _ => {}
-    }
-    let a = [_]i32{1};
     let .{ b, _ } = s;
 }";
     assert_eq!(messages(text), Vec::<String>::new());
     let dump = dump_of(text);
-    for node in ["wildcard pattern", "rest pattern", "inferred length"] {
-        assert!(dump.contains(node), "no {node} in\n{dump}");
-    }
+    assert!(dump.contains("rest pattern"), "{dump}");
     assert!(!dump.contains("declared name _"), "{dump}");
     for text in [
         "fn f() { let _ = 1; }",
@@ -199,22 +248,12 @@ const BROKEN_INPUTS: &[&str] = &[
     "fn f() { a[; }",
     "fn f() { a[1..=]; }",
     "fn f() { a as ; }",
-    "fn f() { a is b; }",
-    "fn f() { a orelse ; }",
-    "fn f() { a |> b; }",
-    "fn f() { a |> b.c(); }",
-    "fn f() { .{ a = }; }",
-    "fn f() { .{ a: 1, b: 2 }; }",
     "fn f() { [_]i32{1, 2; }",
     "fn f() { [x]i32{}; }",
-    "fn f() { A::B with ; }",
     "fn f() { Box<T>::; }",
-    "fn f() { print(; }",
     "fn f() { &mut ; }",
     "fn f() { a < b > c; }",
-    "fn f() { a<b>.{}; }",
     "fn f() { -; }",
-    "fn f() { a orelse { return; }; }",
     "fn f() { if }",
     "fn f() { if a }",
     "fn f() { if a {} else }",
@@ -224,12 +263,6 @@ const BROKEN_INPUTS: &[&str] = &[
     "fn f() { for i, in x {} }",
     "fn f() { for a.b in x {} }",
     "fn f() { break l; }",
-    "fn f() { match }",
-    "fn f() { match x { }",
-    "fn f() { match x { A::B {} } }",
-    "fn f() { match x { A::B => {}, _ => {} } }",
-    "fn f() { match x { let } }",
-    "fn f() { match x { A::B with => {} } }",
     "fn f() { let .{ a = b, _, c } = v; }",
     "fn f() { let .{ } }",
     "fn f() { a = ; }",
@@ -244,18 +277,10 @@ const BROKEN_INPUTS: &[&str] = &[
     "const",
     "const a",
     "const a: = ;",
-    "struct",
-    "struct S {",
-    "struct S { a: }",
-    "enum E { A: }",
-    "iface I { fn",
-    "iface I { fn (",
     "type",
     "type A =",
     "type A<T",
-    "struct S {} struct",
     "fn f() { let a: i32; }",
-    "fn f() {\nstruct S {}",
     "/// doc\n#[a] let x = 1;",
 ];
 
@@ -418,56 +443,13 @@ fn missing_token_place() {
         errors[0].notes[0].fixes()[0].span.start as usize,
         text.find(';').unwrap()
     );
-    // A closer that comes later means what stands before it does not belong:
-    // that is reported once, and the list ends at its own closer.
-    let (tree, errors) = parse_text("fn f() { let p = Point.{ .x = 1, y = 2 }; }\nfn g() {}");
-    let got: Vec<_> = errors.iter().map(|e| e.message.as_str()).collect();
-    assert_eq!(got, ["expected `}`, found `.`"]);
-    assert_eq!(tree.top_level.len(), 2);
 }
 
 /// What the parser accepts and repairs between items: extra commas,
-/// trailing commas, empty statements and `??` are style, left to a lint; a
-/// `;` for a `,` in a `{ }` list is repaired with one error per list.
+/// trailing commas and empty statements are style, left to a lint.
 #[test]
 fn separators() {
-    for text in [
-        "fn f(a: i32,, b: i32,) { g(1,, 2,); ;; }",
-        "struct S { a: i32, b: i32, }",
-        "enum E { A,, B, }",
-        "fn f(a: ??i32) { let p = .{ a = 1,, }; }",
-    ] {
-        assert!(messages(text).is_empty(), "{text:?}");
-    }
-    for (text, want) in [
-        ("struct S { a: i32; b: i32 }", "struct S { a: i32, b: i32 }"),
-        (
-            "struct S { a: i32; b: i32; }",
-            "struct S { a: i32, b: i32 }",
-        ),
-        (
-            "fn f() { let p = .{ a = 1; b = 2 }; }",
-            "fn f() { let p = .{ a = 1, b = 2 }; }",
-        ),
-        (
-            "fn f() { let v = [2]i32{1; 2}; }",
-            "fn f() { let v = [2]i32{1, 2}; }",
-        ),
-    ] {
-        one_error(text, "expected `,` between items, found `;`", Some(want));
-    }
-    // A `;` after an unclosed literal ends the statement: the `}` is missing.
-    one_error(
-        "fn f() {\n    let v = [3]i32{4, 5, 6;\n    return;\n}",
-        "expected `}`, found `;`",
-        None,
-    );
-    // Only before `]` may a range leave out its end.
-    one_error(
-        "fn f() { for i in 0.. { } }",
-        "expected expression, found `{`",
-        None,
-    );
+    assert!(messages("fn f(a: i32,, b: i32,) { g(1,, 2,); ;; }").is_empty());
 }
 
 /// Nesting far deeper than the thread's stack would hold still parses:
@@ -480,11 +462,6 @@ fn deep_nesting_does_not_overflow() {
         format!("fn f() {}{}", "{".repeat(n), "}".repeat(n)),
         format!("fn f() {{ if a {{ }}{} }}", " else if a { }".repeat(n)),
         format!("fn f(a: {}i32) {{}}", "& ".repeat(n)),
-        format!(
-            "fn f() {{ match x {{ {}c => {{}} }} }}",
-            "A::B with ".repeat(n)
-        ),
-        format!("fn f() {{ let a = b{}", " orelse { c".repeat(n)),
     ] {
         let (tree, _) = parse_text(&text);
         assert_eq!(tree.top_level.len(), 1);

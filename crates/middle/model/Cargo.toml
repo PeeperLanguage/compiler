@@ -1,6 +1,6 @@
 [package]
 name = "model"
-description = "The program's data: syntax tree, THIR, MIR, types, constant values and operators"
+description = "The program's data after parsing: THIR, MIR, types, constant values and the shared ids"
 version.workspace = true
 edition.workspace = true
 license-file.workspace = true
@@ -11,8 +11,10 @@ arena.workspace = true
 bigint.workspace = true
 diagnostics.workspace = true
 literal.workspace = true
+runtime_abi.workspace = true
 rustc-hash.workspace = true
 source.workspace = true
+syntax.workspace = true
 
 [lints]
 workspace = true

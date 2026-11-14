@@ -1,0 +1,145 @@
+fn make:
+  bb0:
+    store i32 n.0, arg0
+    store i32 step.1, arg1
+    %2 = load i32 n.0
+    %3 = load i32 n.0
+    %4 = add i32 %3, 6
+    %5 = load i32 step.1
+    %6 = eq i32 %5, 0
+    check %6, "range step is zero"
+    %8 = sle i32 %2, %4
+    branch %8, bb1, bb2
+  bb1:
+    %9 = sub i32 %4, %2
+    store i32 .2, %9
+    store i32 .3, %5
+    jump bb3
+  bb2:
+    %12 = sub i32 %2, %4
+    store i32 .2, %12
+    %14 = sub i32 0, %5
+    store i32 .3, %14
+    jump bb3
+  bb3:
+    %16 = load i32 .2
+    %17 = load i32 .3
+    %18 = udiv i32 %16, %5
+    %19 = zext i32 %18 to i64
+    %20 = urem i32 %16, %5
+    %21 = ne i32 %20, 0
+    %22 = or i8 0, %21
+    %23 = zext i8 %22 to i64
+    %24 = add i64 %19, %23
+    %25 = ult i64 3, %24
+    %26 = or i8 0, %25
+    %27 = sub i64 3, %24
+    %28 = ne i64 %27, 0
+    %29 = or i8 %26, %28
+    check %29, "array literal needs exactly 4 values"
+    store i32 result[+0], 9
+    store i32 .4, %2
+    store i64 .5, 0
+    jump bb4
+  bb4:
+    %34 = load i64 .5
+    %35 = ult i64 %34, %24
+    branch %35, bb5, bb6
+  bb5:
+    %36 = load i32 .4
+    store i32 result[+4, %34 * 4 of 3], %36
+    %38 = add i32 %36, %17
+    store i32 .4, %38
+    %40 = add i64 %34, 1
+    store i64 .5, %40
+    jump bb4
+  bb6:
+    %42 = add i64 1, %24
+    dead .5
+    dead .4
+    dead .3
+    dead .2
+    dead step.1
+    dead n.0
+    return
+  bb7:
+    dead step.1
+    dead n.0
+    fall off at `}`
+fn join:
+  bb0:
+    copy 8 result[+0], pair.0
+    store i32 result[+8], 7
+    dead pair.0
+    return
+  bb1:
+    dead pair.0
+    fall off at `}`
+fn main:
+  bb0:
+    call make(1, 2) into 16 made.0
+    store i32 .2[+0], 5
+    store i32 .2[+4], 6
+    %3 = address 8 .2
+    call join(%3) into 12 joined.1
+    dead .2
+    %6 = load i32 made.0[0 * 4 of 4]
+    %7 = load i32 made.0[1 * 4 of 4]
+    %8 = load i32 made.0[2 * 4 of 4]
+    %9 = load i32 made.0[3 * 4 of 4]
+    %10 = load i32 joined.1[0 * 4 of 3]
+    %11 = load i32 joined.1[1 * 4 of 3]
+    %12 = load i32 joined.1[2 * 4 of 3]
+    %13 = sext i32 %6 to i64
+    store i64 .3, %13
+    %15 = address 8 .3
+    call peeper_rt_v2_print_int(1, 1, %15)
+    %17 = sext i32 %7 to i64
+    store i64 .4, %17
+    %19 = address 8 .4
+    call peeper_rt_v1_print_bytes(global 0, 1)
+    call peeper_rt_v2_print_int(1, 1, %19)
+    %22 = sext i32 %8 to i64
+    store i64 .5, %22
+    %24 = address 8 .5
+    call peeper_rt_v1_print_bytes(global 1, 1)
+    call peeper_rt_v2_print_int(1, 1, %24)
+    %27 = sext i32 %9 to i64
+    store i64 .6, %27
+    %29 = address 8 .6
+    call peeper_rt_v1_print_bytes(global 2, 1)
+    call peeper_rt_v2_print_int(1, 1, %29)
+    %32 = sext i32 %10 to i64
+    store i64 .7, %32
+    %34 = address 8 .7
+    call peeper_rt_v1_print_bytes(global 3, 1)
+    call peeper_rt_v2_print_int(1, 1, %34)
+    %37 = sext i32 %11 to i64
+    store i64 .8, %37
+    %39 = address 8 .8
+    call peeper_rt_v1_print_bytes(global 4, 1)
+    call peeper_rt_v2_print_int(1, 1, %39)
+    %42 = sext i32 %12 to i64
+    store i64 .9, %42
+    %44 = address 8 .9
+    call peeper_rt_v1_print_bytes(global 5, 1)
+    call peeper_rt_v2_print_int(1, 1, %44)
+    call peeper_rt_v1_print_bytes(global 6, 1)
+    call peeper_rt_v1_flush()
+    dead .9
+    dead .8
+    dead .7
+    dead .6
+    dead .5
+    dead .4
+    dead .3
+    dead joined.1
+    dead made.0
+    fall off at `}`
+  global 0 = " "
+  global 1 = " "
+  global 2 = " "
+  global 3 = " "
+  global 4 = " "
+  global 5 = " "
+  global 6 = "\n"

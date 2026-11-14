@@ -1,0 +1,9 @@
+fn main() {
+    let small: u8 = 300; //~ error[L0003]: literal `300` does not fit `u8`
+    let wide: i64 = 5;
+    let mixed = 1i32 + wide; //~ error[T0001]: mismatched types: expected `i32`, found `i64`
+    let ratio = 10 / 0; //~ error[T0004]: division by zero
+    let shifted = 1u8 << 8; //~ error[T0004]: a shift count must be from 0 to 7
+    let lowered = 1u16 >> 16; //~ error[T0004]: a shift count must be from 0 to 15
+    let negative = 1i64 << (-1 as i5); //~ error[T0004]: a shift count must be from 0 to 63
+}

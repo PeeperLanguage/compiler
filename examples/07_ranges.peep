@@ -43,5 +43,8 @@ fn main() {
     for v in window.values { print("", v); }
     println(" tag", window.tag);
 
-    println("spread:", [5]i32{(0..4)..., 100});   // a range's values in an array
+    let spread = [5]i32{(0..4)..., 100};    // a range's values in an array
+    print("spread:");
+    for v in spread { print("", v); }
+    println();
 }

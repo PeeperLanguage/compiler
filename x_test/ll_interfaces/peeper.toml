@@ -1,7 +1,0 @@
-name = "ll_interfaces"
-build = "program"
-
-[test]
-mode = "ll"
-outcome = "success"
-release = true

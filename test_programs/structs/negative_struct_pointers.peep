@@ -1,0 +1,101 @@
+//@ run
+//@ exit-code: 1
+
+// A raw pointer's target need not be complete, but a struct still cannot
+// hold itself by value, whatever else it points to, and nothing goes through
+// a raw pointer to a struct holding a reference, wherever that is declared.
+struct Outer { //~ error[T0013]: `Outer` holds itself
+    back: *Outer,
+    inner: Inner,
+}
+
+struct Inner {
+    outer: Outer,
+}
+
+struct First { //~ error[T0013]: `First` holds itself
+    pointer: *Second,
+    second: Second,
+}
+
+struct Second {
+    first: First,
+}
+
+// An array's element is complete, and so is what an alias names.
+struct Group { //~ error[T0013]: `Group` holds itself
+    members: *[2]Group,
+}
+
+type Same = Aliased; //~ error[T0013]: `Same` holds itself
+
+struct Aliased {
+    next: *Same,
+}
+
+// A struct with an error is reported once, and what points to it builds
+// nothing that needs it: `Keep` has no error of its own.
+struct Holder {
+    broken: *Broken,
+}
+
+struct Broken {
+    holder: Holder,
+    missing: Missing, //~ error[T0002]: unknown type `Missing`
+}
+
+fn Read(broken: *Broken) -> i32 {
+    return broken.*.value;
+}
+
+fn Copy(broken: *Broken) {
+    let copy = broken.*;
+}
+
+fn Keep(holder: Holder) -> Holder {
+    return holder;
+}
+
+fn ReadHeld(holder: Holder) {
+    let copy = holder.broken.*;
+}
+
+fn main() {
+    let holder = Holder.{ broken = none };
+    Keep(holder);
+}
+
+// No loan would follow what is read through these.
+fn ReadBefore(pair: *Pair) {
+    let value = pair.*.value; //~ error[T0043]: raw pointers to structs holding references are not supported yet
+}
+
+struct View {
+    pair: *Pair,
+}
+
+struct Pair {
+    value: &i32,
+}
+
+fn ReadAfter(pair: *Pair) {
+    let value = pair.*.value; //~ error[T0043]: raw pointers to structs holding references are not supported yet
+}
+
+fn ReadField(view: View) {
+    let value = view.pair.*.value; //~ error[T0043]: raw pointers to structs holding references are not supported yet
+}
+
+struct Selfish {
+    value: &i32,
+    next: *Selfish,
+}
+
+fn ReadSelfish(selfish: *Selfish) {
+    let next = selfish.*.next; //~ error[T0043]: raw pointers to structs holding references are not supported yet
+}
+
+fn Address(pair: Pair) {
+    let mut held = pair;
+    let pointer = @held; //~ error[T0043]: raw pointers to structs holding references are not supported yet
+}

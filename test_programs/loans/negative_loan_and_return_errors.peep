@@ -1,0 +1,39 @@
+//@ library
+
+// A loan broken and also returned: each mistake is its own error.
+fn SameBlock(a: &i32) -> &i32 {
+    let mut x = 1;
+    let r = &x;
+    x = 2; //~ error[T0037]: `x` is changed while a reference to it is still in use
+    return r; //~ error[T0036]: returns a reference into `x`, which is gone once the function returns
+}
+
+fn LaterBlock(a: &i32, c: bool) -> &i32 {
+    let mut x = 1;
+    let r = &x;
+    x = 2; //~ error[T0037]: `x` is changed while a reference to it is still in use
+    if c {
+        return r; //~ error[T0036]: returns a reference into `x`, which is gone once the function returns
+    }
+    return a;
+}
+
+// A local returned by reference ends at that `return`: one error, not
+// "gone" as well.
+fn ReturnsLocal(a: &i32) -> &i32 {
+    let x = 1;
+    return &x; //~ error[T0036]: returns a reference into `x`, which is gone once the function returns
+}
+
+// The same when the local ends in an earlier block than the `return`.
+fn EndsBeforeReturn(a: &i32, c: bool) -> &i32 {
+    let r: &i32;
+    {
+        let x = 1;
+        r = &x;
+    }
+    if c {
+        return r; //~ error[T0036]: returns a reference into `x`, which is gone once the function returns
+    }
+    return a;
+}

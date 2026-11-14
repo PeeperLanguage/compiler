@@ -13,7 +13,7 @@ token.workspace = true
 lexer.workspace = true
 literal.workspace = true
 arena.workspace = true
-model.workspace = true
+syntax.workspace = true
 
 [lints]
 workspace = true

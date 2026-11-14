@@ -11,16 +11,18 @@ The codebase's fixed terms: use these words, with these meanings.
 | base | `bigint` | integer arithmetic of any width, like LLVM's APInt |
 | base | `diagnostics` | `Diagnostic`, `Code`s, the printer, `nearest_name` |
 | base | `literal` | literal text rules (`literal::numeric`) |
-| base | `runtime_abi` | what a running program does as seen from outside, shared by `llvm` and `eval` |
-| frontend | `token`, `lexer`, `parser` | tokens, lexing, parsing (tree in `model::ast`) |
+| base | `runtime_abi` | what a running program does as seen from outside: messages, and the runtime functions the backend calls (`Runtime`), which the MIR names; shared by `model`, `lower`, `llvm` and `eval` |
+| core | `syntax` | the syntax tree (`ast`, generic over `L: Language`) and operator kinds (`operators`) |
+| features | `features` | Peeper: the list of its features (`lib.rs`) and one file per feature (`structs.rs`, `arrays.rs`, ...): its nodes, parse rows, and checking into the core's types and values |
+| frontend | `token`, `lexer`, `parser` | tokens, lexing, parsing (tree in `syntax::ast`) |
 | frontend | `project` | loading, import resolution, module graph, `peeper.toml` (`name`, `build = "program"` or `"lib"`) |
-| middle | `model` | data only: `ast`, `thir`, `mir`, `semantic_types`, `constant`, `machine`, ids, operators |
-| middle | `check` | `Checker`: scopes, names, types, THIR, signatures, folding; builds bodies |
+| middle | `model` | data only: `thir`, `mir`, `semantic_types`, `constant`, `machine`, `program`, `layout`, ids |
+| middle | `check` | `Checker`: scopes, names, types, THIR, signatures, folding (`fold`); builds bodies |
 | middle | `lower` | THIR to MIR |
-| middle | `flow` | path checks over MIR, and `cleanup` |
-| middle | `eval` | operators on constants; the MIR interpreter |
+| middle | `flow` | path checks over MIR |
+| middle | `eval` | what each MIR operation gives (`operations`); the MIR interpreter |
 | backend | `llvm` | MIR to LLVM text; clang and the linker; the runtime build |
-| driver | `compile` | one compile: module walk, reuse, `Output` |
+| driver | `compile` | one compile: module walk, reuse, `Output`; the core's phases run on `features::Peeper` |
 | driver | `peeper`, `lsp`, `browser` | command line, language server, web build |
 | tools | `toolchain` | toolchain packs |
 
@@ -54,21 +56,26 @@ return (origins), T0043 not supported yet, T0044 evaluation failed.
 
 ## MIR terms (`docs/ir-design.md` MIR)
 
-Variable slot, instruction (`load`, `length`, `store`, `move`, `borrow`,
-`address`, binary, unary, `convert`, `call`, `phi`, `aggregate`, `field`,
-`array parts`, `check`, `print`, `scope end`), terminator (`goto`, `branch`,
-`return`, `panic`, `fall off`), `Place` = variable + `Projection` steps
-(field, dereference, index, slice elements, subslice), operand = constant,
-argument or earlier value. Holder: a reference or slice in a variable or
-value, per field. Loan: one `borrow`, then one parameter loan per parameter.
+Slot (a variable or hidden temporary: size, alignment, holders),
+instruction (`load`, `store`, `copy`, integer, float, `compare`, `convert`,
+pointer cast, `address`, `call`, `check`, `borrow`; `moved` and `dead` mark
+points for the path checks and run no code), terminator (`jump`, `branch`,
+`return`, `panic`, `fall off`), `Place` = root (slot or pointer) + steps
+(offset, `*` through a pointer, index of size and count), operand =
+constant, parameter, global or earlier value; globals are bytes or a
+function table. No `phi`: `&&` and `||` use a hidden `i8` slot. Holder: a
+pointer in a slot that may hold loans (a reference, slice or interface, per
+field). Loan: one `borrow`, then one parameter loan per parameter.
 Two-phase: a `&mut` used once, as a call argument, is reserved until the
 call.
 
-## Fixtures (`x_test/*/peeper.toml`)
+## Test programs (`test_programs/<subject>/`)
 
-Modes: `check` (95), `run` (90), `mir` (19, with `expected.mir`), `ll` (13,
-with `expected.ll`). `negative_*` fixtures expect errors; `warn_*` warnings;
-`run_i686_*` build for `i686-linux`. `PEEPER_BLESS=1` rewrites expected files.
+One `.peep` file (or folder) each; `//@` lines say the mode (`run`,
+`dump: mir`, `dump: ll`, else check), `library`, `target`, `release`,
+`exit-code`; `//~` marks each diagnostic on its line. Beside it: `.out`,
+`.err`, `.mir`, `.ll`, which `PEEPER_BLESS=1` rewrites. The
+`test_programs` crate's documentation is the reference.
 
 ## Words the code avoids (`RULES.md` §5)
 

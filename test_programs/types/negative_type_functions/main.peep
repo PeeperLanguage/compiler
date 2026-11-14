@@ -1,0 +1,49 @@
+// What a type's function may not be, and calls that name none.
+import "negative_type_functions:geometry" as g;
+
+type P = g::Point;
+const Limit: i32 = 1;
+struct Local { x: i32 }
+enum Status { Ready } //~ error[T0043]: enum declarations are not supported yet
+
+// Only the module that declares a struct declares its functions.
+fn P::Extra() {} //~ error[P0005]: `P` is not a struct declared in this module
+//~ note: a type's functions are declared in the module of the type
+fn Limit::f() {} //~ error[P0005]: `Limit` is not a struct declared in this module
+fn Missing::f() {} //~ error[P0005]: `Missing` is not a struct declared in this module
+fn Local::f() {}
+fn Local::f() {} //~ error[T0003]: `f` is already declared in this type
+
+// `self` is the first parameter of a type's function.
+fn plain(&self) {} //~ error[P0005]: only a type's function takes `self`: `fn Point::name(&self)`
+fn Local::late(step: i32, &self) {} //~ error[P0005]: `self` must be the first parameter
+fn Missing::get(&self) -> i32 { //~ error[P0005]: `Missing` is not a struct declared in this module
+    return self.x;
+}
+fn Local::get(&self) -> i32 {
+    return self.x;
+}
+fn Local::set(&mut self, x: i32) {
+    self.x = x;
+}
+
+fn main() {
+    let a = g::Point::Nw(1, 2); //~ error[T0002]: unknown name `Nw` in type `Point`
+    //~ help: did you mean `New`?
+    let b = g::Point::make(1, 2); //~ error[M0004]: `make` is not exported from `Point`
+    let c = i32::f(); //~ error[T0004]: `i32` has no functions
+    let d = Limit::f(); //~ error[T0004]: `Limit` is not a module or a type
+    let e = Local::g(); //~ error[T0002]: unknown name `g` in type `Local`
+    // Only a struct has functions; an enum's variants are not supported yet.
+    let f = Status::Ready; //~ error[T0004]: `Status` has no functions
+    // `&self` takes a reference; the call does not borrow by itself.
+    let local = Local.{ x = 1 };
+    let g = Local::get(local); //~ error[T0001]: mismatched types: expected `&Local`, found `Local`
+    // A dot calls a function of the value's type that takes `self`.
+    let h = local.f(); //~ error[T0004]: `f` takes no `self`: call it as `Local::f(...)`
+    let i = g::Point::New(1, 2).make(1, 2); //~ error[M0004]: `make` is not exported from `Point`
+    let five = 5;
+    let j = five.get(); //~ error[T0004]: `i32` has no functions
+    let k = local.get(1); //~ error[T0006]: `local.get` takes 0 arguments, but 1 was given
+    local.set(2); //~ error[T0007]: cannot mutably borrow immutable `local`
+}

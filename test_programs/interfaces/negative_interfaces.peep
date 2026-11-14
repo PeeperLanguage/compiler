@@ -1,0 +1,53 @@
+// What an interface and its references refuse.
+iface Shape {
+    fn area(&self) -> f64,
+    fn grow(&mut self, by: f64),
+    fn parts(self) -> f64
+}
+
+iface Bad {
+    fn plain() -> i32, //~ error[P0005]: an interface method takes `self` first: `fn plain(&self)`
+    fn twice(&self),
+    fn twice(&self), //~ error[T0003]: `twice` is already declared in this interface
+    fn generic<T>(&self, value: T) //~ error[T0043]: generic functions are not supported yet
+}
+
+struct Square { side: f64 }
+fn Square::area(&self) -> f64 { return self.side * self.side; }
+fn Square::grow(&mut self, by: f64) { self.side = self.side + by; }
+fn Square::parts(self) -> f64 { return self.side; }
+
+struct NoGrow { side: f64 }
+fn NoGrow::area(&self) -> f64 { return self.side; }
+
+struct WrongArea { side: f64 }
+fn WrongArea::area(&self) -> i32 { return 1; }
+fn WrongArea::grow(&mut self, by: f64) {}
+fn WrongArea::parts(self) -> f64 { return 1.0; }
+
+fn show(s: &Shape) {
+    s.grow(1.0); //~ error[T0007]: cannot mutably borrow `s` through shared reference `s`
+    println(s.aera()); //~ error[T0002]: unknown name `aera` in interface `Shape`
+    s.parts(); //~ error[T0004]: `parts` takes `self` whole, so it cannot be called through `&Shape`
+}
+
+fn pointer(p: *Shape) -> f64 { return p.*.area(); } //~ error[T0043]: raw pointers to owned interfaces are not supported yet
+
+fn main() {
+    let sq = Square.{ side = 2.0 };
+    show(&NoGrow.{ side = 1.0 }); //~ error[T0001]: `NoGrow` does not implement `Shape`: it has no method `grow`
+    show(&WrongArea.{ side = 1.0 }); //~ error[T0001]: `WrongArea` does not implement `Shape`: its `area` is `fn(&WrongArea) -> i32`, but `Shape` needs `fn(&WrongArea) -> f64`
+    let m: &mut Shape = &sq; //~ error[T0001]: mismatched types: expected `&mut Shape`, found `&Square`
+    let x: &Shape = &5; //~ error[T0001]: mismatched types: expected `&Shape`, found `&i32`
+}
+
+// Declared twice: reported once, not again where `Square` becomes `&Again`.
+iface Again {
+    fn area(&self) -> f64,
+    fn area(&self, by: i32) -> f64 //~ error[T0003]: `area` is already declared in this interface
+}
+
+fn again(sq: &Square) -> &Again { return sq; }
+
+// A pair that does not implement is reported at each conversion.
+fn again_no_grow(n: &NoGrow) { show(n); } //~ error[T0001]: `NoGrow` does not implement `Shape`: it has no method `grow`

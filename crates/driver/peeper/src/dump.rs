@@ -2,6 +2,7 @@
 //! text, one file per module and kind, for reading what the compiler made of
 //! a program.
 
+use features::Peeper;
 use std::io::Write;
 use std::path::Path;
 
@@ -36,14 +37,14 @@ impl Dump {
 /// written once it has no errors. The LLVM text comes from the program's
 /// `llvm::Module`s, which the driver builds once for dumps and linking.
 pub struct Dumps<'p> {
-    program: &'p model::program::Program,
+    program: &'p model::program::Program<Peeper>,
     kinds: &'p [Dump],
     texts: Vec<Vec<String>>, // by module, then by kind; empty for `Ll`
 }
 
 impl<'p> Dumps<'p> {
     /// No text yet for any of the `kinds` of `program`'s modules.
-    pub fn new(program: &'p model::program::Program, kinds: &'p [Dump]) -> Dumps<'p> {
+    pub fn new(program: &'p model::program::Program<Peeper>, kinds: &'p [Dump]) -> Dumps<'p> {
         Dumps {
             program,
             kinds,
@@ -51,7 +52,6 @@ impl<'p> Dumps<'p> {
         }
     }
 
-    /// Whether the LLVM text is asked for.
     pub fn wants_ll(&self) -> bool {
         self.kinds.iter().any(|kind| matches!(kind, Dump::Ll))
     }
@@ -65,24 +65,20 @@ impl<'p> Dumps<'p> {
         mir: &mir::Body,
         types: &Types,
     ) {
-        let program = self.program;
-        let name = |definition: DefId| model::program::declared_path(&program.modules, definition);
+        let modules = &self.program.modules;
+        let name = |definition: DefId| model::program::declared_path(modules, definition);
+        let copy_name = |copy| model::program::copy_name(modules, types, copy);
         let module = function.definition.module.index();
-        let file = &program.modules[module].ast.file;
+        let file = &modules[module].ast.file;
         let texts = &mut self.texts[module];
         for (text, kind) in texts.iter_mut().zip(self.kinds) {
             let body = match kind {
                 Dump::Thir => thir.text(types, file, name),
-                Dump::Mir => mir.text(types, file, name),
+                Dump::Mir => mir.text(file, copy_name),
                 Dump::Ll => continue,
             };
             text.push_str("fn ");
-            let declared = |definition| model::program::declared_text(&program.modules, definition);
-            text.push_str(&types.copy_text(
-                name(function.definition),
-                function.arguments,
-                declared,
-            ));
+            text.push_str(&copy_name(function));
             text.push_str(":\n");
             text.push_str(&body);
         }

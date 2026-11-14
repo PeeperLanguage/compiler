@@ -19,10 +19,11 @@ const STACK_LIMIT: u64 = 8 << 20;
 /// Where the data starts, an address every target's pointers hold.
 const DATA_START: u64 = 1 << 30;
 /// A constant's run never reuses this memory, so it has room for all its
-/// steps can copy (a constant's `STEP_LIMIT` of `BYTES_PER_STEP`): a long
-/// loop that uses no address stops at its steps, if at all.
+/// steps can copy (`CONSTANT_STEP_LIMIT` of `BYTES_PER_STEP`): a long loop
+/// that uses no address stops at its steps, if at all.
 const CONSTANT_STACK_LIMIT: u64 = 256 << 20;
-const _: () = assert!(CONSTANT_STACK_LIMIT >= super::STEP_LIMIT as u64 * super::BYTES_PER_STEP);
+const _: () =
+    assert!(CONSTANT_STACK_LIMIT >= super::CONSTANT_STEP_LIMIT as u64 * super::BYTES_PER_STEP);
 /// How many bytes of data a run may use. Past this an allocation fails, as
 /// when a machine has no more memory.
 const DATA_LIMIT: u64 = 256 << 20;
@@ -30,31 +31,59 @@ const DATA_LIMIT: u64 = 256 << 20;
 /// what C's `malloc` gives.
 const BLOCK_ALIGN: u64 = 16;
 
-#[derive(Default)]
+/// Which run the memory is for, and so how strict it is.
+enum Run {
+    /// A constant's call: each frame and variable is a block of new
+    /// memory, gone once it ends. Holds the end of each open block, by its
+    /// start.
+    Constant(BTreeMap<u64, u64>),
+    /// A whole program's: a call's frame reuses the room after its
+    /// caller's, as a native stack does.
+    Program,
+}
+
 pub(super) struct Memory {
+    run: Run,
     stack: Vec<u8>,
     data: Vec<u8>,
     strings: HashMap<Box<[u8]>, u64>, // each one in `data`, by its text
     blocks: HashMap<u64, u64>,        // the size of each block in use, by its address
     freed: HashMap<u64, Vec<u64>>,    // the addresses of blocks free to reuse, by size
-    constant_blocks: Option<BTreeMap<u64, u64>>, // the end of each open block, by its start
 }
 
 impl Memory {
-    /// The memory of a run for a constant.
+    /// The memory of a constant's call.
     pub(super) fn for_constant() -> Memory {
+        Memory::new(Run::Constant(BTreeMap::new()))
+    }
+
+    /// The memory of a whole program's run.
+    pub(super) fn for_program() -> Memory {
+        Memory::new(Run::Program)
+    }
+
+    fn new(run: Run) -> Memory {
         Memory {
-            constant_blocks: Some(BTreeMap::new()),
-            ..Memory::default()
+            run,
+            stack: Vec::new(),
+            data: Vec::new(),
+            strings: HashMap::new(),
+            blocks: HashMap::new(),
+            freed: HashMap::new(),
         }
     }
 
-    /// Makes room for a call's `size` bytes after `end`, where the calling
-    /// frame stops, and gives where they start: `None` past the limit. What
-    /// is new may hold anything, as stack memory does; flow reads no unset
-    /// variable.
+    /// Whether this is a constant's call, not a whole program's run.
+    pub(super) fn is_constant(&self) -> bool {
+        matches!(self.run, Run::Constant(_))
+    }
+
+    /// Makes room for a call's `size` bytes and gives where they start:
+    /// `None` past the limit. A program's call starts after `end`, where the
+    /// calling frame stops; a constant's gets a new block. What is new may
+    /// hold anything, as stack memory does; flow reads no unset variable.
     pub(super) fn enter_call(&mut self, end: u64, size: u64) -> Option<u64> {
-        if self.constant_blocks.is_some() {
+        if self.is_constant() {
             return self.open_block(size);
         }
         let start = end.next_multiple_of(BLOCK_ALIGN);
@@ -77,24 +106,35 @@ impl Memory {
         if end - STACK_START > CONSTANT_STACK_LIMIT {
             return None;
         }
+        let Run::Constant(blocks) = &mut self.run else {
+            unreachable!("only a constant's run opens blocks")
+        };
         self.stack.resize((end - STACK_START) as usize, 0);
-        let blocks = self.constant_blocks.as_mut().expect("a constant's run");
         blocks.insert(start, end);
         Some(start)
     }
 
-    /// In a constant's run, the block at `start` ended, and nothing can use
+    /// The block at `start` of a constant's run ended, and nothing can use
     /// it again.
     pub(super) fn close_block(&mut self, start: u64) {
-        if let Some(blocks) = &mut self.constant_blocks {
-            blocks.remove(&start).expect("the block is open");
+        let Run::Constant(blocks) = &mut self.run else {
+            unreachable!("only a constant's run opens blocks")
+        };
+        blocks.remove(&start).expect("the block is open");
+    }
+
+    /// The call whose frame starts at `start` returned: a constant's frame
+    /// is gone, a program's room is reused by the next call.
+    pub(super) fn leave_call(&mut self, start: u64) {
+        if self.is_constant() {
+            self.close_block(start);
         }
     }
 
     /// Whether the `length` bytes at `address` may be used: in a constant's
     /// run, only inside one block that is open.
     fn usable(&self, address: u64, length: u64) -> bool {
-        let Some(blocks) = &self.constant_blocks else {
+        let Run::Constant(blocks) = &self.run else {
             return true;
         };
         if address >= DATA_START {
@@ -216,15 +256,6 @@ impl Memory {
         let end = rest.iter().position(|&byte| byte == 0)?;
         Some(&rest[..end])
     }
-
-    /// The string at `address`: all of one `string_address` stored, zero bytes in it
-    /// included, else the bytes up to the first zero byte, as C reads it.
-    pub(super) fn string_at(&self, address: u64) -> Option<Box<[u8]>> {
-        if let Some((text, _)) = self.strings.iter().find(|&(_, &start)| start == address) {
-            return Some(text.clone());
-        }
-        self.c_text(address).map(Into::into)
-    }
 }
 
 /// The `length` bytes from `start` of a region, as the host indexes them:
@@ -241,7 +272,7 @@ mod tests {
 
     #[test]
     fn copies_overlapping_bytes_and_refuses_wrong_addresses() {
-        let mut memory = Memory::default();
+        let mut memory = Memory::for_program();
         assert_eq!(memory.enter_call(STACK_START, 4), Some(STACK_START));
         memory
             .bytes_mut(STACK_START, 4)
@@ -304,17 +335,17 @@ mod tests {
 
     #[test]
     fn a_programs_calls_reuse_memory_and_keep_it_readable() {
-        let mut memory = Memory::default();
+        let mut memory = Memory::for_program();
         let first = memory.enter_call(STACK_START, 32).unwrap();
         let second = memory.enter_call(first + 32, 32).unwrap();
-        memory.close_block(second);
+        memory.leave_call(second);
         assert!(memory.bytes(second, 32).is_some());
         assert_eq!(memory.enter_call(first + 32, 32), Some(second));
     }
 
     #[test]
     fn a_freed_block_comes_back_and_cannot_be_freed_twice() {
-        let mut memory = Memory::default();
+        let mut memory = Memory::for_program();
         let first = memory.allocate(20).unwrap();
         let second = memory.allocate(30).unwrap();
         assert_eq!(first % BLOCK_ALIGN, 0);
@@ -329,10 +360,10 @@ mod tests {
 
     #[test]
     fn a_string_keeps_its_zero_bytes_and_is_kept_once() {
-        let mut memory = Memory::default();
+        let mut memory = Memory::for_program();
         let address = memory.string_address(b"ab\0cd");
         assert_eq!(memory.string_address(b"ab\0cd"), address);
-        assert_eq!(memory.string_at(address).as_deref(), Some(&b"ab\0cd"[..]));
+        assert_eq!(memory.bytes(address, 5), Some(&b"ab\0cd"[..]));
         assert_eq!(memory.bytes(address + 5, 1), Some(&[0][..]), "C's end");
     }
 }

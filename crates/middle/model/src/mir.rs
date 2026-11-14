@@ -1,54 +1,190 @@
-//! MIR: one function as a graph of basic blocks, shaped like LLVM IR at `-O0`
-//! (docs/ir-design.md). Parameters and `let`s are variable slots that values
-//! reach through `store` and leave through `load`; every other value is an
-//! instruction, written once and used after it. Every part keeps the span it
-//! came from, for messages and debug lines.
+//! The MIR of core concepts only (docs/feature-free-mir.md): one function as
+//! a graph of blocks over registers of a machine class and slots of bytes.
+//! No part of it names a language feature: a struct is a slot with offsets,
+//! an interface value is two pointers, a method call is a load from a table
+//! and a call through the pointer. Lowering writes it; the path checks, the
+//! interpreter and the LLVM writer read it and need no type. Two things
+//! only the source types give are the exceptions: the words of the loan
+//! check's messages (`Body.returned`, `LoanWords` and `Moved.lent_again`),
+//! and the debug types a debugger shows (`DebugTypes`).
 
-use std::fmt::Display;
 use std::fmt::Write;
 
-use crate::Callee;
-use crate::DefId;
-use crate::constant::Constant;
-use crate::constant::Value;
-use crate::constant::integer_text;
-use crate::operators::BinaryOp;
-use crate::operators::UnaryOp;
-use crate::semantic_types::ImplementationId;
-use crate::semantic_types::Type;
-use crate::semantic_types::TypeId;
-use crate::semantic_types::Types;
+use crate::FunctionCopy;
 use arena::Arena;
 use arena::Id;
 use arena::List;
 use arena::Lists;
+use runtime_abi::symbols::Carrier;
+use runtime_abi::symbols::Runtime;
 use source::SourceFile;
 use source::Span;
 
+arena::nodes! {
+    Body;
+    Block => blocks,
+    Instruction => instructions,
+    Slot => slots,
+    DebugScope => debug_scopes,
+}
+
+/// What one register holds: an integer of that many bits, a float, or an
+/// address. Signedness is not a class; it is in the operation. An integer
+/// wider than 128 bits is `Wide` of its exact width: its operations wrap
+/// there, as the machine's do at a fixed width.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Class {
+    I8,
+    I16,
+    I32,
+    I64,
+    I128,
+    Wide(u32),
+    F32,
+    F64,
+    Pointer,
+}
+
+impl Class {
+    /// How many bytes a value of the class takes in memory, on a target
+    /// whose pointers are `pointer_bytes` wide: a wide integer is rounded
+    /// up to whole 128-bit words, as `layout` aligns it.
+    pub fn bytes(self, pointer_bytes: u64) -> u64 {
+        match self {
+            Class::I8 => 1,
+            Class::I16 => 2,
+            Class::I32 | Class::F32 => 4,
+            Class::I64 | Class::F64 => 8,
+            Class::I128 => 16,
+            Class::Wide(bits) => u64::from(bits.div_ceil(8)).next_multiple_of(16),
+            Class::Pointer => pointer_bytes,
+        }
+    }
+
+    /// The integer class of `bits` bits: the narrowest that holds them, or
+    /// `Wide` of them past 128.
+    pub fn integer(bits: u32) -> Class {
+        match bits {
+            1..=8 => Class::I8,
+            9..=16 => Class::I16,
+            17..=32 => Class::I32,
+            33..=64 => Class::I64,
+            65..=128 => Class::I128,
+            _ => Class::Wide(bits),
+        }
+    }
+
+    /// How many bits a number class holds.
+    pub fn bits(self) -> u32 {
+        match self {
+            Class::I8 => 8,
+            Class::I16 => 16,
+            Class::I32 | Class::F32 => 32,
+            Class::I64 | Class::F64 => 64,
+            Class::I128 => 128,
+            Class::Wide(bits) => bits,
+            Class::Pointer => unreachable!("a pointer's bits are the target's"),
+        }
+    }
+}
+
+impl std::fmt::Display for Class {
+    /// The name the dump uses: `i32`, `i200`, `f64`, `ptr`; LLVM's too, but
+    /// for floats (`llvm::body::llvm_type`).
+    fn fmt(&self, out: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Class::I8 => out.write_str("i8"),
+            Class::I16 => out.write_str("i16"),
+            Class::I32 => out.write_str("i32"),
+            Class::I64 => out.write_str("i64"),
+            Class::I128 => out.write_str("i128"),
+            Class::Wide(bits) => write!(out, "i{bits}"),
+            Class::F32 => out.write_str("f32"),
+            Class::F64 => out.write_str("f64"),
+            Class::Pointer => out.write_str("ptr"),
+        }
+    }
+}
+
+/// One function's MIR. Its parameters are its first slots, in order
+/// (one per `signature.parameters`): one passed in a register is stored from
+/// `Operand::Parameter` as the body starts; one passed in memory is the
+/// caller's copy, at the address it passed (`parameter_in_memory`). The
+/// first block is the entry.
 pub struct Body {
-    pub blocks: Arena<Block>, // the first is the entry; with where each starts
-    pub instructions: Arena<Instruction>, // with the expression each comes from
-    pub variables: Arena<Variable>, // the parameters first; with each name
-    pub parameters: usize,    // how many of the variables are parameters
-    pub result: TypeId,       // the type the function gives
-    /// The THIR body's blocks, with their spans, by the same ids: where each
-    /// variable's name can be used and each instruction is written. Only debug
-    /// info reads them.
+    pub blocks: Arena<Block>,             // with where each starts
+    pub instructions: Arena<Instruction>, // with the code each comes from
+    pub slots: Arena<Slot>,               // with each name, or the code a temporary holds
+    /// How the function takes its parameters and gives its result. A result
+    /// kept in memory is written to `Root::Result`.
+    pub signature: Signature,
+    /// How a loan message names what the function returns: "a reference
+    /// into", "a slice of", "an interface holding"; `None` when its result
+    /// cannot hold a loan.
+    pub returned: Option<&'static str>,
+    /// A block of the source, for a debugger: block `i` of the source is
+    /// debug scope `i`.
     pub debug_scopes: Arena<DebugScope>,
-    pub constants: Vec<Constant>, // what `Operand::Constant` names; no spans, so not an arena
-    pub subslices: Vec<Subslice>, // what `Projection::Subslice` names; rare, so out of the step
+    /// What a debugger shows the result as; `None` when there is none.
+    pub result_debug_type: Option<DebugTypeId>,
+    /// Read-only data the body names (`Operand::Global`).
+    pub globals: Vec<Global>,
+    /// The signature of each call (`InstructionKind::Call`).
+    pub signatures: Vec<Signature>,
     pub lists: Lists,
 }
 
-/// A parameter or a `let`: an `alloca` in LLVM.
-#[derive(Clone, Copy, Debug)]
-pub struct Variable {
-    pub ty: TypeId,
-    pub mutable: bool,
-    pub initialized: bool, // set where declared; false for a `let` without a value
+/// Stack memory of a function: a parameter, a `let`, or a temporary.
+#[derive(Clone, Debug)]
+pub struct Slot {
+    pub size: u64,
+    pub align: u64,
+    /// The pointers in it that may hold a loan.
+    pub holders: Box<[Holder]>,
+    /// What a debugger shows it as; `None` for a slot made for a value, not
+    /// written, whose span is not a name.
+    pub debug_type: Option<DebugTypeId>,
     pub debug_scope: Id<DebugScope>, // the block it is declared in
-    pub hidden: bool,      // made by the checker; its span is not a name
+    pub mutable: bool,
+    /// Set where declared; false for a `let` without a value, whose first
+    /// store sets it.
+    pub initialized: bool,
 }
+
+/// A pointer in a slot that may hold a loan: a reference's, a slice's, an
+/// interface's.
+#[derive(Clone, Copy, Debug)]
+pub struct Holder {
+    pub offset: u64,
+    /// How a message names it ("reference used later here").
+    pub words: &'static LoanWords,
+}
+
+/// The words a loan message names a borrow or a holder with, chosen by
+/// lowering from the type: a reference's or a slice's.
+#[derive(Debug)]
+pub struct LoanWords {
+    pub noun: &'static str,             // "reference made here"
+    pub writable: &'static str,         // "a `&mut` argument"
+    pub to: &'static str,               // "a reference to it"
+    pub mutably_borrowed: &'static str, // "`x` is borrowed as `&mut`"
+}
+
+/// Those of a reference, an interface reference or an owned interface.
+pub const REFERENCE_WORDS: LoanWords = LoanWords {
+    noun: "reference",
+    writable: "`&mut`",
+    to: "to",
+    mutably_borrowed: "borrowed as `&mut`",
+};
+
+/// Those of a slice.
+pub const SLICE_WORDS: LoanWords = LoanWords {
+    noun: "slice",
+    writable: "`&mut []`",
+    to: "of",
+    mutably_borrowed: "borrowed as `&mut []`",
+};
 
 /// A block of the source, as THIR's `Block` without its statements, for a
 /// debugger.
@@ -57,269 +193,732 @@ pub struct DebugScope {
     pub parent: Option<Id<DebugScope>>, // `None` for the function's block
 }
 
+/// A type as a debugger shows it, in a table the whole program shares
+/// (`DebugTypes`): names, sizes and offsets, which is all debug info holds.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DebugType {
+    Basic {
+        name: Box<str>,
+        bits: u32,
+        /// The DWARF encoding, as `DW_ATE_signed`.
+        encoding: &'static str,
+    },
+    Pointer {
+        name: Box<str>,
+        to: Option<DebugTypeId>, // `None` for a pointer to anything
+    },
+    Composite {
+        name: Box<str>,
+        size: u64,
+        members: Box<[DebugMember]>,
+    },
+    Array {
+        element: DebugTypeId,
+        size: u64,
+        lengths: Box<[u64]>, // of each level, outermost first
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DebugMember {
+    pub name: Box<str>,
+    pub offset: u64,
+    pub ty: DebugTypeId,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct DebugTypeId(u32);
+
+/// The debug types of a program, by id: lowering adds them, a backend
+/// reads each (`get`).
+#[derive(Clone, Default)]
+pub struct DebugTypes {
+    /// Each type, at its `DebugTypeId`; `None` while it is being made
+    /// (`reserve`), as a struct's members may name the struct.
+    types: Vec<Option<DebugType>>,
+}
+
+impl DebugTypes {
+    pub fn get(&self, id: DebugTypeId) -> &DebugType {
+        self.types[id.0 as usize]
+            .as_ref()
+            .expect("lowering defined each debug type it reserved")
+    }
+
+    /// Adds to `self`, a copy of `from` made earlier, the types `from` made
+    /// since.
+    pub fn copy_new(&mut self, from: &DebugTypes) {
+        self.types
+            .extend_from_slice(&from.types[self.types.len()..]);
+    }
+
+    /// Adds `debug_type`, defined now.
+    pub fn push(&mut self, debug_type: DebugType) -> DebugTypeId {
+        self.types.push(Some(debug_type));
+        DebugTypeId((self.types.len() - 1) as u32)
+    }
+
+    /// A number for a debug type to be defined once its members are made
+    /// (`define`), as a struct's members may name the struct.
+    pub fn reserve(&mut self) -> DebugTypeId {
+        self.types.push(None);
+        DebugTypeId((self.types.len() - 1) as u32)
+    }
+
+    pub fn define(&mut self, id: DebugTypeId, debug_type: DebugType) {
+        self.types[id.0 as usize] = Some(debug_type);
+    }
+}
+
+/// Read-only data.
 #[derive(Clone, Debug)]
+pub enum Global {
+    Bytes(Box<[u8]>),
+    /// A table of function addresses, in order, each with how it is called:
+    /// a module may hold a table of functions it never calls.
+    Functions(Box<[(FunctionCopy, Signature)]>),
+}
+
+/// How a function takes its parameters and gives its result.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Signature {
+    pub parameters: Box<[Passing]>,
+    pub result: Option<Passing>,
+    /// For a call of a C function: how C passes each argument and the
+    /// result, as clang does on the target. `None` in Peeper's own
+    /// convention.
+    pub c: Option<CSignature>,
+    /// The positions of the parameters a returned pointer may point into,
+    /// for the loan check.
+    pub origins: Box<[u32]>,
+}
+
+/// How C passes the values of one call.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CSignature {
+    /// The C function's name (`#[extern("name")]`).
+    pub symbol: Box<str>,
+    pub parameters: Box<[CPassing]>,
+    pub result: Option<CPassing>,
+}
+
+/// How C passes one value, in LLVM's terms rather than one machine's, so
+/// a 32-bit machine's rules are written as a 64-bit one's are. A value is
+/// still a register of its class (`Passing`) before and after the call.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CPassing {
+    /// As its register, widened by C as `extension` says, if at all.
+    Register { extension: Option<Extension> },
+    /// As `count` integers of `bits` bits each, the lowest first: x86-64's
+    /// two halves of a 65- to 127-bit integer.
+    Pieces { count: u32, bits: u32 },
+    /// A result as a vector of `count` integers of `bits` bits: Windows
+    /// x64's `__int128`.
+    Vector { count: u32, bits: u32 },
+    /// In `size` bytes aligned to `align`: a parameter copied onto the
+    /// stack when `by_value`, else passed as a copy's address; a result
+    /// where a hidden first argument points (`sret`).
+    Memory {
+        size: u64,
+        align: u64,
+        by_value: bool,
+    },
+}
+
+/// How C widens an integer narrower than its register.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Extension {
+    Sign,
+    Zero,
+}
+
+impl std::fmt::Display for CPassing {
+    /// The dump's text: `signext`, `2 x i64`, `memory 32 align 8 byval`.
+    fn fmt(&self, out: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match *self {
+            CPassing::Register { extension: None } => out.write_str("register"),
+            CPassing::Register {
+                extension: Some(Extension::Sign),
+            } => out.write_str("signext"),
+            CPassing::Register {
+                extension: Some(Extension::Zero),
+            } => out.write_str("zeroext"),
+            CPassing::Pieces { count, bits } => write!(out, "{count} x i{bits}"),
+            CPassing::Vector { count, bits } => write!(out, "<{count} x i{bits}>"),
+            CPassing::Memory {
+                size,
+                align,
+                by_value,
+            } => {
+                write!(out, "memory {size} align {align}")?;
+                if by_value {
+                    out.write_str(" byval")?;
+                }
+                Ok(())
+            }
+        }
+    }
+}
+
+impl Signature {
+    /// How the runtime function `runtime` takes and gives its values, on a
+    /// target whose `usize` is of the class `usize`.
+    pub fn of_runtime(runtime: Runtime, usize: Class) -> Signature {
+        let passing = |carrier: &Carrier| match carrier {
+            Carrier::I32 => Passing::Register {
+                class: Class::I32,
+                signed: true,
+            },
+            Carrier::Usize => Passing::Register {
+                class: usize,
+                signed: false,
+            },
+            Carrier::F64 => Passing::Register {
+                class: Class::F64,
+                signed: false,
+            },
+            Carrier::Pointer => Passing::Register {
+                class: Class::Pointer,
+                signed: false,
+            },
+        };
+        let signature = runtime.signature();
+        Signature {
+            parameters: signature.parameters.iter().map(passing).collect(),
+            result: signature.result.as_ref().map(passing),
+            c: None,
+            origins: Box::default(), // the runtime returns no pointer
+        }
+    }
+
+    /// How many hidden arguments a call passes before the written ones:
+    /// one, the address of a result kept in memory, which the called body
+    /// names `Root::Result`.
+    pub fn hidden_parameters(&self) -> u32 {
+        u32::from(matches!(self.result, Some(Passing::Memory { .. })))
+    }
+}
+
+/// How one value is passed to or from a function.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Passing {
+    /// In a register. Whether an integer is signed says how a C ABI
+    /// extends a narrow one.
+    Register { class: Class, signed: bool },
+    /// In `size` bytes of memory aligned to `align`: a parameter as the
+    /// address of a copy the callee may change, a result where a hidden
+    /// first argument points.
+    Memory { size: u64, align: u64 },
+}
+
+impl Passing {
+    /// The class of the register that carries it: its own, or the address
+    /// of its memory.
+    pub fn register_class(self) -> Class {
+        match self {
+            Passing::Register { class, .. } => class,
+            Passing::Memory { .. } => Class::Pointer,
+        }
+    }
+}
+
 pub struct Block {
     pub instructions: List<Instruction>,
     pub terminator: Terminator,
     pub debug_scope: Id<DebugScope>, // where the terminator is written
 }
 
-/// One operation; its id is the value it gives, of type `ty` (`void` when it
-/// gives none).
-#[derive(Clone, Debug)]
 pub struct Instruction {
-    pub ty: TypeId,
     pub kind: InstructionKind,
     pub debug_scope: Id<DebugScope>, // the block of the source it is written in
 }
 
-/// Storage that a value is read from, written to or borrowed: a variable,
-/// then each step from it in order (`s.start.x` is one place, two fields;
-/// `r.*.x` goes through the reference in `r`, then to a field).
-#[derive(Clone, Debug)]
-pub struct Place {
-    pub variable: Id<Variable>,
-    pub projections: Box<[Projection]>,
+/// A value an instruction reads.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Operand {
+    /// What an instruction gives.
+    Value(Id<Instruction>),
+    /// `bits` read as the class: an integer's low bits, a float's bits,
+    /// the low word first (`constant_value`); every bit above the class is
+    /// zero. A wide integer's constant is read-only data, loaded (`Global`).
+    Constant { class: Class, bits: [u64; 2] },
+    /// The function's written parameter at this index, as passed in.
+    Parameter(u32),
+    /// The address of one of the body's `globals`.
+    Global(u32),
 }
 
-/// One step of a `Place`.
-#[derive(Clone, Copy, Debug)]
-pub enum Projection {
-    /// The field at this index, in declaration order, of the struct here.
-    Field(u32),
-    /// What the reference or raw pointer here points to.
-    Dereference,
-    /// The elements the slice here views.
-    SliceElements,
-    /// The element at this index, a `usize` computed before the place is
-    /// used, of the array here, or of the slice elements: lowering checked
-    /// it is inside them.
-    Index(Operand),
-    /// Some of the elements of the array here, or of the slice elements:
-    /// the last step of a slice `Borrow` written `&a[i..j]`.
-    Subslice(Id<Subslice>),
-}
-
-impl Projection {
-    /// Whether the two steps, from one storage, may lead to the same
-    /// storage: one field, or any two elements or subslices, whose indexes
-    /// are not known.
-    pub fn may_overlap(self, other: Projection) -> bool {
-        match (self, other) {
-            (Projection::Field(left), Projection::Field(right)) => left == right,
-            (Projection::Dereference, Projection::Dereference)
-            | (Projection::SliceElements, Projection::SliceElements)
-            | (
-                Projection::Index(_) | Projection::Subslice(_),
-                Projection::Index(_) | Projection::Subslice(_),
-            ) => true,
-            _ => unreachable!("one storage has one type, so one kind of step"),
+impl Operand {
+    /// `value`'s bits as a constant of `class`, which is not `Wide`:
+    /// lowering keeps a wide constant as read-only data.
+    pub fn integer(class: Class, value: u64) -> Operand {
+        let fits = match class {
+            Class::Wide(_) => unreachable!("a wide constant is read-only data"),
+            Class::Pointer => value == 0, // only `null` is known while compiling
+            class => class.bits() >= 64 || value >> class.bits() == 0,
+        };
+        assert!(fits, "a constant of {class} has no bit above it set");
+        Operand::Constant {
+            class,
+            bits: [value, 0],
         }
     }
+}
 
-    /// Whether the step leaves the storage it starts in, through an address
-    /// held there.
-    pub fn leaves_storage(self) -> bool {
-        matches!(self, Projection::Dereference | Projection::SliceElements)
-    }
+/// The value of a constant's `bits` (`Operand::Constant`).
+pub fn constant_value(bits: [u64; 2]) -> u128 {
+    u128::from(bits[1]) << 64 | u128::from(bits[0])
+}
+
+/// Memory: where it starts, then the steps from there.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Place {
+    pub root: Root,
+    pub steps: Box<[Step]>,
 }
 
 impl Place {
-    /// All of `variable`: no steps.
-    pub fn whole(variable: Id<Variable>) -> Place {
+    /// All the memory of `slot`: a place of no steps.
+    pub fn whole(slot: Id<Slot>) -> Place {
         Place {
-            variable,
-            projections: Box::default(),
+            root: Root::Slot(slot),
+            steps: Box::default(),
         }
     }
 
-    /// The variable, when the place is all of it: no steps.
-    pub fn whole_variable(&self) -> Option<Id<Variable>> {
-        self.projections.is_empty().then_some(self.variable)
+    pub fn as_place_ref(&self) -> PlaceRef<'_> {
+        PlaceRef {
+            root: self.root,
+            steps: &self.steps,
+        }
     }
 
-    /// The slice or interface reference that a borrow of this place, giving
-    /// `borrowed`, lends again whole, as lowering writes it: a slice's
-    /// elements (`SliceElements`) or what an interface reference points at
-    /// (`Dereference`). Its own two words are the borrow's value. A slice of
-    /// an array behind a reference also ends at `Dereference`, so the type
-    /// picks the step.
-    pub fn lent_again(&self, borrowed: &Type) -> Option<Place> {
-        let (&last, before) = self.projections.split_last()?;
-        match (borrowed, last) {
-            (Type::Slice { .. }, Projection::SliceElements)
-            | (Type::InterfaceReference { .. }, Projection::Dereference) => Some(Place {
-                variable: self.variable,
-                projections: before.into(),
-            }),
+    /// The place `step` further in.
+    pub fn then(mut self, step: Step) -> Place {
+        let mut steps = self.steps.into_vec();
+        steps.push(step);
+        self.steps = steps.into();
+        self
+    }
+}
+
+/// A place, borrowed: a stored `Place`, or all of a slot, which a `Dead`
+/// names without one.
+#[derive(Clone, Copy)]
+pub struct PlaceRef<'p> {
+    pub root: Root,
+    pub steps: &'p [Step],
+}
+
+impl PlaceRef<'_> {
+    /// The slot when the place is all of its memory.
+    pub fn whole_slot(self) -> Option<Id<Slot>> {
+        match self.root {
+            Root::Slot(slot) if self.steps.is_empty() => Some(slot),
             _ => None,
         }
     }
 
-    /// Whether the place goes through a reference, so it is not in its
-    /// variable's own storage.
-    pub fn is_behind_reference(&self) -> bool {
-        self.projections.iter().any(|step| step.leaves_storage())
+    /// Whether it is memory a pointer leads to, not a slot's own.
+    pub fn is_behind_pointer(self) -> bool {
+        matches!(self.root, Root::At(_) | Root::Result) || self.steps.contains(&Step::Through)
+    }
+
+    /// The values finding it reads: the address it starts at, and each
+    /// index.
+    pub fn operands(self) -> impl Iterator<Item = Operand> {
+        let root = match self.root {
+            Root::At(address) => Some(address),
+            Root::Slot(_) | Root::Result => None,
+        };
+        let indexes = self.steps.iter().filter_map(|step| match *step {
+            Step::Index { index, .. } => Some(index),
+            Step::Offset(_) | Step::Through => None,
+        });
+        root.into_iter().chain(indexes)
     }
 }
 
-/// The part of the elements a slice `Borrow` views (`Projection::Subslice`):
-/// `count` of them from the one at `start`, both `usize`s that lowering
-/// checked to be inside them.
-#[derive(Clone, Copy, Debug)]
-pub struct Subslice {
-    pub start: Operand,
-    pub count: Operand,
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Root {
+    /// The slot's own memory.
+    Slot(Id<Slot>),
+    /// The memory at the address the operand gives.
+    At(Operand),
+    /// The memory the caller keeps the function's result in, when it is
+    /// passed in memory (`Passing::Memory`).
+    Result,
+}
+
+/// One step of a `Place`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Step {
+    /// This many bytes further in.
+    Offset(u64),
+    /// What the pointer here points to.
+    Through,
+    /// The element `index`, a pointer-wide integer that lowering checked
+    /// to be inside, of `size` bytes each. `count` is how many elements
+    /// there are from here, for the path checks; `None` when only the
+    /// program knows (a slice's elements).
+    Index {
+        index: Operand,
+        size: u64,
+        count: Option<u64>,
+    },
+}
+
+/// What an `Integer` instruction does to two registers of its class, the
+/// result cut to that width.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IntegerOp {
+    Add,
+    Subtract,
+    Multiply,
+    SignedDivide,
+    UnsignedDivide,
+    SignedRemainder,
+    UnsignedRemainder,
+    ShiftLeft,
+    SignedShiftRight,
+    UnsignedShiftRight,
+    And,
+    Or,
+    Xor,
+}
+
+/// What a `Float` instruction does to two registers of its class.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FloatOp {
+    Add,
+    Subtract,
+    Multiply,
+    Divide,
+    Remainder,
+}
+
+/// How a `Compare` instruction compares two registers of its class. On
+/// floats, `Equal`, `FloatLess` and `FloatLessOrEqual` are false when
+/// either side is NaN, and `NotEqual` is true.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Comparison {
+    Equal,
+    NotEqual,
+    SignedLess,
+    SignedLessOrEqual,
+    UnsignedLess,
+    UnsignedLessOrEqual,
+    FloatLess,
+    FloatLessOrEqual,
+}
+
+impl Comparison {
+    /// `<` and `<=` of two integers, `signed` or not.
+    pub fn integer_less(signed: bool) -> (Comparison, Comparison) {
+        if signed {
+            (Comparison::SignedLess, Comparison::SignedLessOrEqual)
+        } else {
+            (Comparison::UnsignedLess, Comparison::UnsignedLessOrEqual)
+        }
+    }
+}
+
+/// How a `Convert` instruction reads a register as another class.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Conversion {
+    SignExtend,
+    ZeroExtend,
+    Truncate,
+    SignedToFloat,
+    UnsignedToFloat,
+    /// Toward zero, to an integer of `bits` bits kept extended in its
+    /// class; a value outside that range gives its nearest end, NaN gives 0.
+    FloatToSigned {
+        bits: u32,
+    },
+    FloatToUnsigned {
+        bits: u32,
+    },
+    FloatWiden,
+    FloatNarrow,
+    /// The same address, as a pointer to other bytes: the way to the bytes
+    /// of a value, and so to those of an address kept in memory, which a
+    /// constant's run cannot know.
+    PointerCast,
 }
 
 #[derive(Clone, Debug)]
 pub enum InstructionKind {
-    /// The value at the place, whose type copies (`Types::is_copy`), or a
-    /// slice read only for its length by `.len`, which leaves a `&mut []`
-    /// usable.
-    Load(Place),
-    /// The length of the slice at the place, a `usize`, for a check of an
-    /// index or slice end: it reads only the slice's own storage, so a loan
-    /// of its elements does not stop it, as in Rust.
-    Length(Place),
-    /// The value at the place, whose type moves: a whole variable is unset
-    /// after; moving out of a struct's field, an array's element or a
-    /// reference is an error.
-    Move(Place),
-    /// Sets the value at the place: a whole variable is set by it; a field,
-    /// an element, or a value behind a reference, needs its variable already
-    /// set.
-    Store {
-        place: Place,
-        value: Operand,
-    },
-    /// A reference to the place, `&mut` when `mutable`, or a slice of it,
-    /// as `ty` says: of an array, or of the elements a slice views, or of a
-    /// `Projection::Subslice` of them; or, when the place is what an
-    /// interface reference views, that interface reference again. The
-    /// variable must already be set.
-    Borrow {
-        place: Place,
-        mutable: bool,
-    },
-    /// The place's address as a raw pointer (`@place`): as a `Borrow`, the
-    /// variable must already be set, but no loan is made.
-    Address(Place),
-    Binary {
-        op: BinaryOp,
+    /// Wraps at the class's width.
+    Integer {
+        operation: IntegerOp,
+        class: Class,
         left: Operand,
         right: Operand,
     },
-    Unary {
-        op: UnaryOp,
+    Float {
+        operation: FloatOp,
+        class: Class,
+        left: Operand,
+        right: Operand,
+    },
+    /// Whether `left` and `right` compare so: an `I8` that is 0 or 1.
+    Compare {
+        comparison: Comparison,
+        class: Class,
+        left: Operand,
+        right: Operand,
+    },
+    /// `value`, of the class `from`, as the class `to`.
+    Convert {
+        conversion: Conversion,
+        from: Class,
+        to: Class,
         value: Operand,
     },
-    /// The number or `bool` converted to the type `ty` (`Types::conversion`).
-    Convert(Operand),
+    Load {
+        class: Class,
+        place: Place,
+    },
+    Store {
+        class: Class,
+        place: Place,
+        value: Operand,
+    },
+    /// `size` bytes from `from` to `to`, which do not overlap.
+    Copy {
+        to: Place,
+        from: Place,
+        size: u64,
+    },
+    /// The place's address: a pointer that holds no loan. `size` is how
+    /// many bytes are there, for the path checks.
+    Address {
+        place: Place,
+        size: u64,
+    },
+    /// A call, with the callee's signature (`Body::signatures`). A result
+    /// kept in memory is written to `result`'s place, of its size in bytes:
+    /// the call passes its address as a hidden first argument. The size is
+    /// the signature's, kept here as `Address` keeps its own, because
+    /// `accesses` reads an instruction without its body.
     Call {
         callee: Callee,
-        signature: TypeId, // the callee's type, as THIR's `Call`
+        signature: u32,
         arguments: Box<[Operand]>,
+        result: Option<(Place, u64)>,
     },
-    /// The reference to a struct as the interface reference `ty`: its
-    /// address and the table of `implementation`, the struct's functions
-    /// that are the interface's methods.
-    ToInterface {
-        reference: Operand,
-        implementation: ImplementationId,
-    },
-    /// A struct value from its fields' values, in declaration order, or an
-    /// array value from its elements' values.
-    Aggregate(Box<[Operand]>),
-    /// An array value from its parts, in order, at least one a spread: a
-    /// part of the element type is one element, an array or a slice gives
-    /// each of its elements and a range each of its values. The program
-    /// stops before writing any element unless the parts give exactly the
-    /// array's length.
-    ArrayParts(Box<[Operand]>),
-    /// Writes the values to the standard output, a space between each,
-    /// then a newline when `newline`: as THIR's `Print`.
-    Print {
-        newline: bool,
-        values: Box<[Operand]>,
-    },
-    /// The field its `fields` path leads to in a struct value that is not
-    /// in a variable, as a `Place`'s path; or a slice value's length, its
-    /// field 1 (after its elements' address).
-    Field {
-        value: Operand,
-        fields: Box<[u32]>,
-    },
-    /// The value from whichever listed block control came from; first in its
-    /// block. `&&` and `||` give their result this way.
-    Phi(Box<[(Id<Block>, Operand)]>),
-    /// Stops the program with "panic: `message`" when `failed`, a `bool`
-    /// not known at compile time, is true. An index's message names its
-    /// array's length, so it is built.
+    /// Stops the program with "panic: `message`" when `failed`, an `I8`, is
+    /// not 0. Gives no value.
     Check {
         failed: Operand,
         message: Box<str>,
     },
-    /// The variable's block ends here, or a `break`, `continue` or `return`
-    /// leaves it, so its storage is gone: no reference may still use it
-    /// (`flow::loans::report_loan_errors`), and a loop's next pass may set
-    /// it again (`flow::variable_state::report_variable_state_errors`).
-    /// Writes no code.
-    ScopeEnd(Id<Variable>),
+    /// A reference to the place, `&mut` when `mutable`: a loan. Its value
+    /// is the place's address. `size` is how many bytes from the place
+    /// the loan covers, `None` for all there are, which only the program
+    /// knows (a slice's elements). `words` are how a message names it.
+    Borrow {
+        place: Place,
+        size: Option<u64>,
+        mutable: bool,
+        words: &'static LoanWords,
+    },
+    /// The value of `size` bytes at the place, just read, is moved out.
+    /// `lent_again` is the step a message adds to the place to lend it
+    /// again instead (`&mut x.*`, `&mut x[..]`), for a value that can be.
+    Moved {
+        place: Place,
+        size: u64,
+        lent_again: Option<&'static str>,
+    },
+    /// The slot's storage ends: its block ends, or a jump leaves it.
+    Dead(Id<Slot>),
 }
 
+/// Who a `Call` calls.
 #[derive(Clone, Copy, Debug)]
-pub enum Operand {
-    /// One of the body's `constants`.
-    Constant(Id<Constant>),
-    /// The function's parameter at this position, as passed in.
-    Argument(u32),
-    /// What the instruction gives.
-    Value(Id<Instruction>),
+pub enum Callee {
+    /// A function of the program, or a copy of one; an `extern` function
+    /// has no body.
+    Function(FunctionCopy),
+    /// A function of the runtime library.
+    Runtime(Runtime),
+    /// The function whose address the operand gives.
+    Pointer(Operand),
 }
 
-#[derive(Clone, Debug)]
+/// A place an instruction touches (`InstructionKind::accesses`).
+pub struct PlaceAccess<'p> {
+    pub place: PlaceRef<'p>,
+    pub kind: AccessKind,
+    touched: AccessWidth,
+}
+
+/// How many bytes an access touches: a register's, or a size.
+#[derive(Clone, Copy)]
+enum AccessWidth {
+    Register(Class),
+    Bytes(Option<u64>), // `None`: all there are
+}
+
+impl PlaceAccess<'_> {
+    /// How many bytes from the place it touches, on a target whose pointers
+    /// are `pointer_bytes` wide; `None` for all there are.
+    #[inline]
+    pub fn width(&self, pointer_bytes: u64) -> Option<u64> {
+        match self.touched {
+            AccessWidth::Register(class) => Some(class.bytes(pointer_bytes)),
+            AccessWidth::Bytes(size) => size,
+        }
+    }
+}
+
+/// What an instruction does to a place it touches.
+#[derive(Clone, Copy)]
+pub enum AccessKind {
+    Read,
+    Write,
+    Borrow {
+        mutable: bool,
+    },
+    /// Takes its address, which holds no loan.
+    Address,
+    /// Moves out the value just read there (`Moved`).
+    Move,
+    /// Ends the storage of all of a slot (`Dead`).
+    End,
+}
+
+impl InstructionKind {
+    /// Gives `each` the places it touches, a copy's read first. A function,
+    /// not a list: the path checks ask for every line, so it compiles to a
+    /// `match`.
+    #[inline]
+    pub fn accesses<'p>(&'p self, mut each: impl FnMut(PlaceAccess<'p>)) {
+        let mut on = |place: &'p Place, touched, kind| {
+            let place = place.as_place_ref();
+            each(PlaceAccess {
+                place,
+                kind,
+                touched,
+            });
+        };
+        let bytes = |size: &u64| AccessWidth::Bytes(Some(*size));
+        match self {
+            InstructionKind::Load { class, place } => {
+                on(place, AccessWidth::Register(*class), AccessKind::Read);
+            }
+            InstructionKind::Store { class, place, .. } => {
+                on(place, AccessWidth::Register(*class), AccessKind::Write);
+            }
+            InstructionKind::Copy { to, from, size } => {
+                on(from, bytes(size), AccessKind::Read);
+                on(to, bytes(size), AccessKind::Write);
+            }
+            InstructionKind::Borrow {
+                place,
+                size,
+                mutable,
+                ..
+            } => {
+                let kind = AccessKind::Borrow { mutable: *mutable };
+                on(place, AccessWidth::Bytes(*size), kind);
+            }
+            InstructionKind::Address { place, size } => on(place, bytes(size), AccessKind::Address),
+            InstructionKind::Call {
+                result: Some((place, size)),
+                ..
+            } => on(place, bytes(size), AccessKind::Write),
+            InstructionKind::Moved { place, size, .. } => on(place, bytes(size), AccessKind::Move),
+            InstructionKind::Integer { .. }
+            | InstructionKind::Float { .. }
+            | InstructionKind::Compare { .. }
+            | InstructionKind::Convert { .. }
+            | InstructionKind::Call { .. }
+            | InstructionKind::Check { .. } => {}
+            InstructionKind::Dead(slot) => each(PlaceAccess {
+                place: PlaceRef {
+                    root: Root::Slot(*slot),
+                    steps: &[],
+                },
+                kind: AccessKind::End,
+                touched: AccessWidth::Bytes(None),
+            }),
+        }
+    }
+
+    /// Gives `each` the values it reads as its operands, a call's callee
+    /// first; not those a place it touches reads (`PlaceRef::operands`).
+    #[inline]
+    pub fn operands(&self, mut each: impl FnMut(Operand)) {
+        match self {
+            InstructionKind::Integer { left, right, .. }
+            | InstructionKind::Float { left, right, .. }
+            | InstructionKind::Compare { left, right, .. } => {
+                each(*left);
+                each(*right);
+            }
+            InstructionKind::Convert { value, .. } | InstructionKind::Store { value, .. } => {
+                each(*value);
+            }
+            InstructionKind::Check { failed, .. } => each(*failed),
+            InstructionKind::Call {
+                callee, arguments, ..
+            } => {
+                if let Callee::Pointer(pointer) = callee {
+                    each(*pointer);
+                }
+                arguments.iter().copied().for_each(each);
+            }
+            InstructionKind::Load { .. }
+            | InstructionKind::Copy { .. }
+            | InstructionKind::Address { .. }
+            | InstructionKind::Borrow { .. }
+            | InstructionKind::Moved { .. }
+            | InstructionKind::Dead(_) => {}
+        }
+    }
+
+    /// Whether it is code a compiled program runs: all but `Moved` and
+    /// `Dead`, which only mark a point for the path checks.
+    pub fn runs(&self) -> bool {
+        !matches!(
+            self,
+            InstructionKind::Moved { .. } | InstructionKind::Dead(_)
+        )
+    }
+}
+
 pub enum Terminator {
-    Goto(Id<Block>),
-    /// Goes to `then` when the condition, written at `span`, is true.
+    Jump(Id<Block>),
+    /// To `then` when the `I8` condition, written at `span`, is not 0.
     Branch {
         condition: Operand,
         span: Span,
         then: Id<Block>,
         otherwise: Id<Block>,
     },
+    /// A written `return`.
     Return {
         value: Option<Operand>,
         span: Span,
     },
-    /// `panic message` at `span`: writes the constant `message`, a
-    /// `Value::Bytes`, and where, then ends the program; nothing runs after.
+    /// `panic message` at `span`: writes `message` and where, then ends
+    /// the program.
     Panic {
-        message: Id<Constant>,
+        message: Box<[u8]>,
         span: Span,
     },
-    /// The end of the function, at its closing brace, reached without a
-    /// `return`: a function without a result returns there, and one with a
-    /// result is missing a `return` (`flow::report_missing_return`). Every
-    /// `Return` is a written `return`.
+    /// The function's closing brace, reached without a `return`.
     FallOff(Span),
-}
-
-impl InstructionKind {
-    /// Whether it is code that runs in a compiled program: all but a
-    /// `ScopeEnd`, which marks a point for the checks, and where a constant's
-    /// run ends the variable's memory. No compiled body has one
-    /// (`flow::cleanup`).
-    pub fn runs(&self) -> bool {
-        !matches!(self, InstructionKind::ScopeEnd(_))
-    }
 }
 
 impl Terminator {
     /// The blocks control can go to next.
     pub fn targets(&self) -> impl Iterator<Item = Id<Block>> {
         let targets = match *self {
-            Terminator::Goto(target) => [Some(target), None],
+            Terminator::Jump(target) => [Some(target), None],
             Terminator::Branch {
                 then, otherwise, ..
             } => [Some(then), Some(otherwise)],
@@ -329,87 +928,137 @@ impl Terminator {
         };
         targets.into_iter().flatten()
     }
-
-    /// Makes each block control can go to next the one `target` gives.
-    pub fn retarget(&mut self, mut target: impl FnMut(Id<Block>) -> Id<Block>) {
-        match self {
-            Terminator::Goto(next) => *next = target(*next),
-            Terminator::Branch {
-                then, otherwise, ..
-            } => {
-                *then = target(*then);
-                *otherwise = target(*otherwise);
-            }
-            Terminator::Return { .. } | Terminator::Panic { .. } | Terminator::FallOff(_) => {}
-        }
-    }
 }
 
 impl Body {
-    /// The constant `operand` names, if it names one.
-    pub fn constant(&self, operand: Operand) -> Option<&Constant> {
-        match operand {
-            Operand::Constant(constant) => Some(&self.constants[constant.index()]),
-            _ => None,
-        }
+    /// Which blocks control can reach from the entry, by index.
+    pub fn reachable(&self) -> Vec<bool> {
+        let mut reachable = vec![false; self.blocks.len()];
+        self.mark_reachable(Id::from_index(0), &mut reachable, |_| {});
+        reachable
     }
 
-    /// The text `print` writes for `operand`, when that is a constant string:
-    /// all of a `&str`, a `&cstr` up to its first zero byte, as C reads it.
-    pub fn constant_text(&self, operand: Operand) -> Option<&[u8]> {
-        let constant = self.constant(operand)?;
-        let Value::Bytes(bytes) = &constant.value else {
-            return None;
-        };
-        if constant.ty == TypeId::STR {
-            return Some(bytes);
-        }
-        bytes.split(|&byte| byte == 0).next()
-    }
-
-    /// The type of the value `operand` stands for.
-    pub fn operand_type(&self, operand: Operand) -> TypeId {
-        match operand {
-            Operand::Constant(constant) => self.constants[constant.index()].ty,
-            Operand::Argument(index) => self.variables[Id::from_index(index as usize)].ty,
-            Operand::Value(instruction) => self.instructions[instruction].ty,
-        }
-    }
-
-    /// The body as text, one block after another, for `peeper -dump`. `file` is
-    /// where the body is written; `name_of` gives a declaration's name. A
-    /// variable shows as its name and index (`sum.2`), an integer constant as
-    /// its bits read unsigned, and a field path in brackets (`load p.0[1, 0]`).
-    pub fn text<N: Display>(
+    /// Marks in `marked` `from` and every block control can reach from it,
+    /// stopping at blocks already marked, and gives each it marks to
+    /// `newly_marked`.
+    pub fn mark_reachable(
         &self,
-        types: &Types,
-        file: &SourceFile,
-        name_of: impl Fn(DefId) -> N + Copy,
-    ) -> String {
+        from: Id<Block>,
+        marked: &mut [bool],
+        mut newly_marked: impl FnMut(Id<Block>),
+    ) {
+        let mut pending = vec![from];
+        while let Some(block) = pending.pop() {
+            if !std::mem::replace(&mut marked[block.index()], true) {
+                newly_marked(block);
+                pending.extend(self.blocks[block].terminator.targets());
+            }
+        }
+    }
+
+    /// Each function the body may run: those it calls, and those in its
+    /// tables, which a method call reaches through an interface value.
+    pub fn named_functions(&self) -> impl Iterator<Item = FunctionCopy> {
+        let called = self
+            .instructions
+            .ids()
+            .filter_map(|id| match self.instructions[id].kind {
+                InstructionKind::Call {
+                    callee: Callee::Function(function),
+                    ..
+                } => Some(function),
+                _ => None,
+            });
+        let tabled = (self.globals.iter()).flat_map(|global| match global {
+            Global::Functions(entries) => &entries[..],
+            Global::Bytes(_) => &[],
+        });
+        called.chain(tabled.map(|&(function, _)| function))
+    }
+
+    /// The parameter, as an `Operand::Parameter` index, whose address the
+    /// slot `slot` is: a parameter passed in memory is the caller's private
+    /// copy, so it has no memory of its own.
+    pub fn parameter_in_memory(&self, slot: Id<Slot>) -> Option<u32> {
+        let index = slot.index();
+        match self.signature.parameters.get(index)? {
+            Passing::Memory { .. } => Some(index as u32),
+            Passing::Register { .. } => None,
+        }
+    }
+
+    /// The class of the register `operand` is; `None` for an instruction
+    /// that gives no register: a store, copy, check, `Moved`, `Dead`, or a
+    /// call that gives nothing or gives its result in memory.
+    pub fn class_of(&self, operand: Operand) -> Option<Class> {
+        match operand {
+            Operand::Value(id) => match &self.instructions[id].kind {
+                InstructionKind::Call { signature, .. } => {
+                    match self.signatures[*signature as usize].result {
+                        Some(Passing::Register { class, .. }) => Some(class),
+                        Some(Passing::Memory { .. }) | None => None,
+                    }
+                }
+                InstructionKind::Integer { class, .. }
+                | InstructionKind::Float { class, .. }
+                | InstructionKind::Load { class, .. } => Some(*class),
+                InstructionKind::Compare { .. } => Some(Class::I8),
+                InstructionKind::Convert { to, .. } => Some(*to),
+                InstructionKind::Address { .. } | InstructionKind::Borrow { .. } => {
+                    Some(Class::Pointer)
+                }
+                InstructionKind::Store { .. }
+                | InstructionKind::Copy { .. }
+                | InstructionKind::Check { .. }
+                | InstructionKind::Moved { .. }
+                | InstructionKind::Dead(_) => None,
+            },
+            Operand::Constant { class, .. } => Some(class),
+            Operand::Parameter(index) => {
+                Some(self.signature.parameters[index as usize].register_class())
+            }
+            Operand::Global(_) => Some(Class::Pointer),
+        }
+    }
+
+    /// The body as text, one block after another, for `peeper -dump`.
+    /// `file` is where the body is written; `name_of` gives a function's
+    /// name. A slot shows as its name and index (`sum.2`, `.5` for a
+    /// temporary), a place as its root then `[+8]`, `[*]` or `[%3 * 4]`.
+    /// The globals follow the blocks: bytes as text, a table by its
+    /// functions' names.
+    pub fn text(&self, file: &SourceFile, name_of: impl Fn(FunctionCopy) -> String) -> String {
         let mut printer = Printer {
             body: self,
-            types,
             file,
+            name_of: &name_of,
             out: String::new(),
         };
         for block in self.blocks.ids() {
             _ = writeln!(printer.out, "  bb{}:", block.index());
             let block = &self.blocks[block];
             for instruction in self.lists.items(block.instructions) {
-                let Instruction { ty, kind, .. } = &self.instructions[instruction];
                 printer.out.push_str("    ");
-                if *ty != TypeId::VOID {
+                if self.class_of(Operand::Value(instruction)).is_some() {
                     _ = write!(printer.out, "%{} = ", instruction.index());
                 }
-                printer.write_instruction(kind, name_of);
-                if *ty != TypeId::VOID {
-                    _ = write!(printer.out, ": {}", types.text(*ty, name_of));
-                }
+                printer.write_instruction(&self.instructions[instruction].kind);
                 printer.out.push('\n');
             }
             printer.out.push_str("    ");
             printer.write_terminator(&block.terminator);
             printer.out.push('\n');
+        }
+        for (index, global) in self.globals.iter().enumerate() {
+            _ = write!(printer.out, "  global {index} = ");
+            match global {
+                Global::Bytes(bytes) => _ = writeln!(printer.out, "\"{}\"", bytes.escape_ascii()),
+                Global::Functions(entries) => {
+                    let names: Vec<String> =
+                        entries.iter().map(|&(copy, _)| name_of(copy)).collect();
+                    _ = writeln!(printer.out, "table [{}]", names.join(", "));
+                }
+            }
         }
         printer.out
     }
@@ -418,146 +1067,214 @@ impl Body {
 /// What `Body::text` writes with.
 struct Printer<'b> {
     body: &'b Body,
-    types: &'b Types,
     file: &'b SourceFile,
+    name_of: &'b dyn Fn(FunctionCopy) -> String,
     out: String,
 }
 
 impl Printer<'_> {
-    /// What one instruction does, after its `%n = ` and before its type.
-    fn write_instruction<N: Display>(
-        &mut self,
-        kind: &InstructionKind,
-        name_of: impl Fn(DefId) -> N + Copy,
-    ) {
+    fn write_instruction(&mut self, kind: &InstructionKind) {
         match kind {
-            InstructionKind::Store { place, value } => {
-                self.out.push_str("store ");
+            InstructionKind::Integer {
+                operation,
+                class,
+                left,
+                right,
+            } => {
+                let name = match operation {
+                    IntegerOp::Add => "add",
+                    IntegerOp::Subtract => "sub",
+                    IntegerOp::Multiply => "mul",
+                    IntegerOp::SignedDivide => "sdiv",
+                    IntegerOp::UnsignedDivide => "udiv",
+                    IntegerOp::SignedRemainder => "srem",
+                    IntegerOp::UnsignedRemainder => "urem",
+                    IntegerOp::ShiftLeft => "shl",
+                    IntegerOp::SignedShiftRight => "sshr",
+                    IntegerOp::UnsignedShiftRight => "ushr",
+                    IntegerOp::And => "and",
+                    IntegerOp::Or => "or",
+                    IntegerOp::Xor => "xor",
+                };
+                self.write_binary(name, *class, left, right);
+            }
+            InstructionKind::Float {
+                operation,
+                class,
+                left,
+                right,
+            } => {
+                let name = match operation {
+                    FloatOp::Add => "fadd",
+                    FloatOp::Subtract => "fsub",
+                    FloatOp::Multiply => "fmul",
+                    FloatOp::Divide => "fdiv",
+                    FloatOp::Remainder => "frem",
+                };
+                self.write_binary(name, *class, left, right);
+            }
+            InstructionKind::Compare {
+                comparison,
+                class,
+                left,
+                right,
+            } => {
+                let name = match comparison {
+                    Comparison::Equal => "eq",
+                    Comparison::NotEqual => "ne",
+                    Comparison::SignedLess => "slt",
+                    Comparison::SignedLessOrEqual => "sle",
+                    Comparison::UnsignedLess => "ult",
+                    Comparison::UnsignedLessOrEqual => "ule",
+                    Comparison::FloatLess => "flt",
+                    Comparison::FloatLessOrEqual => "fle",
+                };
+                self.write_binary(name, *class, left, right);
+            }
+            InstructionKind::Convert {
+                conversion,
+                from,
+                to,
+                value,
+            } => {
+                let name = match conversion {
+                    Conversion::SignExtend => "sext",
+                    Conversion::ZeroExtend => "zext",
+                    Conversion::Truncate => "trunc",
+                    Conversion::SignedToFloat => "sitofp",
+                    Conversion::UnsignedToFloat => "uitofp",
+                    Conversion::FloatToSigned { .. } => "fptosi",
+                    Conversion::FloatToUnsigned { .. } => "fptoui",
+                    Conversion::FloatWiden => "fpext",
+                    Conversion::FloatNarrow => "fptrunc",
+                    Conversion::PointerCast => "bitcast",
+                };
+                _ = write!(self.out, "{name} {from} ");
+                self.write_operand(value);
+                _ = write!(self.out, " to {to}");
+                if let Conversion::FloatToSigned { bits } | Conversion::FloatToUnsigned { bits } =
+                    conversion
+                {
+                    _ = write!(self.out, " at {bits} bits");
+                }
+            }
+            InstructionKind::Load { class, place } => {
+                _ = write!(self.out, "load {class} ");
+                self.write_place(place);
+            }
+            InstructionKind::Store {
+                class,
+                place,
+                value,
+            } => {
+                _ = write!(self.out, "store {class} ");
                 self.write_place(place);
                 self.out.push_str(", ");
                 self.write_operand(value);
             }
-            InstructionKind::Borrow { place, mutable } => {
-                self.out
-                    .push_str(if *mutable { "borrow mut " } else { "borrow " });
-                self.write_place(place);
-            }
-            InstructionKind::Address(place) => {
-                self.out.push_str("address ");
-                self.write_place(place);
-            }
-            InstructionKind::Load(place) => {
-                self.out.push_str("load ");
-                self.write_place(place);
-            }
-            InstructionKind::Move(place) => {
-                self.out.push_str("move ");
-                self.write_place(place);
-            }
-            InstructionKind::Length(place) => {
-                self.out.push_str("length ");
-                self.write_place(place);
-            }
-            InstructionKind::Binary { op, left, right } => {
-                _ = write!(self.out, "{op:?} ");
-                self.write_operand(left);
+            InstructionKind::Copy { to, from, size } => {
+                _ = write!(self.out, "copy {size} ");
+                self.write_place(to);
                 self.out.push_str(", ");
-                self.write_operand(right);
+                self.write_place(from);
             }
-            InstructionKind::Unary { op, value } => {
-                _ = write!(self.out, "{op:?} ");
-                self.write_operand(value);
-            }
-            InstructionKind::Convert(value) => {
-                self.out.push_str("convert ");
-                self.write_operand(value);
+            InstructionKind::Address { place, size } => {
+                _ = write!(self.out, "address {size} ");
+                self.write_place(place);
             }
             InstructionKind::Call {
-                callee, arguments, ..
+                callee,
+                signature,
+                arguments,
+                result,
             } => {
                 match callee {
                     Callee::Function(function) => {
-                        let name = name_of(function.definition).to_string();
-                        let copy = self.types.copy_text(name, function.arguments, name_of);
-                        _ = write!(self.out, "call {copy}(");
+                        _ = write!(self.out, "call {}(", (self.name_of)(*function));
                     }
-                    Callee::Method(slot) => _ = write!(self.out, "call method {slot}("),
+                    Callee::Runtime(runtime) => {
+                        _ = write!(self.out, "call {}(", runtime.signature().symbol);
+                    }
+                    Callee::Pointer(pointer) => {
+                        self.out.push_str("call through ");
+                        self.write_operand(pointer);
+                        self.out.push('(');
+                    }
                 }
                 self.write_operands(arguments);
                 self.out.push(')');
-            }
-            InstructionKind::ToInterface {
-                reference,
-                implementation,
-            } => {
-                self.out.push_str("interface ");
-                self.write_operand(reference);
-                for &method in self.types.implementation(*implementation) {
-                    _ = write!(self.out, ", {}", name_of(method));
+                if let Some((place, size)) = result {
+                    _ = write!(self.out, " into {size} ");
+                    self.write_place(place);
                 }
-            }
-            InstructionKind::Aggregate(fields) => {
-                self.out.push_str("aggregate(");
-                self.write_operands(fields);
-                self.out.push(')');
-            }
-            InstructionKind::ArrayParts(parts) => {
-                self.out.push_str("array(");
-                self.write_operands(parts);
-                self.out.push(')');
-            }
-            InstructionKind::Print { newline, values } => {
-                self.out
-                    .push_str(if *newline { "println(" } else { "print(" });
-                self.write_operands(values);
-                self.out.push(')');
-            }
-            InstructionKind::Field { value, fields } => {
-                self.out.push_str("field ");
-                self.write_operand(value);
-                self.write_fields(fields);
+                if let Some(c) = &self.body.signatures[*signature as usize].c {
+                    self.out.push_str(" in C (");
+                    for (index, passing) in c.parameters.iter().enumerate() {
+                        let separator = if index > 0 { ", " } else { "" };
+                        _ = write!(self.out, "{separator}{passing}");
+                    }
+                    self.out.push(')');
+                    if let Some(result) = &c.result {
+                        _ = write!(self.out, " -> {result}");
+                    }
+                }
             }
             InstructionKind::Check { failed, message } => {
                 self.out.push_str("check ");
                 self.write_operand(failed);
                 _ = write!(self.out, ", \"{message}\"");
             }
-            InstructionKind::ScopeEnd(variable) => {
-                self.out.push_str("scope end ");
-                self.write_place(&Place::whole(*variable));
-            }
-            InstructionKind::Phi(incoming) => {
-                self.out.push_str("phi ");
-                for (index, (block, value)) in incoming.iter().enumerate() {
-                    if index > 0 {
-                        self.out.push_str(", ");
-                    }
-                    _ = write!(self.out, "bb{}: ", block.index());
-                    self.write_operand(value);
+            InstructionKind::Borrow {
+                place,
+                size,
+                mutable,
+                words,
+            } => {
+                let mutable = if *mutable { " mut" } else { "" };
+                _ = write!(self.out, "borrow{mutable} ");
+                if let Some(size) = size {
+                    _ = write!(self.out, "{size} ");
                 }
+                self.write_place(place);
+                _ = write!(self.out, " as {}", words.noun);
+            }
+            InstructionKind::Moved {
+                place,
+                size,
+                lent_again,
+            } => {
+                _ = write!(self.out, "moved {size} ");
+                self.write_place(place);
+                if let Some(step) = lent_again {
+                    _ = write!(self.out, " lent again with {step}");
+                }
+            }
+            InstructionKind::Dead(slot) => {
+                self.out.push_str("dead ");
+                self.write_slot(*slot);
             }
         }
     }
 
-    /// How a block ends.
+    fn write_binary(&mut self, name: &str, class: Class, left: &Operand, right: &Operand) {
+        _ = write!(self.out, "{name} {class} ");
+        self.write_operand(left);
+        self.out.push_str(", ");
+        self.write_operand(right);
+    }
+
     fn write_terminator(&mut self, terminator: &Terminator) {
         match terminator {
-            Terminator::Goto(target) => _ = write!(self.out, "goto bb{}", target.index()),
+            Terminator::Jump(target) => _ = write!(self.out, "jump bb{}", target.index()),
             Terminator::Branch {
                 condition,
-                span,
                 then,
                 otherwise,
+                ..
             } => {
                 self.out.push_str("branch ");
                 self.write_operand(condition);
-                _ = write!(
-                    self.out,
-                    " ({}) bb{} bb{}",
-                    self.file.slice(*span),
-                    then.index(),
-                    otherwise.index()
-                );
+                _ = write!(self.out, ", bb{}, bb{}", then.index(), otherwise.index());
             }
             Terminator::Return { value, .. } => {
                 self.out.push_str("return");
@@ -567,16 +1284,12 @@ impl Printer<'_> {
                 }
             }
             Terminator::Panic { message, .. } => {
-                self.out.push_str("panic ");
-                self.write_operand(&Operand::Constant(*message));
+                _ = write!(self.out, "panic \"{}\"", message.escape_ascii());
             }
-            Terminator::FallOff(span) => {
-                _ = write!(self.out, "fall off at `{}`", self.file.slice(*span));
-            }
+            Terminator::FallOff(_) => self.out.push_str("fall off at `}`"),
         }
     }
 
-    /// `operands`, separated by commas.
     fn write_operands(&mut self, operands: &[Operand]) {
         for (index, operand) in operands.iter().enumerate() {
             if index > 0 {
@@ -586,71 +1299,58 @@ impl Printer<'_> {
         }
     }
 
-    /// A place: its variable, then each step, `.*` for a dereference, a
-    /// field path for fields next to each other and `[at index]` for an
-    /// element (`line.2[1, 0]`, `r.3.*[0]`, `a.1[at %4][2]`).
-    fn write_place(&mut self, place: &Place) {
-        let name = if self.body.variables[place.variable].hidden {
-            "_"
-        } else {
-            self.file.slice(self.body.variables.span(place.variable))
-        };
-        _ = write!(self.out, "{name}.{}", place.variable.index());
-        let mut fields = Vec::new();
-        for &step in &place.projections {
-            if let Projection::Field(index) = step {
-                fields.push(index);
-                continue;
-            }
-            self.write_fields(&fields);
-            fields.clear();
-            match step {
-                Projection::Index(index) => {
-                    self.out.push_str("[at ");
-                    self.write_operand(&index);
-                    self.out.push(']');
-                }
-                Projection::Subslice(subslice) => {
-                    let Subslice { start, count } = self.body.subslices[subslice.index()];
-                    self.out.push_str("[from ");
-                    self.write_operand(&start);
-                    self.out.push_str(", count ");
-                    self.write_operand(&count);
-                    self.out.push(']');
-                }
-                Projection::Dereference | Projection::SliceElements => self.out.push_str(".*"),
-                Projection::Field(_) => unreachable!("gathered into `fields` above"),
-            }
+    fn write_operand(&mut self, operand: &Operand) {
+        match *operand {
+            Operand::Value(id) => _ = write!(self.out, "%{}", id.index()),
+            Operand::Constant { class, bits } => match class {
+                Class::F32 => _ = write!(self.out, "{}", f32::from_bits(bits[0] as u32)),
+                Class::F64 => _ = write!(self.out, "{}", f64::from_bits(bits[0])),
+                Class::I128 if bits[1] != 0 => _ = write!(self.out, "{:#x}", constant_value(bits)),
+                _ => _ = write!(self.out, "{}", bits[0]),
+            },
+            Operand::Parameter(index) => _ = write!(self.out, "arg{index}"),
+            Operand::Global(index) => _ = write!(self.out, "global {index}"),
         }
-        self.write_fields(&fields);
     }
 
-    /// A field path, `[1, 0]`; nothing for an empty one.
-    fn write_fields(&mut self, fields: &[u32]) {
-        if fields.is_empty() {
+    fn write_place(&mut self, place: &Place) {
+        match place.root {
+            Root::Slot(slot) => self.write_slot(slot),
+            Root::At(address) => {
+                self.out.push_str("at ");
+                self.write_operand(&address);
+            }
+            Root::Result => self.out.push_str("result"),
+        }
+        if place.steps.is_empty() {
             return;
         }
-        let path: Vec<String> = fields.iter().map(u32::to_string).collect();
-        _ = write!(self.out, "[{}]", path.join(", "));
-    }
-
-    fn write_operand(&mut self, operand: &Operand) {
-        _ = match *operand {
-            Operand::Constant(constant) => {
-                let Constant { value, ty } = &self.body.constants[constant.index()];
-                match (value, *ty) {
-                    (Value::Bool(value), _) => write!(self.out, "{value}"),
-                    (Value::Integer(limbs), _) => write!(self.out, "{}", integer_text(limbs)),
-                    (Value::Float(bits), _) => write!(self.out, "{}", f64::from_bits(*bits)),
-                    (Value::Bytes(bytes), TypeId::STR) => {
-                        write!(self.out, "\"{}\"", bytes.escape_ascii())
+        self.out.push('[');
+        for (index, step) in place.steps.iter().enumerate() {
+            if index > 0 {
+                self.out.push_str(", ");
+            }
+            match *step {
+                Step::Offset(bytes) => _ = write!(self.out, "+{bytes}"),
+                Step::Through => self.out.push('*'),
+                Step::Index { index, size, count } => {
+                    self.write_operand(&index);
+                    _ = write!(self.out, " * {size}");
+                    if let Some(count) = count {
+                        _ = write!(self.out, " of {count}");
                     }
-                    (Value::Bytes(bytes), _) => write!(self.out, "c\"{}\"", bytes.escape_ascii()),
-                    (Value::Null, _) => write!(self.out, "none"),
                 }
             }
-            Operand::Argument(index) => write!(self.out, "arg{index}"),
-            Operand::Value(value) => write!(self.out, "%{}", value.index()),
-        };
+        }
+        self.out.push(']');
+    }
+
+    /// A slot as its name and index, `sum.2`; a temporary has no name.
+    fn write_slot(&mut self, slot: Id<Slot>) {
+        if self.body.slots[slot].debug_type.is_some() {
+            self.out
+                .push_str(self.file.slice(self.body.slots.span(slot)));
+        }
+        _ = write!(self.out, ".{}", slot.index());
     }
 }

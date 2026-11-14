@@ -1,0 +1,12 @@
+// `count` and `court` are both one edit from `cout`; the local is nearer,
+// so it is the one suggested.
+const court: i32 = 1;
+
+fn main() {
+    let count = 2;
+    let a = cout; //~ error[T0002]: unknown name `cout`
+    //~ help: did you mean `count`?
+    // With no local that close, the module's name is suggested.
+    let b = courtt; //~ error[T0002]: unknown name `courtt`
+    //~ help: did you mean `court`?
+}

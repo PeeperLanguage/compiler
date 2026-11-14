@@ -128,8 +128,8 @@ Exit: one edited file re-checks only what its interface change affects.
 
 - Package manager commands, toolchain, `peeper fix`, formatter if wanted.
 - CI rebuilt for the new layout (`ci.yml`): fmt, clippy, `cargo test
-  --workspace`, whose fixtures build and run the `x_test` programs (with the
-  32-bit C library, for `target = "i686-linux"`), and `scripts/build.sh`, on
+  --workspace`, whose runner checks, dumps and runs the test programs in `test_programs/`
+  (with the 32-bit C library, for `//@ target: i686-linux`), and `scripts/build.sh`, on
   Linux, macOS and Windows, each on x86-64 and ARM64. The Go release workflows are gone;
   a release is built on a version tag (`release.yml`; `v0.3.1` is out), and
   `install-check.yml` installs it with the README's commands on each machine.
@@ -141,7 +141,7 @@ Exit: one edited file re-checks only what its interface change affects.
   or link an installed LLVM 23. The Linux and macOS packs have `lli`, which
   the ignored `llvm_parity` test runs; llvm-mingw has none. `check-toolchain-updates.yml` keeps the upstream
   pins current, as the Go pipeline on `legacy` did.
-- Fixture suite (`x_test`) brought back as the language acceptance target.
+- Test programs (`test_programs/`) as the language acceptance target.
 
 ## Open decisions
 

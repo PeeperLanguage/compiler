@@ -1,0 +1,14 @@
+fn main:
+  bb0:
+    store i64 length.0, 3
+    %1 = load i64 length.0
+    %2 = add i64 %1, 1
+    store i64 longer.1, %2
+    %4 = load i64 longer.1
+    %5 = load i64 length.0
+    %6 = slt i64 %5, %4
+    store i8 ready.2, %6
+    dead ready.2
+    dead longer.1
+    dead length.0
+    fall off at `}`

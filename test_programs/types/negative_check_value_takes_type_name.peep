@@ -1,0 +1,10 @@
+// A value can't take the name of a type in scope, declared or built-in: the
+// name stays the type's.
+type Meters = i64;
+
+fn main() {
+    let Meters = 1; //~ error[T0003]: `Meters` is a type; a value can't take its name
+    let far: Meters = 2;
+    let i32 = 3; //~ error[T0003]: `i32` is a type; a value can't take its name
+    let n = i32; //~ error[T0004]: `i32` is a type, not a value
+}

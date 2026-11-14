@@ -10,8 +10,16 @@ publish.workspace = true
 arena.workspace = true
 bigint.workspace = true
 model.workspace = true
+syntax.workspace = true
 runtime_abi.workspace = true
+rustc-hash.workspace = true
 source.workspace = true
+
+[dev-dependencies]
+check.workspace = true
+features.workspace = true
+parser.workspace = true
+project.workspace = true
 
 [lints]
 workspace = true

@@ -1,9 +1,0 @@
-// `_` binds nothing, so it cannot name a declaration or stand for a value.
-const _: i32 = 2;
-
-fn _() {}
-
-fn main() {
-    let _ = 1;
-    let x = _;
-}

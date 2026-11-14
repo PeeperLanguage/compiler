@@ -1,0 +1,6 @@
+//@ run
+//@ exit-code: 1
+
+fn main(code: i32) -> i64 { //~ error[M0006]: program entrypoint must be a local body-backed `fn main()` or `fn main() -> i32`
+    return 0;
+}

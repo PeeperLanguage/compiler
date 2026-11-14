@@ -1,154 +1,233 @@
-//! What each instruction does, but for a call or a phi, which change what
-//! runs next (`calls`).
+//! What each instruction does, but a call, which changes what runs next
+//! (`run_frames`). The operations themselves are `crate::operations`.
+
+use std::borrow::Cow;
 
 use arena::Id;
 use bigint::Limbs;
-use model::constant::Value;
-use model::mir;
+use model::mir::Class;
+use model::mir::Conversion;
+use model::mir::Instruction;
 use model::mir::InstructionKind;
-use model::operators::BinaryOp;
-use model::semantic_types::Type;
+use model::mir::Operand;
+use model::mir::Place;
+use model::mir::Root;
+use model::mir::Step;
+
+use crate::operations;
+use crate::operations::RegisterValue;
 
 use super::ADDRESS_NOT_KNOWN;
-use super::Failure;
+use super::Halt;
+use super::INVALID_ACCESS;
 use super::Interpreter;
-use super::Register;
-use crate::conversions;
-use crate::operators;
 
-impl<'b> Interpreter<'b, '_> {
-    /// Runs the instruction `id`, not a call or a phi, giving its value, if
-    /// it has one.
-    pub(super) fn run_instruction(
-        &mut self,
-        id: Id<mir::Instruction>,
-    ) -> Result<Option<Register>, Failure> {
+impl Interpreter<'_, '_> {
+    /// Runs the instruction `id`, giving its value, if it has one.
+    pub(super) fn run_instruction(&mut self, id: Id<Instruction>) -> Result<Option<u128>, Halt> {
         let body = self.frame().body;
-        let span = body.instructions.span(id);
-        let types = self.types;
+        let at = self.first_value + id.index();
         let value = match &body.instructions[id].kind {
-            InstructionKind::Load(place) | InstructionKind::Move(place) => {
-                let located = self.locate(place, span)?;
-                let ty = body.instructions[id].ty;
-                Some(self.read_value(located.address, ty, span)?)
-            }
-            // After the elements' address.
-            InstructionKind::Length(place) => {
-                let located = self.locate(place, span)?;
-                let length = located.address.wrapping_add(self.pointer_bytes());
-                let ty = body.instructions[id].ty;
-                Some(self.read_value(length, ty, span)?)
-            }
-            InstructionKind::Store { place, value } => {
-                let located = self.locate(place, span)?;
-                let register = self.operand(value);
-                let ty = body.operand_type(*value);
-                self.write_value(located.address, ty, &register, span)?;
-                None
-            }
-            InstructionKind::Binary { op, left, right } => {
-                let left_type = &types[body.operand_type(*left)];
-                let right_type = &types[body.operand_type(*right)];
-                match (self.operand(left), self.operand(right)) {
-                    (Register::Scalar(left), Register::Scalar(right)) => {
-                        let value = operators::binary(*op, left_type, &left, right_type, &right)
-                            .map_err(|message| self.fail(message, span))?;
-                        Some(Register::Scalar(value))
-                    }
-                    // `rawptr + usize`; a wrong address stops the run where it
-                    // is used.
-                    (Register::Address(address), Register::Scalar(Value::Integer(offset))) => {
-                        if self.host.is_none() {
-                            let message = "a pointer offset cannot run at compile time, \
-                                as it could read an address";
-                            return Err(self.fail(message, span));
-                        }
-                        let bits = self.target.pointer_bits;
-                        let sum = bigint::add(bits, &Limbs::new(bits, &[address]), &offset);
-                        let sum = bigint::to_u64(bits, false, &sum)
-                            .expect("a sum wrapped to a pointer's bits fits 64 bits");
-                        Some(Register::Address(sum))
-                    }
-                    (Register::Address(left), Register::Address(right)) => {
-                        if self.host.is_none() && left != 0 && right != 0 {
-                            return Err(self.fail(ADDRESS_NOT_KNOWN, span));
-                        }
-                        let equal = left == right;
-                        let value = equal == (*op == BinaryOp::EqualTo);
-                        Some(Register::Scalar(Value::Bool(value)))
-                    }
-                    _ => unreachable!(
-                        "check gives `{op:?}` two numbers, two pointers, or a pointer and an offset"
-                    ),
-                }
-            }
-            InstructionKind::Unary { op, value } => {
-                let ty = &types[body.operand_type(*value)];
-                let Register::Scalar(value) = self.operand(value) else {
-                    unreachable!("a unary operator takes a number or a `bool`")
-                };
-                Some(Register::Scalar(operators::unary(*op, ty, &value)))
-            }
-            InstructionKind::Convert(value) => {
-                let from = &types[body.operand_type(*value)];
-                let to = &types[body.instructions[id].ty];
-                Some(match self.operand(value) {
-                    Register::Scalar(value) => {
-                        Register::Scalar(conversions::convert(from, to, &value))
-                    }
-                    Register::Address(0) => Register::Address(0), // `none` stays `none`
-                    // A cast keeps the address, but it is the way to a
-                    // pointer's bytes, and to what is next to a value.
-                    _ if self.host.is_none() && matches!(to, Type::RawPointer { .. }) => {
-                        let message = "a pointer cast cannot run at compile time, \
-                            as it could read an address";
-                        return Err(self.fail(message, span));
-                    }
-                    pointer => pointer,
-                })
-            }
-            InstructionKind::Call { .. } | InstructionKind::Phi(_) => {
-                unreachable!("`run_frames` and `enter_block` run these")
-            }
-            InstructionKind::Check { failed, message } => {
-                if let Register::Scalar(Value::Bool(true)) = self.operand(failed) {
-                    return Err(self.fail(&**message, span));
-                }
-                None
-            }
-            InstructionKind::ScopeEnd(variable) => {
-                let frame = self.frames.last_mut().expect("a run has a frame");
-                let started = frame.variables.get_mut(variable.index());
-                if let Some(address) = started.filter(|address| **address != 0) {
-                    self.memory.close_block(std::mem::take(address));
-                }
-                None
-            }
-            InstructionKind::Borrow { place, .. } | InstructionKind::Address(place) => {
-                Some(self.borrow(id, place)?)
-            }
-            InstructionKind::ToInterface {
-                reference,
-                implementation,
+            &InstructionKind::Integer {
+                operation,
+                class,
+                left,
+                right,
             } => {
-                let Register::Address(address) = self.operand(reference) else {
-                    unreachable!("a reference's register is an address")
-                };
-                let table = implementation.index() as u64;
-                Some(Register::Interface { address, table })
-            }
-            InstructionKind::Aggregate(parts) => Some(self.aggregate(id, parts, span)?),
-            InstructionKind::ArrayParts(parts) => Some(self.array_parts(id, parts, span)?),
-            InstructionKind::Field { value, fields } => Some(self.field(id, value, fields)?),
-            InstructionKind::Print { newline, values } => {
-                if self.host.is_none() {
-                    let message = "`print` calls cannot run at compile time yet";
-                    return Err(self.fail(message, span));
+                // Only `rawptr + usize` works on the pointer class.
+                if class == Class::Pointer && self.memory.is_constant() {
+                    let message = "a pointer offset cannot run at compile time, \
+                        as it could read an address";
+                    return Err(self.fail(message, self.span_of(id)));
                 }
-                self.print(*newline, values, span)?;
-                None
+                let (left, right) = (self.register(class, left), self.register(class, right));
+                let value = operations::integer(operation, self.class_bits(class), &left, &right);
+                let value = value.map_err(|message| self.fail(message, self.span_of(id)))?;
+                self.hold(at, value)
+            }
+            &InstructionKind::Float {
+                operation,
+                class,
+                left,
+                right,
+            } => operations::float(operation, class, self.operand(left), self.operand(right)),
+            &InstructionKind::Compare {
+                comparison,
+                class,
+                left,
+                right,
+            } => {
+                if class == Class::Pointer
+                    && self.memory.is_constant()
+                    && self.operand(left) != 0
+                    && self.operand(right) != 0
+                {
+                    return Err(self.fail(ADDRESS_NOT_KNOWN, self.span_of(id)));
+                }
+                let (left, right) = (self.register(class, left), self.register(class, right));
+                let bits = self.class_bits(class);
+                u128::from(operations::compare(comparison, class, bits, &left, &right))
+            }
+            &InstructionKind::Convert {
+                conversion,
+                from,
+                to,
+                value,
+            } => {
+                // `none` stays `none`; any other address could reach an
+                // address's bytes.
+                if conversion == Conversion::PointerCast
+                    && self.memory.is_constant()
+                    && self.operand(value) != 0
+                {
+                    let message = "a pointer cast cannot run at compile time, \
+                        as it could read an address";
+                    return Err(self.fail(message, self.span_of(id)));
+                }
+                let (from_bits, to_bits) = (self.class_bits(from), self.class_bits(to));
+                let value = self.register(from, value);
+                let value = operations::convert(conversion, from, from_bits, to, to_bits, &value);
+                self.hold(at, value)
+            }
+            InstructionKind::Load { class, place } => {
+                let address = self.address(place, id)?;
+                if let Class::Wide(bits) = *class {
+                    let size = u64::from(bits.div_ceil(8)); // as `store` keeps it
+                    let value = Limbs::from_le_bytes(bits, self.read_bytes(address, size, id)?);
+                    self.hold(at, RegisterValue::Wide(Cow::Owned(value)))
+                } else {
+                    self.load(*class, address, id)?
+                }
+            }
+            InstructionKind::Store {
+                class,
+                place,
+                value,
+            } => {
+                let address = self.address(place, id)?;
+                let value = self.operand(*value);
+                self.store(*class, address, value, id)?;
+                return Ok(None);
+            }
+            InstructionKind::Copy { to, from, size } => {
+                let (to, from) = (self.address(to, id)?, self.address(from, id)?);
+                self.count_copy(*size, id)?;
+                let copied = self.memory.copy(from, to, *size);
+                copied.ok_or_else(|| self.fail(INVALID_ACCESS, self.span_of(id)))?;
+                return Ok(None);
+            }
+            InstructionKind::Address { place, .. } | InstructionKind::Borrow { place, .. } => {
+                u128::from(self.address(place, id)?)
+            }
+            InstructionKind::Call { .. } => unreachable!("`run_frames` runs a call"),
+            InstructionKind::Check { failed, message } => {
+                if self.operand(*failed) != 0 {
+                    return Err(self.fail(&**message, self.span_of(id)));
+                }
+                return Ok(None);
+            }
+            InstructionKind::Moved { .. } => return Ok(None),
+            InstructionKind::Dead(slot) => {
+                // A program's frame keeps no slot starts: its slots stay put.
+                let started = self.frame_mut().slots.get_mut(slot.index());
+                if let Some(started) = started.and_then(Option::take) {
+                    self.memory.close_block(started.get());
+                }
+                return Ok(None);
             }
         };
-        Ok(value)
+        Ok(Some(value))
+    }
+
+    /// What `operand`, of `class`, holds.
+    fn register(&self, class: Class, operand: Operand) -> RegisterValue<'_> {
+        match class {
+            Class::Wide(_) => {
+                RegisterValue::Wide(Cow::Borrowed(&self.wides[self.operand(operand) as usize]))
+            }
+            _ => RegisterValue::Narrow(self.operand(operand)),
+        }
+    }
+
+    /// The register at `at` holding `value`: a wide value is kept in
+    /// `wides` at `at`.
+    pub(super) fn hold(&mut self, at: usize, value: RegisterValue) -> u128 {
+        match value {
+            RegisterValue::Narrow(value) => value,
+            RegisterValue::Wide(limbs) => {
+                if self.wides.len() <= at {
+                    self.wides.resize(at + 1, Limbs::new(0, &[]));
+                }
+                self.wides[at] = limbs.into_owned();
+                at as u128
+            }
+        }
+    }
+
+    /// The address of `place`: its root, then each step, reading the
+    /// pointer at each `Through`. A sum wraps at the pointer's width, as
+    /// any number a raw pointer holds may be wrong: the access that follows
+    /// is what refuses it.
+    pub(super) fn address(&mut self, place: &Place, id: Id<Instruction>) -> Result<u64, Halt> {
+        let mut address = match place.root {
+            Root::Slot(slot) => self.slot_address(slot, id)?,
+            Root::At(operand) => self.operand(operand) as u64,
+            Root::Result => self.registers[self.first_register] as u64,
+        };
+        let wrap = operations::mask(self.target.pointer_bits) as u64;
+        for &step in &place.steps {
+            address = match step {
+                Step::Offset(bytes) => address.wrapping_add(bytes) & wrap,
+                Step::Through => self.load(Class::Pointer, address, id)? as u64,
+                Step::Index { index, size, .. } => {
+                    let offset = (self.operand(index) as u64).wrapping_mul(size);
+                    address.wrapping_add(offset) & wrap
+                }
+            };
+        }
+        Ok(address)
+    }
+
+    /// The `length` bytes at `address`, or the run stops at the instruction `id`.
+    pub(super) fn read_bytes(
+        &self,
+        address: u64,
+        length: u64,
+        id: Id<Instruction>,
+    ) -> Result<&[u8], Halt> {
+        let bytes = self.memory.bytes(address, length);
+        bytes.ok_or_else(|| self.fail(INVALID_ACCESS, self.span_of(id)))
+    }
+
+    /// The register of `class`, not `Wide`, kept at `address`.
+    fn load(&self, class: Class, address: u64, id: Id<Instruction>) -> Result<u128, Halt> {
+        let size = class.bytes(self.target.pointer_bytes());
+        let bytes = self.read_bytes(address, size, id)?;
+        let mut word = [0; 16];
+        word[..size as usize].copy_from_slice(bytes);
+        Ok(u128::from_le_bytes(word))
+    }
+
+    /// Keeps `value`, a register of `class`, at `address`.
+    fn store(
+        &mut self,
+        class: Class,
+        address: u64,
+        value: u128,
+        id: Id<Instruction>,
+    ) -> Result<(), Halt> {
+        // A wide integer covers its own bytes, not the padding of its slot.
+        let size = match class {
+            Class::Wide(bits) => u64::from(bits.div_ceil(8)),
+            _ => class.bytes(self.target.pointer_bytes()),
+        };
+        let Some(bytes) = self.memory.bytes_mut(address, size) else {
+            return Err(self.fail(INVALID_ACCESS, self.span_of(id)));
+        };
+        match class {
+            Class::Wide(_) => self.wides[value as usize].write_le_bytes(bytes),
+            _ => bytes.copy_from_slice(&value.to_le_bytes()[..size as usize]),
+        }
+        Ok(())
     }
 }

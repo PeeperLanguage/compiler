@@ -1,6 +1,0 @@
-name = "mir_array_loops"
-build = "program"
-
-[test]
-mode = "mir"
-outcome = "success"

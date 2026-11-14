@@ -1,0 +1,61 @@
+//@ library
+
+// An inner block's `let` that hides an outer `mut` local was likely meant as
+// an assignment: the outer one is unchanged.
+
+fn Hidden(ready: bool) -> i32 {
+    let mut total = 0; //~ label: the outer `total`, declared `mut` here
+    if ready {
+        let total = 5; //~ warning[W0018]: this `let` hides the outer `mut total`
+        //~ label: a new `total`, only inside this block
+        //~ help: to change the outer `total`, write `total = ...` without `let`
+    }
+    return total;
+}
+
+fn HiddenDeeper(ready: bool) -> i32 {
+    let mut count = 1;
+    if ready {
+        {
+            let count = 2; //~ warning[W0018]: this `let` hides the outer `mut count`
+        }
+        return count;
+    }
+    return 0;
+}
+
+fn NotReadAfter(ready: bool) {
+    let mut total = 0;
+    total = total + 1;
+    if ready {
+        let total = 5; //~ warning[W0018]: this `let` hides the outer `mut total`
+    }
+}
+
+fn ReadBeforeHiding(ready: bool) -> i32 {
+    let mut total = 1;
+    if ready {
+        let doubled = total * 2;
+        let total = doubled; //~ warning[W0018]: this `let` hides the outer `mut total`
+        return total;
+    }
+    return 0;
+}
+
+// Shadowing stays silent in every other case.
+
+fn OuterNotMutable(ready: bool) -> i32 {
+    let total = 0;
+    if ready {
+        let total = 5;
+    }
+    return total;
+}
+
+fn InnerShadowsParameter(limit: i32) -> i32 {
+    if limit > 0 {
+        let limit = 1;
+        return limit;
+    }
+    return limit;
+}

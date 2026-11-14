@@ -1,0 +1,10 @@
+fn main:
+  bb0:
+    store ptr text.0, global 0
+    %1 = call Write(1, global 1, 12) in C (register, register, register) -> register
+    %2 = load ptr text.0
+    %3 = call Write(2, %2, 4) in C (register, register, register) -> register
+    dead text.0
+    fall off at `}`
+  global 0 = "bye\n\x00"
+  global 1 = "hello\tworld\n\x00"

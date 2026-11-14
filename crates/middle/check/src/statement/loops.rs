@@ -7,8 +7,6 @@ use arena::Id;
 use arena::List;
 use bigint::Limbs;
 use diagnostics::Diagnostic;
-use model::ast;
-use model::ast::Ident;
 use model::constant::Value;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
@@ -19,15 +17,18 @@ use model::thir::Local;
 use model::thir::Stmt;
 use model::thir::Variable;
 use source::Span;
+use syntax::ast;
+use syntax::ast::Ident;
 
+use crate::Checked;
 use crate::builder::ThirBuilder;
 
-impl ThirBuilder<'_, '_> {
+impl<L: Checked> ThirBuilder<'_, '_, L> {
     /// `close_block` for a loop's `body`, in which `break` and `continue`
     /// are allowed.
     pub(super) fn check_loop_body(
         &mut self,
-        body: Id<ast::Block>,
+        body: Id<ast::Block<L>>,
         enclosing: (Id<Block>, usize),
         first: Option<Id<Stmt>>,
     ) -> Id<Block> {
@@ -62,7 +63,7 @@ impl ThirBuilder<'_, '_> {
         index: Option<Ident>,
         value: Option<Ident>,
         range: Id<Expr>,
-        body: Id<ast::Block>,
+        body: Id<ast::Block<L>>,
     ) -> Stmt {
         let element = match self.checker.types[self.body.exprs[range].ty] {
             Type::Range { element, .. } => element,
@@ -81,41 +82,6 @@ impl ThirBuilder<'_, '_> {
             range,
             body,
         }
-    }
-
-    /// The step of a range, written `step` or else 1 at `range_span`, of
-    /// the range type's step type `step_type` (`Types::range`), and not a
-    /// constant zero. With an invalid `step_type`, after an error in the
-    /// ends, it is checked only for its own errors.
-    pub(crate) fn check_range_step(
-        &mut self,
-        step: Option<Id<ast::Expr>>,
-        step_type: TypeId,
-        range_span: Span,
-    ) -> Id<Expr> {
-        let Some(step) = step else {
-            let one = match self.checker.types[step_type] {
-                Type::Integer(unsigned) => Expr {
-                    ty: step_type,
-                    kind: ExprKind::Constant(Value::Integer(Limbs::new(unsigned.bits, &[1]))),
-                },
-                _ => Expr::INVALID,
-            };
-            return self.body.add(one, range_span);
-        };
-        let step = match step_type {
-            TypeId::INVALID => self.add_expr(step, None),
-            ty => self.add_required(step, ty),
-        };
-        if let ExprKind::Constant(Value::Integer(limbs)) = &self.body.exprs[step].kind
-            && limbs.as_slice().iter().all(|&limb| limb == 0)
-        {
-            let span = self.body.exprs.span(step);
-            let message = "a range's step must not be zero";
-            self.checker
-                .error(diagnostics::INVALID_OPERATION, message, span);
-        }
-        step
     }
 
     /// `for value in items { body }` or `for index, value in items`, over an
@@ -139,7 +105,7 @@ impl ThirBuilder<'_, '_> {
         index: Option<Ident>,
         value: Ident,
         iterable: Id<Expr>,
-        body: Id<ast::Block>,
+        body: Id<ast::Block<L>>,
     ) -> Option<Stmt> {
         self.reborrow_in_place(iterable);
         let (items_type, span) = (self.body.exprs[iterable].ty, self.body.exprs.span(iterable));

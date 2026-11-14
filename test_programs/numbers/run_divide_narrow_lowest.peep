@@ -1,0 +1,36 @@
+//@ run
+
+// The lowest value of a signed type divided by -1 wraps to itself at every
+// width, folded or computed at run time; its remainder is 0.
+fn divide5(left: i5, right: i5) -> i5 {
+    return left / right;
+}
+
+fn remainder5(left: i5, right: i5) -> i5 {
+    return left % right;
+}
+
+fn divide13(left: i13, right: i13) -> i13 {
+    return left / right;
+}
+
+fn remainder13(left: i13, right: i13) -> i13 {
+    return left % right;
+}
+
+fn divide100(left: i100, right: i100) -> i100 {
+    return left / right;
+}
+
+fn remainder100(left: i100, right: i100) -> i100 {
+    return left % right;
+}
+
+fn main() {
+    const FOLDED5: i5 = -16 / -1;
+    println("i5:", FOLDED5, divide5(-16, -1), remainder5(-16, -1));
+    const FOLDED13: i13 = -4096 / -1;
+    println("i13:", FOLDED13, divide13(-4096, -1), remainder13(-4096, -1));
+    const FOLDED100: i100 = -633825300114114700748351602688 / -1;
+    println("i100:", FOLDED100, divide100(-633825300114114700748351602688, -1), remainder100(-633825300114114700748351602688, -1));
+}

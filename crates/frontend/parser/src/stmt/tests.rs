@@ -25,17 +25,9 @@ fn parses_statements() {
     for { break; }
     for n < limit { continue; }
     for item in items { }
-    for i, item in items[1..] { }
-    for 0..n { }
-    for v in n..=0:2 { }
-    match shape {
-        Shape::Dot => { }
-        Shape::Line with .{ end } => { }
-        Shape::Maybe with none => { }
-        Shape::Wrap with Inner::Leaf with value => { }
-        _ => { }
-    }
-    panic \"stop\";
+    for i, item in items { }
+    for n { }
+    for v in values { }
     { }
 }
 ";
@@ -91,63 +83,15 @@ fn parses_statements() {
       for in statement
         declared name i
         declared name item
-        index expression
-          name reference items
-          range ..
-            number literal 1
+        name reference items
         block { }
       loop statement
-        range ..
-          number literal 0
-          name reference n
+        name reference n
         block { }
       for in statement
         declared name v
-        range ..=
-          name reference n
-          number literal 0
-          number literal 2
+        name reference values
         block { }
-      match statement
-        name reference shape
-        match arm
-          case pattern
-            path
-              type name Shape
-              type name Dot
-          block { }
-        match arm
-          case pattern
-            path
-              type name Shape
-              type name Line
-            struct pattern
-              field pattern
-                field name end
-          block { }
-        match arm
-          case pattern
-            path
-              type name Shape
-              type name Maybe
-            none pattern none
-          block { }
-        match arm
-          case pattern
-            path
-              type name Shape
-              type name Wrap
-            case pattern
-              path
-                type name Inner
-                type name Leaf
-              declared name value
-          block { }
-        match arm
-          wildcard pattern _
-          block { }
-      panic statement
-        string literal \"stop\"
       block { }
 ";
     assert!(messages(text).is_empty());
@@ -162,14 +106,14 @@ fn assignment_in_condition_is_read_as_equal_to() {
         .stmts
         .ids()
         .find_map(|statement| match tree.stmts[statement] {
-            model::ast::Stmt::If { condition, .. } => Some(condition),
+            syntax::ast::Stmt::If { condition, .. } => Some(condition),
             _ => None,
         })
         .expect("an if statement");
     assert!(matches!(
         tree.exprs[condition],
-        model::ast::Expr::Binary {
-            op: model::operators::BinaryOp::EqualTo,
+        syntax::ast::Expr::Binary {
+            op: syntax::operators::BinaryOp::EqualTo,
             ..
         }
     ));
@@ -188,26 +132,6 @@ fn statement_errors() {
         ("for x in items", "missing for body", None),
         ("for a.b in x {}", "invalid loop variable", None),
         ("break outer;", "labeled break is not supported yet", None),
-        (
-            "match x { A::B {} }",
-            "expected `=>` after match case",
-            Some("match x { A::B => {} }"),
-        ),
-        (
-            "match x { A::B => {}, _ => {} }",
-            "match arms do not use commas",
-            Some("match x { A::B => {} _ => {} }"),
-        ),
-        (
-            "match x { a => {} }",
-            "enum case must use a fully named path",
-            None,
-        ),
-        (
-            "match x { A::B with => {} }",
-            "expected a pattern after `with`",
-            None,
-        ),
         (
             "let .{ a = b } = v;",
             "a destructure field is renamed with `as`",

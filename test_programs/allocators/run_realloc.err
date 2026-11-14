@@ -1,0 +1,2 @@
+panic: a stack's pieces are resized newest first
+  --> <libraries>/core/src/memory.peep:244:9

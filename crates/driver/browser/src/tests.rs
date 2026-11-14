@@ -1,4 +1,8 @@
 use super::*;
+use features::Peeper;
+use test_programs::Mark;
+use test_programs::Mode;
+use test_programs::TestProgram;
 
 /// The project named playground of the files `entries`, each a path in `src`
 /// and its text.
@@ -13,7 +17,7 @@ fn files(entries: &[(&str, &str)]) -> HashMap<String, String> {
 const MANIFEST: &str = manifest::FILE_NAME;
 
 /// What `files` load to, when their peeper.toml gives a project.
-fn loaded(files: HashMap<String, String>) -> model::program::Program {
+fn loaded(files: HashMap<String, String>) -> model::program::Program<Peeper> {
     let project = project_of(&files).expect("the files are a project");
     load(&project, files)
 }
@@ -172,139 +176,95 @@ fn every_core_module_is_built_in() {
     assert!(errors.is_empty(), "{errors:?}");
 }
 
-/// The files under `folder`, by their path from `root`.
-fn read_source(root: &Path, folder: &Path, found: &mut HashMap<String, String>) {
-    for entry in std::fs::read_dir(folder)
-        .expect("a fixture's folder reads")
-        .flatten()
-    {
-        let path = entry.path();
-        if path.is_dir() {
-            read_source(root, &path, found);
-        } else if let Ok(text) = std::fs::read_to_string(&path) {
-            let name = path.strip_prefix(root).expect("the file is under its root");
-            found.insert(name.to_string_lossy().replace('\\', "/"), text);
-        }
-    }
+/// The files a page gives for `program`: its peeper.toml and sources.
+fn page_files(program: &TestProgram) -> HashMap<String, String> {
+    let sources =
+        (program.sources.iter()).map(|(file, text)| (format!("src/{file}"), text.clone()));
+    sources
+        .chain([(MANIFEST.to_string(), program.manifest())])
+        .collect()
 }
 
+/// Every test program that is checked reports here what it does on the
+/// command line: each diagnostic marked, at its line.
 #[test]
-fn check_fixtures_fail_here_with_the_same_number_of_errors() {
-    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../x_test");
+fn test_programs_check_here_as_marked() {
+    let mut failures = Vec::new();
     let mut checked = 0;
-    for folder in std::fs::read_dir(fixtures)
-        .expect("x_test exists")
-        .flatten()
-    {
-        let folder = folder.path();
-        let Ok(text) = std::fs::read_to_string(folder.join("peeper.toml")) else {
-            continue;
-        };
-        let manifest: toml_edit::DocumentMut =
-            text.parse().expect("a fixture's peeper.toml parses");
-        let test = |key: &str| manifest.get("test").and_then(|test| test.get(key));
-        let outcome = test("outcome").and_then(toml_edit::Item::as_str);
-        if test("mode").and_then(toml_edit::Item::as_str) != Some("check")
-            || outcome != Some("failure")
-            || test("target").is_some()
-        {
+    for program in test_programs::all() {
+        if program.mode != Mode::Check || program.target.is_some() {
             continue;
         }
-        let name = manifest["name"].as_str().expect("a fixture has a name");
-        let mut source_files = HashMap::from([(MANIFEST.to_string(), text)]);
-        read_source(&folder, &folder.join("src"), &mut source_files);
-        let found = check(source_files);
-        let found = found.as_array().expect("a check gives a list");
-        let errors = found
-            .iter()
-            .filter(|entry| entry["severity"] == "error")
-            .count();
-        assert!(errors > 0, "{name}: no error found");
-        let wanted = test("stderr_contains").and_then(toml_edit::Item::as_array);
-        let summary = wanted
-            .into_iter()
-            .flatten()
-            .filter_map(|text| text.as_str()?.strip_prefix("Compilation failed with "))
-            .next();
-        // The count starts the summary, which may go on with warnings or end
-        // early ("32 error").
-        if let Some(summary) = summary {
-            let count: String = summary.chars().take_while(char::is_ascii_digit).collect();
-            assert_eq!(errors.to_string(), count, "{name}: {found:#?}");
+        let found = check(page_files(&program));
+        let reported: Vec<Mark> = (found.as_array().expect("a check gives a list").iter())
+            .map(|entry| {
+                let severity = entry["severity"].as_str().expect("a severity");
+                let code = entry["code"].as_str().expect("a code");
+                let message = entry["message"].as_str().expect("a message");
+                let message = message.lines().next().unwrap_or_default();
+                let place = &entry["place"];
+                let file = place["file"].as_str().expect("a file");
+                Mark {
+                    file: file.strip_prefix("src/").unwrap_or(file).to_string(),
+                    line: place["start"]["line"].as_u64().expect("a line") as usize,
+                    text: format!("{severity}[{code}]: {message}"),
+                }
+            })
+            .collect();
+        let marked: Vec<Mark> = (program.marks.iter())
+            .filter(|mark| mark.is_diagnostic())
+            .cloned()
+            .collect();
+        for problem in test_programs::mismatches(&marked, &reported) {
+            failures.push(format!("{}: {problem}", program.name));
         }
         checked += 1;
     }
-    assert!(checked > 0, "no check fixtures found");
+    assert!(checked > 0, "no checked test programs");
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
-/// Every fixture that runs a program runs here too, from text as a page gives
-/// it, with no backend, and does what its peeper.toml says. The fixtures test
-/// compares it with the compiled program byte for byte.
+/// Every test program that runs runs here too, from text as a page gives
+/// it, with no backend, and writes and exits as beside it; a page's
+/// libraries are at `/`, written `<libraries>/` beside it. The command
+/// line's test compares that with the compiled program byte for byte.
 #[test]
-fn run_fixtures_run_here_with_the_same_results() {
-    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../x_test");
+fn test_programs_run_here_as_expected() {
     let mut failures = Vec::new();
     let mut ran = 0;
-    for folder in std::fs::read_dir(fixtures)
-        .expect("x_test exists")
-        .flatten()
-    {
-        let folder = folder.path();
-        let Ok(text) = std::fs::read_to_string(folder.join("peeper.toml")) else {
-            continue;
-        };
-        let manifest: toml_edit::DocumentMut =
-            text.parse().expect("a fixture's peeper.toml parses");
-        let test = |key: &str| manifest.get("test").and_then(|test| test.get(key));
-        if test("mode").and_then(toml_edit::Item::as_str) != Some("run") {
+    for program in test_programs::all() {
+        if program.mode != Mode::Run || program.library {
             continue;
         }
-        let name = manifest["name"].as_str().expect("a fixture has a name");
-        let mut source_files = HashMap::from([(MANIFEST.to_string(), text.clone())]);
-        read_source(&folder, &folder.join("src"), &mut source_files);
-        let target = test("target").and_then(toml_edit::Item::as_str);
-        let target = Machine::named(target.unwrap_or(TARGET)).expect("the target is a machine");
-        let program = loaded(source_files);
-        let (results, interpreted) = compile::interpret(&program, target);
+        let name = &program.name;
+        let target = program.target.as_deref().unwrap_or(TARGET);
+        let target = Machine::named(target).expect("the target is a machine");
+        let (results, interpreted) = compile::interpret(&loaded(page_files(&program)), target);
         let Some(interpreted) = interpreted else {
-            // A fixture of a program that must not build.
-            if test("outcome").and_then(toml_edit::Item::as_str) != Some("failure") {
+            if !program.has_errors() {
                 let errors: Vec<_> = results.diagnostics().map(|d| d.message.clone()).collect();
                 failures.push(format!("{name}: did not start: {errors:?}"));
             }
             continue;
         };
         ran += 1;
-        let (code, stdout, stderr) = (
-            i64::from(interpreted.exit_code),
-            String::from_utf8_lossy(&written(&interpreted, Stream::Stdout)).into_owned(),
-            String::from_utf8_lossy(&written(&interpreted, Stream::Stderr)).into_owned(),
-        );
-        let expected = match test("outcome").and_then(toml_edit::Item::as_str) {
-            Some("success") => code == 0,
-            Some("failure") => code != 0,
-            Some("exit_code") => {
-                Some(code) == test("exit_code").and_then(toml_edit::Item::as_integer)
-            }
-            other => panic!("{name}: outcome {other:?}"),
-        };
-        if !expected {
-            failures.push(format!("{name}: exit code {code}\n{stderr}"));
+        let stdout = String::from_utf8_lossy(&written(&interpreted, Stream::Stdout)).into_owned();
+        let stderr = written(&interpreted, Stream::Stderr);
+        let stderr = String::from_utf8_lossy(&stderr).replace("--> /", "--> <libraries>/");
+        if interpreted.exit_code != program.exit_code {
+            failures.push(format!(
+                "{name}: exit code {}\n{stderr}",
+                interpreted.exit_code
+            ));
         }
-        for (key, printed) in [("stdout_contains", &stdout), ("stderr_contains", &stderr)] {
-            let wanted = test(key).and_then(toml_edit::Item::as_array);
-            for text in wanted
-                .into_iter()
-                .flatten()
-                .filter_map(|text| text.as_str())
-            {
-                if !printed.contains(text) {
-                    failures.push(format!("{name}: {key} lacks {text:?}\n{printed}"));
-                }
-            }
+        if stdout != program.expected("out") {
+            failures.push(format!("{name}: stdout differs\n{stdout}"));
+        }
+        if stderr != program.expected("err") {
+            failures.push(format!("{name}: stderr differs\n{stderr}"));
         }
     }
-    assert!(ran > 0, "no run fixtures found");
+    assert!(ran > 0, "no run test programs");
     assert!(failures.is_empty(), "{}", failures.join("\n\n"));
 }
 
@@ -452,16 +412,6 @@ fn exit_ends_a_program_with_its_code_and_keeps_its_output() {
         negative.exit_code, 255,
         "the low 8 bits, as Linux gives them"
     );
-}
-
-#[test]
-fn printing_a_huge_value_stops_before_its_text_is_built() {
-    let run = interpreted(
-        "#[extern(\"malloc\")]\nfn malloc(size: usize) -> *[64000000]u8;\nfn main() {\n    let block = malloc(64000000);\n    println(&block.*);\n}\n",
-    );
-    assert_eq!(run.exit_code, 101);
-    assert!(written(&run, Stream::Stdout).is_empty());
-    assert!(written(&run, Stream::Stderr).starts_with(b"panic: this printed more than"));
 }
 
 #[test]

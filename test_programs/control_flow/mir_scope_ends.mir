@@ -1,0 +1,130 @@
+fn walk:
+  bb0:
+    store i32 limit.0, arg0
+    store i32 total.1, 0
+    %2 = load i32 limit.0
+    %3 = sle i32 0, %2
+    branch %3, bb1, bb2
+  bb1:
+    %4 = sub i32 %2, 0
+    store i32 .8, %4
+    store i32 .9, 1
+    jump bb3
+  bb2:
+    %7 = sub i32 0, %2
+    store i32 .8, %7
+    store i32 .9, 4294967295
+    jump bb3
+  bb3:
+    %10 = load i32 .8
+    %11 = load i32 .9
+    %12 = ne i32 %10, 0
+    store i32 .10, 0
+    store i32 .11, %10
+    store i8 .12, %12
+    store i64 .13, 0
+    jump bb4
+  bb4:
+    %17 = load i8 .12
+    branch %17, bb5, bb6
+  bb5:
+    %18 = load i32 .10
+    %19 = load i32 .11
+    store i32 value.3, %18
+    %21 = load i64 .13
+    store i64 i.2, %21
+    %23 = add i64 %21, 1
+    store i64 .13, %23
+    %25 = ult i32 1, %19
+    %26 = add i32 %18, %11
+    %27 = sub i32 %19, 1
+    store i32 .10, %26
+    store i32 .11, %27
+    store i8 .12, %25
+    %31 = load i32 value.3
+    %32 = mul i32 %31, 2
+    store i32 doubled.4, %32
+    %34 = load i32 doubled.4
+    %35 = slt i32 6, %34
+    branch %35, bb8, bb9
+  bb6:
+    dead .13
+    dead .12
+    dead .11
+    dead .10
+    dead .9
+    dead .8
+    jump bb14
+  bb7:
+    jump bb4
+  bb8:
+    %36 = load i32 doubled.4
+    store i32 early.5, %36
+    dead early.5
+    dead doubled.4
+    dead i.2
+    dead value.3
+    jump bb6
+  bb9:
+    %43 = load i32 doubled.4
+    %44 = eq i32 %43, 2
+    branch %44, bb11, bb12
+  bb10:
+    dead early.5
+    jump bb9
+  bb11:
+    dead doubled.4
+    dead i.2
+    dead value.3
+    jump bb7
+  bb12:
+    %48 = load i32 total.1
+    %49 = load i32 doubled.4
+    %50 = add i32 %48, %49
+    store i32 total.1, %50
+    dead doubled.4
+    dead i.2
+    dead value.3
+    jump bb7
+  bb13:
+    jump bb12
+  bb14:
+    %61 = load i32 total.1
+    %62 = slt i32 %61, 100
+    branch %62, bb16, bb15
+  bb15:
+    %79 = load i32 total.1
+    dead total.1
+    dead limit.0
+    return %79
+  bb16:
+    store i32 step.6, 10
+    %64 = load i32 total.1
+    %65 = slt i32 50, %64
+    branch %65, bb17, bb18
+  bb17:
+    %66 = load i32 step.6
+    store i32 late.7, %66
+    %68 = load i32 late.7
+    dead late.7
+    dead step.6
+    dead total.1
+    dead limit.0
+    return %68
+  bb18:
+    %74 = load i32 total.1
+    %75 = load i32 step.6
+    %76 = add i32 %74, %75
+    store i32 total.1, %76
+    dead step.6
+    jump bb14
+  bb19:
+    dead late.7
+    jump bb18
+  bb20:
+    dead total.1
+    dead limit.0
+    fall off at `}`
+fn main:
+  bb0:
+    fall off at `}`

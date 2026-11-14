@@ -1,0 +1,36 @@
+fn add:
+  bb0:
+    store i32 a.0, arg0
+    store i32 b.1, arg1
+    %2 = load i32 a.0
+    %3 = load i32 b.1
+    %4 = add i32 %2, %3
+    store i32 sum.2, %4
+    %6 = load i32 sum.2
+    %7 = mul i32 %6, 2
+    store i32 sum.2, %7
+    %9 = load i32 sum.2
+    %10 = sext i32 %9 to i64
+    store i64 wide.3, %10
+    %12 = load i64 wide.3
+    call note(%12)
+    %14 = load i32 sum.2
+    dead wide.3
+    dead sum.2
+    dead b.1
+    dead a.0
+    return %14
+  bb1:
+    dead wide.3
+    dead sum.2
+    dead b.1
+    dead a.0
+    fall off at `}`
+fn note:
+  bb0:
+    store i64 value.0, arg0
+    dead value.0
+    fall off at `}`
+fn main:
+  bb0:
+    fall off at `}`

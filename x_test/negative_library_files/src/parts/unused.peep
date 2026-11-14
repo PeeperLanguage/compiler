@@ -1,4 +1,0 @@
-// No file imports this one, and it is still checked.
-fn Wrong() -> i32 {
-    return true;
-}

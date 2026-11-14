@@ -1,7 +1,0 @@
-name = "run_allocator"
-build = "program"
-
-[test]
-mode = "run"
-outcome = "success"
-stdout_contains = ["7 9\nfree 3\n"]

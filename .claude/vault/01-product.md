@@ -6,7 +6,7 @@ Peeper is "an experimental systems programming language and native
 compiler", pre-release, with no compatibility guarantees (`README.md`). This
 repository holds the compiler, being rebuilt in Rust, plus the bundled
 library (`_builtin_library`), package tooling, language server and fixtures
-(`x_test`). The Go compiler it replaces is on the `legacy` branch
+(`test_programs/`). The Go compiler it replaces is on the `legacy` branch
 (`PROGRESS.md`). Pre-stable: no deprecated syntax or compatibility paths are
 kept (`RULES.md` §6). One binary, `peeper` (`crates/driver/peeper`), with the
 commands `check`, `fix`, `build`, `run`, `run -interpret`, `-dump
@@ -36,10 +36,11 @@ as few walks per body as possible; one owner per fact.
   installation's toolchain, never one on the PATH (2026-10-28).
 - Check builds THIR in one walk (names, types, constants together); no side
   tables over the AST. Scheduling is per declaration, on demand.
-- Constants fold in check; compile-time calls run on the MIR interpreter
-  (`eval`); both use `eval`'s operator functions, so they cannot disagree.
+- Constants fold in check (`check::fold`); compile-time calls run on the MIR
+  interpreter (`eval`); both compute with `eval::operations`, so they cannot
+  disagree.
 - Integer and float results must match LLVM bit for bit
-  (`crates/middle/eval/tests/llvm_parity.rs`).
+  (`crates/middle/check/tests/llvm_parity.rs`).
 - Loans: Rust-like, a borrow lasts to the last use of a reference holding it;
   two-phase `&mut` call arguments; per-field holders (2026-11-01).
 - Every declaration is checked, used or not, except the body of a function
@@ -62,7 +63,7 @@ as few walks per body as possible; one owner per fact.
   (`fn Point::name(&self)`, called `Point::name(&p)` or `p.name()`).
 - **Not done (parser reads, check reports T0043):** enums, optionals,
   generics, function values, default
-  parameters, destructuring, block expressions, pipes, dependencies.
+  parameters, destructuring, block expressions, dependencies.
 - **Since then (worklog, 2026-11-06 to 2026-11-07):** borrowed interfaces (`&Shape`),
   `core:memory` (`Allocator` with `Heap`, `Arena`, `Pool`, `Stack`,
   `Realloc`, `New`, `Replace`), `rawptr + usize`, `size_of`/`align_of`,

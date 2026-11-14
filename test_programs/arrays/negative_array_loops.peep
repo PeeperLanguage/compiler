@@ -1,0 +1,86 @@
+// `for` over arrays and slices: an element that moves cannot be taken by
+// value, the array or slice stays borrowed for the whole loop (a `&mut []`
+// one cannot be used in the body, as in Rust), and only ranges, arrays and
+// slices loop. After an error in the header, the body is still checked.
+struct Point { x: i32, y: i32 }
+
+fn MovesElements() {
+    let points = [2]Point{Point.{ x = 1, y = 2 }, Point.{ x = 3, y = 4 }};
+    for point in points { //~ error[T0035]: cannot move an element out of its array
+    //~ help: loop over `&points` for a reference to each element
+        let x: bool = point.x; //~ error[T0001]: mismatched types: expected `bool`, found `i32`
+    }
+}
+
+fn ChangedWhileBorrowed() {
+    let mut values = [3]i32{1, 2, 3};
+    for value in &mut values {
+        values[0] = 5; //~ error[T0037]: `values` is changed while a `&mut` reference to it is still in use
+        value.* = 1;
+    }
+}
+
+fn ReadWhileChanged() {
+    let mut values = [3]i32{1, 2, 3};
+    for value in &mut values {
+        let first = values[0]; //~ error[T0037]: `values` is read while a `&mut` reference to it is still in use
+        value.* = first;
+    }
+}
+
+fn NotAnArray() {
+    for value in 5 { //~ error[T0043]: `for` over values other than ranges, arrays and slices are not supported yet
+        missing(value); //~ error[T0002]: unknown name `missing`
+    }
+}
+
+fn ReadOnlyElement() {
+    let values = [3]i32{1, 2, 3};
+    for value in &values {
+        value.* = 1; //~ error[T0007]: cannot assign to `value.*` through shared reference `value`
+    }
+}
+
+fn First(s: &[]i32) -> i32 {
+    return s[0];
+}
+
+fn SliceUsedInLoop(s: &mut []i32) {
+    for v in s {
+        v.* = s[0]; //~ error[T0037]: `s` is read while a `&mut []` slice of it is still in use
+    }
+    for v in s {
+        s[0] = 1; //~ error[T0037]: `s` is changed while a `&mut []` slice of it is still in use
+    }
+    for v in s {
+        v.* = First(s); //~ error[T0037]: `s` is borrowed while a `&mut []` slice of it is still in use
+    }
+}
+
+// `keep` borrows `s` itself, so the loop cannot lend it again.
+fn SliceElementKept(s: &mut []i32) {
+    let mut keep = &mut s[0];
+    for v in s { //~ error[T0037]: `s` is borrowed as `&mut []` while a `&mut` reference to it is still in use
+        keep = v;
+    }
+    keep.* = 3;
+}
+
+// `keep` holds an element of `s` after the loop, so `s` cannot change.
+fn SliceElementOutlivesLoop(s: &mut []i32) {
+    let mut other = [1]i32{0};
+    let mut keep = &mut other[0];
+    for v in s {
+        keep = v;
+    }
+    s[1] = 2; //~ error[T0037]: `s` is changed while a `&mut []` slice of it is still in use
+    keep.* = 3;
+}
+
+fn ReadOnlySliceElement(s: &[]i32) {
+    for v in s {
+        v.* = 1; //~ error[T0007]: cannot assign to `v.*` through shared reference `v`
+    }
+}
+
+fn main() {}

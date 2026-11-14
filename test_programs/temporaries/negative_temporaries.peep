@@ -1,0 +1,89 @@
+// What a temporary cannot do: outlive its statement, except kept as long as
+// the variable a `let` or an assignment sets, or give up an element that moves. Writing into one
+// is lost and its address would outlive it, so both are errors. Through a
+// shared reference or slice that one holds, nothing is written, as through
+// one in a variable. A constant is not lent as writable: nothing would change
+// it.
+
+const LIMIT: i32 = 5;
+
+struct Point { row: i32, col: i32 }
+
+fn make() -> [3]i32 {
+    return [3]i32{10, 20, 30};
+}
+
+fn num() -> i32 {
+    return 7;
+}
+
+fn points() -> [2]Point {
+    return [2]Point{.{ row = 1, col = 2 }, .{ row = 3, col = 4 }};
+}
+
+fn id(r: &i32) -> &i32 in r {
+    return r;
+}
+
+fn view(a: &[3]i32) -> &[]i32 in a {
+    return a;
+}
+
+fn returned(a: &i32) -> &[3]i32 in a {
+    return &make(); //~ error[T0036]: returns a reference into a temporary value, which is gone once the function returns
+}
+
+fn moved() {
+    let p = points()[0]; //~ error[T0035]: cannot move an element out of its array
+}
+
+fn bump(n: &mut i32) {
+    n.* = n.* + 1;
+}
+
+fn constant() {
+    bump(&mut LIMIT); //~ error[T0018]: cannot mutably borrow constant `LIMIT`
+}
+
+// Kept by a `let` in an inner block, it ends with that block.
+fn kept_in_block() {
+    let r: &i32;
+    {
+        let kept = &num();
+        r = kept;
+    } //~ error[T0037]: a temporary value is gone while a reference to it is still in use
+    //~ help: a temporary lasts until its statement ends, or as long as the variable a `let` or `=` gives it to
+    println(r.*);
+}
+
+// It ends with the loop that keeps it.
+fn outlives_loop() {
+    let x = 1;
+    let mut r = &x;
+    for v in view(&make()) { //~ label: reference made here
+        r = v;
+    } //~ error[T0037]: a temporary value is gone while a reference to it is still in use
+    println(r.*);
+}
+
+fn too_big() {
+    let r: &u8 = &300; //~ error[L0003]: literal `300` does not fit `u8`
+}
+
+fn written() {
+    make()[0] = 5; //~ error[T0007]: cannot assign to a temporary value
+    let p = @make()[0]; //~ error[T0004]: cannot take address of a temporary value
+}
+
+fn through_shared() {
+    let x = 1;
+    id(&x).* = 7; //~ error[T0007]: cannot assign to `id(&x).*` through shared reference `id(&x)`
+    //~ help: make `id(&x)` a `&mut` reference
+    let m = &mut id(&x).*; //~ error[T0007]: cannot mutably borrow `id(&x).*` through shared reference `id(&x)`
+    let p = @id(&x).*; //~ error[T0007]: cannot take the address of `id(&x).*` through shared reference `id(&x)`
+    let a = [3]i32{1, 2, 3};
+    view(&a)[0] = 1; //~ error[T0007]: cannot assign to `view(&a)[0]` through shared slice `view(&a)`
+    let s = &mut view(&a)[0..1]; //~ error[T0007]: cannot mutably borrow the elements of shared slice `view(&a)`
+}
+
+fn main() {}

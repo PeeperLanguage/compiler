@@ -13,12 +13,12 @@ fn parses_variadic_parameters() {
       type name i32
     variadic parameter
       declared name rest
-      slice type mut
+      variadic type mut
         type name i32
   function declaration
     declared name g
     variadic parameter
-      slice type
+      variadic type
         type name i32
 ";
     assert!(messages(text).is_empty());
@@ -76,7 +76,7 @@ fn Counter::Get(&self) {}
 fn Counter::Into(self) {}
 fn Counter::Doubled(mut self) {}
 fn exit(code: i32);
-fn Use(callback: fn(value: &Box, i32) -> &Box in value, view: &[]u8, edit: &mut []u8, grid: [4]rawptr, cell: **u8, untyped: *rawptr) -> ?a::Box<Box<T>>;
+fn Use(callback: fn(value: &Box, i32) -> &Box in value, view: &[]u8, edit: &mut []u8) -> a::Box<Box<T>>;
 ";
     let want = "module
   function declaration
@@ -152,43 +152,16 @@ fn Use(callback: fn(value: &Box, i32) -> &Box in value, view: &[]u8, edit: &mut 
       declared name edit
       slice type mut
         type name u8
-    parameter
-      declared name grid
-      fixed array type
-        number literal 4
-        raw pointer type rawptr
-    parameter
-      declared name cell
-      pointer type
-        pointer type
-          type name u8
-    parameter
-      declared name untyped
-      pointer type
-        raw pointer type rawptr
-    optional type
-      path
-        type name a
+    path
+      type name a
+      generic type
+        type name Box
         generic type
           type name Box
-          generic type
-            type name Box
-            type name T
+          type name T
 ";
     assert!(messages(text).is_empty());
     assert_eq!(dump_of(text), want);
-}
-
-/// A plain `[]T` is read whole, so the parser stays in step and reports
-/// the next one too.
-#[test]
-fn plain_slice_types_are_each_reported() {
-    let text = "fn f(a: []i32, b: []u8) {}";
-    let want = [
-        "`[]i32` is any number of `i32`s, so it has no fixed size",
-        "`[]u8` is any number of `u8`s, so it has no fixed size",
-    ];
-    assert_eq!(messages(text), want);
 }
 
 #[test]
@@ -209,17 +182,6 @@ fn signature_errors() {
             "mutable parameter requires a named binding",
             None,
         ),
-        ("fn f(a: [n]i32) {}", "expected array length", None),
-        (
-            "fn f(a: []i32) {}",
-            "`[]i32` is any number of `i32`s, so it has no fixed size",
-            None,
-        ),
-        (
-            "fn f(a: [][]i32) {}",
-            "`[]i32` is any number of `i32`s, so it has no fixed size",
-            None,
-        ),
         ("fn f(a: ) {}", "expected type, found `)`", None),
         ("fn f() -> i32", "missing function body", None),
         ("fn f<T U>() {}", "expected `,`", Some("fn f<T, U>() {}")),
@@ -234,18 +196,9 @@ fn parses_declarations() {
 /// Twice checked.
 const Answer: i32 = 42;
 const Untyped = 1;
-#[extern("rt_exit")]
+#[extern(rt_exit)]
 fn exit(code: i32);
-struct Pair<T> {
-    first: T,
-    second: struct { flag: bool },
-};
-enum Status { Ready, Waiting: Pair<i32>, }
-iface Summer {
-    fn sum(&self) -> i32,
-    fn add<T>(&mut self, value: T)
-}
-type Alias<T> = ?T;
+type Alias<T> = T;
 fn Pair::new() {}
 "#;
     let want = r#"module
@@ -263,59 +216,15 @@ fn Pair::new() {}
     metadata
       attribute
         name reference extern
-        string literal "rt_exit"
+        name reference rt_exit
     declared name exit
     parameter
       declared name code
       type name i32
-  struct declaration
-    declared name Pair
-    declared name T
-    struct type
-      field
-        declared name first
-        type name T
-      field
-        declared name second
-        struct type
-          field
-            declared name flag
-            type name bool
-  enum declaration
-    declared name Status
-    enum type
-      variant
-        declared name Ready
-      variant
-        declared name Waiting
-        generic type
-          type name Pair
-          type name i32
-  interface declaration
-    declared name Summer
-    interface type
-      function declaration
-        declared name sum
-        parameter
-          declared name self
-          reference type
-            self type self
-        type name i32
-      function declaration
-        declared name add
-        declared name T
-        parameter
-          declared name self
-          reference type mut
-            self type self
-        parameter
-          declared name value
-          type name T
   type alias declaration
     declared name Alias
     declared name T
-    optional type
-      type name T
+    type name T
   function declaration
     owner type Pair
     declared name new
@@ -323,17 +232,6 @@ fn Pair::new() {}
 "#;
     assert!(messages(text).is_empty());
     assert_eq!(dump_of(text), want);
-}
-
-/// The real prelude, the first file of every program, parses cleanly.
-#[test]
-fn parses_the_prelude() {
-    let path = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../../_builtin_library/core/src/global.peep"
-    );
-    let text = std::fs::read_to_string(path).unwrap();
-    assert!(messages(&text).is_empty());
 }
 
 #[test]
@@ -345,14 +243,8 @@ fn declaration_errors() {
             "#[a, b] fn f();",
             "only one attribute is allowed per `#[...]` block",
         ),
-        (
-            "iface I { fn f(&self, a: i32 = 1) }",
-            "interface method defaults are not supported",
-        ),
         ("fn (p: Point) f() {}", "expected `identifier`, found `(`"),
         ("type A i32;", "expected `=`, found `identifier`"),
-        ("struct S { a i32 }", "expected `:`, found `identifier`"),
-        ("enum E { A B }", "expected `,`"),
     ] {
         one_error(text, message, None);
     }

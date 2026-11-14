@@ -1,0 +1,6 @@
+// A misspelled package or module gets a guess at the path it meant.
+import "negative_sugest_import_path:shapes"; //~ error[M0003]: unknown package `negative_sugest_import_path`
+//~ help: did you mean "negative_suggest_import_path:shapes"?
+import "negative_suggest_import_path:shapez" as other; //~ error[M0001]: module not found: src/shapez.peep
+
+fn main() {}

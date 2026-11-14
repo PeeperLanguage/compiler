@@ -1,7 +1,0 @@
-// What `print` cannot take: nothing, and `none` with no type.
-fn nothing() {}
-
-fn main() {
-    println(nothing());
-    println(none);
-}

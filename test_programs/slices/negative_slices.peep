@@ -1,0 +1,30 @@
+//@ library
+
+// What slices cannot do yet, or ever: cross to C, be written through `&[]`,
+// become writable from `&[]`, change element type.
+
+#[extern("takes")]
+fn takes(values: &[]i32); //~ error[T0043]: struct, array, range, slice and `&str` parameters and results of `extern` functions are not supported yet
+
+fn first(view: &[]i32) -> i32 {
+    view[0] = 1; //~ error[T0007]: cannot assign to `view[0]` through shared slice `view`
+    //~ help: make `view` a `&mut []` slice
+    view = view; //~ error[T0007]: cannot assign to immutable `view`
+    view.len = 2; //~ error[T0007]: a slice's `len` cannot be set
+    let of_slice = &mut (view.len); //~ error[T0007]: a slice's `len` cannot be set
+    let negative = view[-1]; //~ error[L0003]: literal `-1` does not fit `u64`
+    let wide = view[-1i128]; //~ error[T0004]: index `-1i128` is outside every `&[]i32`
+    let past = view[18446744073709551616u128]; //~ error[T0004]: index `18446744073709551616u128` is outside every `&[]i32`
+    return view.length; //~ error[T0010]: `&[]i32` has no field `length`
+}
+
+fn edit(values: &mut []i32) {}
+fn wide(values: &[]i64) {}
+
+fn main() {
+    let fixed = [3]i32{1, 2, 3};
+    let view: &[]i32 = &fixed;
+    edit(view); //~ error[T0001]: mismatched types: expected `&mut []i32`, found `&[]i32`
+    edit(&mut fixed); //~ error[T0007]: cannot mutably borrow immutable `fixed`
+    wide(&fixed); //~ error[T0001]: mismatched types: expected `&[]i64`, found `&[3]i32`
+}

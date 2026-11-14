@@ -2,28 +2,22 @@
 //! two numbers.
 
 use std::fmt;
+use std::fmt::Display;
 use std::fmt::Write as _;
 use std::ops::Index;
 
 use bigint::Limbs;
 use rustc_hash::FxHashMap;
 
+use crate::ConstArguments;
 use crate::DefId;
-use crate::constant::Constant;
-use crate::constant::value_text;
+use crate::constant::Value;
+use crate::constant::integer_text;
+use crate::machine::MAX_INTEGER_BITS;
+use crate::mir::Class;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct TypeId(u32);
-
-/// What a function's `const` parameters are given, in order, by their place
-/// in `Types`'s list of them (`Types::const_arguments`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct ConstArguments(u32);
-
-impl ConstArguments {
-    /// None: the arguments of a function without `const` parameters.
-    pub const NONE: ConstArguments = ConstArguments(0);
-}
 
 /// What one `const` parameter is given: a type for `const T: type`, else a
 /// value known when compiling.
@@ -67,9 +61,6 @@ impl fmt::Display for Integer {
 }
 
 impl Integer {
-    /// The widest integer: LLVM's limit.
-    pub const MAX_BITS: u32 = 1 << 23;
-
     /// Whether the number `magnitude` (64-bit limbs, lowest first), negated
     /// when `negative`, is a value of this type: `-128` fits `i8`, `128` does
     /// not.
@@ -168,6 +159,16 @@ pub struct ArrayInternals {
 pub enum Float {
     F32,
     F64,
+}
+
+impl Float {
+    /// The register class that holds a float of this type.
+    pub fn class(self) -> Class {
+        match self {
+            Float::F32 => Class::F32,
+            Float::F64 => Class::F64,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -296,8 +297,8 @@ impl Type {
         }
     }
 
-    /// Whether a value of this type is laid out as a slice, its fields in
-    /// `slice_field`: a slice, or a `&str`, which views bytes.
+    /// Whether a value of this type is laid out as a slice, an address then
+    /// a length: a slice, or a `&str`, which views bytes.
     pub fn is_slice_shaped(&self) -> bool {
         matches!(self, Type::Slice { .. } | Type::Str)
     }
@@ -335,6 +336,44 @@ impl Type {
     pub fn is_number(&self) -> bool {
         matches!(self, Type::Integer(_) | Type::Float(_))
     }
+
+    /// The declaration that names the type, for a type with one: a struct,
+    /// an interface, or a declared name not checked yet.
+    pub fn definition(&self) -> Option<DefId> {
+        match *self {
+            Type::Named(definition)
+            | Type::Struct { definition, .. }
+            | Type::Interface { definition, .. } => Some(definition),
+            _ => None,
+        }
+    }
+
+    /// What a name after `.` can mean on the type (docs/feature-front.md,
+    /// 5.1): its fields, for a struct. A type with members can also have
+    /// functions with it as owner.
+    pub fn members(&self) -> Option<Members<'_>> {
+        match self {
+            Type::Struct {
+                definition,
+                fields,
+                internals,
+            } => Some(Members {
+                definition: *definition,
+                fields,
+                offsets: &internals.offsets,
+            }),
+            _ => None,
+        }
+    }
+}
+
+/// A type's fields (`Type::members`): the declaration that names them, and
+/// each field's type and offset from the value's start, in field order.
+#[derive(Clone, Copy, Debug)]
+pub struct Members<'t> {
+    pub definition: DefId,
+    pub fields: &'t [TypeId],
+    pub offsets: &'t [u64],
 }
 
 /// How a value of one type becomes a value of another (`Types::conversion`).
@@ -475,13 +514,6 @@ pub fn range_fields(element: TypeId, step: TypeId) -> [(&'static str, TypeId); 5
     ]
 }
 
-/// Where each of the two fields of a slice value is, and of a `&str`, which
-/// is laid out as a slice of its bytes (`Type::is_slice_shaped`).
-pub mod slice_field {
-    pub const ADDRESS: u32 = 0; // of its first element
-    pub const LENGTH: u32 = 1;
-}
-
 /// Where each field of a range value is in `range_fields`.
 pub mod range_field {
     pub const START: usize = 0;
@@ -503,7 +535,7 @@ pub fn builtin_names() -> impl Iterator<Item = &'static str> {
 
 /// The integer type `name` stands for when it is not in `NAMED`: `isize` and
 /// `usize` (as wide as a pointer, `pointer_bits`), or `iN` and `uN` for N
-/// from 1 to `Integer::MAX_BITS`, written without leading zeros.
+/// from 1 to `machine::MAX_INTEGER_BITS`, written without leading zeros.
 fn integer_named(name: &str, pointer_bits: u32) -> Option<Integer> {
     if let Some(&(_, signed)) = POINTER_SIZED.iter().find(|(text, _)| *text == name) {
         return Some(Integer {
@@ -520,7 +552,7 @@ fn integer_named(name: &str, pointer_bits: u32) -> Option<Integer> {
     if !digits || width.starts_with('0') {
         return None; // `u`, `i8x`, `u08`
     }
-    let bits = (width.parse().ok()).filter(|&bits| bits <= Integer::MAX_BITS)?;
+    let bits = (width.parse().ok()).filter(|&bits| bits <= MAX_INTEGER_BITS)?;
     Some(Integer { signed, bits })
 }
 
@@ -559,10 +591,6 @@ pub fn builtin_doc(name: &str, pointer_bits: u32) -> Option<String> {
 }
 
 /// The types of a program, for one compile (`check::Checker` holds them).
-// TEMPORARY, to be deleted: `Clone` is for `llvm::write`, whose workers each
-// get a copy of the types, and `compile::interpret`, which keeps the finished
-// ones; delete it with `extend_from`.
-#[derive(Clone)]
 pub struct Types {
     pub usize: TypeId, // as wide as a pointer of the target
     types: Vec<Type>,
@@ -598,27 +626,6 @@ impl Types {
             bits: pointer_bits,
         }));
         types
-    }
-
-    /// Adds the types `other` has after these: keeps a copy of a table that
-    /// only grows, as `other` is when this was made from it, up to date.
-    ///
-    /// TEMPORARY, to be deleted: only `llvm::write` uses it, to give its
-    /// workers a copy of the types. Delete it, and the copy, when each
-    /// module's MIR lists the types it uses (self-contained MIR).
-    pub fn extend_from(&mut self, other: &Types) {
-        // Every type is checked before any function is given out
-        // (`compile::run`), so no slot copied here changes later
-        // (`define_struct`).
-        for ty in &other.types[self.types.len()..] {
-            self.intern(ty.clone());
-        }
-        // Only added to, like the types.
-        let added = &other.implementations[self.implementations.len()..];
-        self.implementations.extend_from_slice(added);
-        for list in &other.argument_lists[self.argument_lists.len()..] {
-            self.const_arguments(list);
-        }
     }
 
     /// The id of the list of `const` arguments `list`, made the first time
@@ -783,7 +790,7 @@ impl Types {
 
     /// The built-in type `name` stands for: one in `NAMED`, `isize` and `usize`
     /// (as wide as a pointer: the `usize` this table was made with), or `iN` and `uN` for N from 1 to
-    /// `Integer::MAX_BITS`, written without leading zeros. A number literal's
+    /// `machine::MAX_INTEGER_BITS`, written without leading zeros. A number literal's
     /// suffix (`5u24`) is one of these names too.
     pub fn builtin(&mut self, name: &str) -> Option<TypeId> {
         if let Some(&(_, id)) = NAMED.iter().find(|(text, _)| *text == name) {
@@ -879,10 +886,10 @@ impl Types {
                     target,
                 },
                 &Type::InterfaceReference { mutable, .. },
-            ) if (from_mutable || !mutable) && matches!(self[target], Type::Struct { .. }) => {
+            ) if (from_mutable || !mutable) && self[target].members().is_some() => {
                 Conversion::ToInterface
             }
-            (Type::Struct { .. }, Type::Interface { .. }) => Conversion::ToInterface,
+            (from, Type::Interface { .. }) if from.members().is_some() => Conversion::ToInterface,
             (Type::RawPointer { target: Some(_) }, Type::RawPointer { target: None }) => {
                 Conversion::Same
             }
@@ -975,95 +982,91 @@ impl Types {
     /// which `name_of` gives for its declaration: an alias is followed by the
     /// type itself (`Meters (aka i64)`).
     pub fn text<N: fmt::Display>(&self, id: TypeId, name_of: impl Fn(DefId) -> N + Copy) -> String {
-        match self.types[id.0 as usize] {
-            Type::Alias { definition, real } => {
-                format!(
-                    "{} (aka {})",
-                    name_of(definition),
-                    self.real_text(real, name_of)
-                )
-            }
-            _ => self.real_text(id, name_of),
+        let mut text = String::new();
+        if let Type::Alias { definition, real } = self.types[id.0 as usize] {
+            _ = write!(text, "{} (aka ", name_of(definition));
+            self.write_real_text(&mut text, real, name_of);
+            text.push(')');
+        } else {
+            self.write_real_text(&mut text, id, name_of);
         }
+        text
     }
 
-    /// The type `id` itself, aliases looked through: `u8`, `fn(i32) -> bool`,
-    /// a named type by its name.
-    fn real_text<N: fmt::Display>(
+    /// Writes the type `id` itself to `out`, aliases looked through: `u8`,
+    /// `fn(i32) -> bool`, a named type by its name. Into one text, so a type
+    /// nested as deep as the source does costs its length, not its square.
+    fn write_real_text<N: fmt::Display>(
         &self,
+        out: &mut String,
         id: TypeId,
         name_of: impl Fn(DefId) -> N + Copy,
-    ) -> String {
+    ) {
         let id = self.real(id);
         match &self[id] {
-            Type::Invalid => "{invalid}".to_string(),
-            Type::Void => "void".to_string(),
+            Type::Invalid => out.push_str("{invalid}"),
+            Type::Void => out.push_str("void"),
             Type::Bool | Type::Float(_) | Type::CString | Type::Str => {
                 let (text, _) = NAMED
                     .iter()
                     .find(|&&(_, named)| named == id)
                     .expect("in `NAMED`");
                 // A text type is the view, written behind `&`.
-                match self[id] {
-                    Type::CString | Type::Str => format!("&{text}"),
-                    _ => text.to_string(),
+                if let Type::CString | Type::Str = self[id] {
+                    out.push('&');
                 }
+                out.push_str(text);
             }
-            Type::Integer(integer) => integer.to_string(),
+            Type::Integer(integer) => _ = write!(out, "{integer}"),
             Type::Function {
                 parameters, result, ..
             } => {
-                let parameters: Vec<String> = parameters
-                    .iter()
-                    .map(|&parameter| self.real_text(parameter, name_of))
-                    .collect();
-                let mut text = format!("fn({})", parameters.join(", "));
-                if *result != TypeId::VOID {
-                    text.push_str(" -> ");
-                    text.push_str(&self.real_text(*result, name_of));
+                out.push_str("fn(");
+                for (index, &parameter) in parameters.iter().enumerate() {
+                    if index > 0 {
+                        out.push_str(", ");
+                    }
+                    self.write_real_text(out, parameter, name_of);
                 }
-                text
+                out.push(')');
+                if *result != TypeId::VOID {
+                    out.push_str(" -> ");
+                    self.write_real_text(out, *result, name_of);
+                }
             }
             Type::Named(definition)
             | Type::Struct { definition, .. }
-            | Type::Interface { definition, .. } => name_of(*definition).to_string(),
+            | Type::Interface { definition, .. } => _ = write!(out, "{}", name_of(*definition)),
             Type::Array { internals, .. } => {
-                let mut text = String::new();
                 for length in self.array_lengths(id) {
-                    _ = write!(text, "[{length}]");
+                    _ = write!(out, "[{length}]");
                 }
-                text + &self.real_text(internals.base, name_of)
+                self.write_real_text(out, internals.base, name_of);
             }
             Type::Range { element, .. } => {
-                format!("{RANGE}[{}]", self.real_text(*element, name_of))
+                _ = write!(out, "{RANGE}[");
+                self.write_real_text(out, *element, name_of);
+                out.push(']');
             }
+            // References, slices and pointers nest as deep as the source does.
             Type::Reference { mutable, target }
             | Type::InterfaceReference {
                 mutable,
                 interface: target,
             } => {
-                // References, slices and pointers nest as deep as the source does.
-                let target = source::grow_stack(|| self.real_text(*target, name_of));
-                if *mutable {
-                    format!("&mut {target}")
-                } else {
-                    format!("&{target}")
-                }
+                out.push_str(if *mutable { "&mut " } else { "&" });
+                source::grow_stack(|| self.write_real_text(out, *target, name_of));
             }
             Type::Slice { mutable, element } => {
-                let element = source::grow_stack(|| self.real_text(*element, name_of));
-                if *mutable {
-                    format!("&mut []{element}")
-                } else {
-                    format!("&[]{element}")
-                }
+                out.push_str(if *mutable { "&mut []" } else { "&[]" });
+                source::grow_stack(|| self.write_real_text(out, *element, name_of));
             }
-            Type::RawPointer { target: None } => "rawptr".to_string(),
+            Type::RawPointer { target: None } => out.push_str("rawptr"),
             Type::RawPointer {
                 target: Some(target),
             } => {
-                let target = source::grow_stack(|| self.real_text(*target, name_of));
-                format!("*{target}")
+                out.push('*');
+                source::grow_stack(|| self.write_real_text(out, *target, name_of));
             }
             Type::Alias { .. } => unreachable!("`real` looks through aliases"),
         }
@@ -1081,3 +1084,49 @@ impl Index<TypeId> for Types {
 
 #[cfg(test)]
 mod tests;
+
+/// A constant's type and value.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Constant {
+    pub ty: TypeId,
+    pub value: Value,
+}
+
+/// `value`, of the type `ty`, as Peeper text: an integer in decimal, read
+/// through its type's sign, when 128 bits hold it, else every limb in hex
+/// (`integer_text`); a float as the shortest text that reads back as it, in
+/// its own precision when it holds an `f32` exactly (a value that does not
+/// shows in full); a `&str` as a `"..."` literal, a `&cstr` as `c"..."`; `none` for the null
+/// address.
+pub fn value_text<'v>(value: &'v Value, ty: &'v Type) -> impl Display + 'v {
+    fmt::from_fn(move |out| match (value, ty) {
+        (Value::Bool(value), _) => write!(out, "{value}"),
+        (Value::Null, _) => out.write_str("none"),
+        (Value::Bytes(bytes), Type::Str) => write!(out, "\"{}\"", bytes.escape_ascii()),
+        (Value::Bytes(bytes), _) => write!(out, "c\"{}\"", bytes.escape_ascii()),
+        (Value::Float(bits), Type::Float(Float::F32))
+            if f64::from(f64::from_bits(*bits) as f32) == f64::from_bits(*bits) =>
+        {
+            write!(out, "{}", f64::from_bits(*bits) as f32)
+        }
+        (Value::Float(bits), _) => write!(out, "{}", f64::from_bits(*bits)),
+        (Value::Integer(limbs), Type::Integer(integer)) => {
+            let value = match integer.bits {
+                ..=128 => bigint::extend(integer.bits, integer.signed, limbs, 128),
+                _ => limbs.clone(),
+            };
+            let [low, high, rest @ ..] = value.as_slice() else {
+                unreachable!("an integer constant has at least two limbs")
+            };
+            let low = *low as u128 | (*high as u128) << 64;
+            if !rest.iter().all(|&limb| limb == 0) {
+                write!(out, "{}", integer_text(&value))
+            } else if integer.signed && integer.bits <= 128 {
+                write!(out, "{}", low as i128)
+            } else {
+                write!(out, "{low}")
+            }
+        }
+        (Value::Integer(_), _) => unreachable!("an integer constant has an integer type"),
+    })
+}

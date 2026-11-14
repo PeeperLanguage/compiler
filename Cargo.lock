@@ -50,11 +50,12 @@ dependencies = [
  "compile",
  "diagnostics",
  "eval",
+ "features",
  "lexer",
  "model",
  "project",
  "serde_json",
- "toml_edit",
+ "test_programs",
 ]
 
 [[package]]
@@ -83,25 +84,32 @@ dependencies = [
  "eval",
  "flow",
  "literal",
+ "llvm",
  "lower",
  "model",
  "parser",
+ "runtime_abi",
  "rustc-hash",
  "source",
+ "syntax",
 ]
 
 [[package]]
 name = "compile"
 version = "0.3.1"
 dependencies = [
+ "arena",
  "check",
  "diagnostics",
  "eval",
- "flow",
+ "features",
+ "lower",
  "model",
+ "parser",
  "project",
  "runtime_abi",
  "source",
+ "syntax",
 ]
 
 [[package]]
@@ -194,10 +202,26 @@ version = "0.3.1"
 dependencies = [
  "arena",
  "bigint",
- "llvm",
  "model",
  "runtime_abi",
+ "rustc-hash",
  "source",
+]
+
+[[package]]
+name = "features"
+version = "0.3.1"
+dependencies = [
+ "arena",
+ "bigint",
+ "check",
+ "diagnostics",
+ "literal",
+ "model",
+ "parser",
+ "source",
+ "syntax",
+ "token",
 ]
 
 [[package]]
@@ -413,8 +437,8 @@ name = "llvm"
 version = "0.3.1"
 dependencies = [
  "arena",
- "bigint",
  "compile",
+ "features",
  "model",
  "project",
  "runtime_abi",
@@ -435,9 +459,15 @@ version = "0.3.1"
 dependencies = [
  "arena",
  "bigint",
+ "check",
+ "features",
  "model",
+ "parser",
+ "project",
  "runtime_abi",
+ "rustc-hash",
  "source",
+ "syntax",
 ]
 
 [[package]]
@@ -447,6 +477,7 @@ dependencies = [
  "arena",
  "compile",
  "diagnostics",
+ "features",
  "lexer",
  "lsp-server",
  "lsp-types",
@@ -454,6 +485,7 @@ dependencies = [
  "project",
  "serde_json",
  "source",
+ "syntax",
 ]
 
 [[package]]
@@ -506,8 +538,10 @@ dependencies = [
  "bigint",
  "diagnostics",
  "literal",
+ "runtime_abi",
  "rustc-hash",
  "source",
+ "syntax",
 ]
 
 [[package]]
@@ -527,8 +561,8 @@ dependencies = [
  "diagnostics",
  "lexer",
  "literal",
- "model",
  "source",
+ "syntax",
  "token",
 ]
 
@@ -539,12 +573,13 @@ dependencies = [
  "compile",
  "diagnostics",
  "eval",
+ "features",
  "lexer",
  "llvm",
  "lsp",
  "model",
  "project",
- "toml_edit",
+ "test_programs",
 ]
 
 [[package]]
@@ -576,10 +611,12 @@ name = "project"
 version = "0.3.1"
 dependencies = [
  "diagnostics",
+ "features",
  "literal",
  "model",
  "parser",
  "source",
+ "syntax",
  "toml_edit",
 ]
 
@@ -747,6 +784,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "syntax"
+version = "0.3.1"
+dependencies = [
+ "arena",
+ "literal",
+ "source",
+]
+
+[[package]]
 name = "tar"
 version = "0.4.46"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -755,6 +801,10 @@ dependencies = [
  "filetime",
  "libc",
 ]
+
+[[package]]
+name = "test_programs"
+version = "0.3.1"
 
 [[package]]
 name = "tinystr"

@@ -1,0 +1,61 @@
+// What a `const` parameter refuses.
+fn Size(const T: type) -> usize {
+    return size_of(T);
+}
+
+// `type` is only for a `const` parameter, which is one value.
+fn Plain(t: type) {} //~ error[P0011]: `type` is the type of a `const` parameter only: `const T: type`
+fn Changed(const mut n: i32) {} //~ error[P0005]: a `const` parameter is one value known when compiling, so it takes no `mut` or `...`
+fn Many(const n: ...i32) {} //~ error[P0005]: a `const` parameter is one value known when compiling, so it takes no `mut` or `...`
+fn Typed(const T: type, const value: T) {} //~ error[T0043]: `const` values whose type names a type parameter are not supported yet
+
+struct Point { x: i32 }
+fn Scaled(const factor: i64, x: i64) -> i64 { return x * factor; }
+fn Pointed(const p: Point) {}
+
+// A C function is one function: it has no copies.
+#[extern("abs")]
+fn Abs(const T: type, x: i32) -> i32; //~ error[P0005]: an `extern` function is one C function, so it takes no `const` parameter
+
+// A call through an interface reference runs one function of a table.
+iface Shape {
+    fn Area(&self, const T: type) -> i32 //~ error[P0005]: a call through an interface reference cannot pick a copy, so an interface method takes no `const` parameter
+}
+iface Named {
+    fn Name(&self) -> i32
+}
+struct Box { x: i32 }
+fn Box::Name(&self, const T: type) -> i32 { return 1; }
+
+// A copy checks its body for its own type.
+fn Double(const T: type, value: T) -> T {
+    return value + value; //~ error[T0004]: operator `+` cannot be applied to `bool`
+}
+
+fn Value(const T: type) -> i32 {
+    return T; //~ error[T0004]: `T` is a type, not a value
+}
+
+// Code after a written `return` is checked in a copy too.
+fn Dead(const T: type) -> i32 {
+    return 1;
+    let wrong: i32 = true; //~ error[T0001]: mismatched types: expected `i32`, found `bool`
+}
+
+fn main() {
+    println(Size()); //~ error[T0006]: `Size` takes 1 argument, but 0 were given
+    println(Size(5)); //~ error[T0021]: `5` is a value, not a type
+    println(Size(Missing)); //~ error[T0002]: unknown type `Missing`
+    println(Size(i32, 1)); //~ error[T0006]: `Size` takes 1 argument, but 2 were given
+    let f = Size; //~ error[T0043]: functions as values are not supported yet
+    let b = Box.{ x = 1 };
+    let n: &Named = &b; //~ error[T0001]: `Box` does not implement `Named`: its `Name` takes a `const` parameter, so it is not one function an interface reference can call
+    println(Double(i32, 2), Double(bool, true)); //~ label: in `Double<bool>`, the copy made for this call
+    println(Value(i32)); //~ label: in `Value<i32>`, the copy made for this call
+    let x: i64 = 3; //~ label: `x` gets its value only when the program runs
+    println(Scaled(x, 1)); //~ error[T0004]: the value of a constant must be known at compile time
+    Pointed(Point.{ x = 1 }); //~ error[T0004]: a constant cannot hold a struct yet
+    // A `const` parameter counts among the arguments.
+    println(Scaled()); //~ error[T0006]: `Scaled` takes 2 arguments, but 0 were given
+    println(Dead(u8)); //~ label: in `Dead<u8>`, the copy made for this call
+}

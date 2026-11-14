@@ -1,0 +1,10 @@
+[package]
+name = "test_programs"
+description = "Reads the compiler's test programs and what each expects; used by the test runners only"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true

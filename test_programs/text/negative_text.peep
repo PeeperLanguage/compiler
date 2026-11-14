@@ -1,0 +1,16 @@
+// What a `&str` cannot do yet: compare, index, add, pass to C, or stand in
+// for a `&cstr` or a `&[]u8`; and owned `string` text does not exist yet.
+#[extern("puts")]
+fn puts(text: &str) -> i32; //~ error[T0043]: struct, array, range, slice and `&str` parameters and results of `extern` functions are not supported yet
+
+fn main() {
+    let s = "ab";
+    let same = s == "ab"; //~ error[T0004]: operator `==` cannot be applied to `&str`
+    let first = s[0]; //~ error[T0004]: `&str` cannot be indexed
+    let joined = s + s; //~ error[T0004]: operator `+` cannot be applied to `&str`
+    let size = s.size; //~ error[T0010]: `&str` has no field `size`
+    let c_text: &cstr = "x"; //~ error[T0001]: mismatched types: expected `&cstr`, found `&str`
+    let viewed: &str = c"x"; //~ error[T0001]: mismatched types: expected `&str`, found `&cstr`
+    let bytes: &[]u8 = s; //~ error[T0001]: mismatched types: expected `&[]u8`, found `&str`
+    let owned: string = "x"; //~ error[T0043]: string types are not supported yet
+}

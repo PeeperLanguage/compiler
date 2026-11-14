@@ -1,4 +1,0 @@
-const First = Second + 1;
-const Second = First;
-
-fn main() {}

@@ -1,0 +1,278 @@
+// A call in a constant that cannot run at compile time is an error at the
+// call, pointing at where it stopped.
+
+fn half(n: i32) -> i32 {
+    if n % 2 != 0 {
+        panic "odd number"; //~ label: odd number
+    }
+    return n / 2;
+}
+
+fn divide(a: i32, b: i32) -> i32 {
+    return a / b; //~ label: division by zero
+}
+
+fn forever() -> i32 {
+    for { } //~ label: this ran more than 1000000 steps
+}
+
+fn noisy() -> i32 {
+    println(1); //~ label: `print` calls cannot run at compile time yet
+    return 1;
+}
+
+fn twice(n: i32) -> i32 {
+    return half(n) * 2;
+}
+
+const A = half(3); //~ error[T0044]: this call cannot be evaluated at compile time
+const B = divide(1, 0); //~ error[T0044]: this call cannot be evaluated at compile time
+const C = forever(); //~ error[T0044]: this call cannot be evaluated at compile time
+const D = noisy(); //~ error[T0044]: this call cannot be evaluated at compile time
+const E = twice(5); //~ error[T0044]: this call cannot be evaluated at compile time
+// A run-time check fails at compile time too.
+fn steps(step: u32) -> u32 {
+    for v in 0..10:step { } //~ label: range step is zero
+    return 1;
+}
+const Z = steps(0); //~ error[T0044]: this call cannot be evaluated at compile time
+// C functions cannot run while compiling.
+const W = Write(Stdout, c"x", 1); //~ error[T0044]: this call cannot be evaluated at compile time
+//~ label: an `extern` function cannot run at compile time
+// A constant that needs itself to be computed.
+const LOOP = back(); //~ error[T0013]: `LOOP` depends on itself
+fn back() -> i32 {
+    return LOOP; //~ label: `back` uses `LOOP`, closing the cycle
+}
+fn self_call() -> i32 { //~ error[T0013]: `self_call` depends on itself
+    const SELF = self_call(); //~ label: `self_call` uses `self_call`, closing the cycle
+    return SELF;
+}
+// A cycle through another function, which the run really takes.
+fn ping() -> i32 { //~ error[T0013]: `ping` depends on itself
+    const P = pong(1); //~ label: `ping` uses `ping`, closing the cycle
+    return P;
+}
+fn pong(n: i32) -> i32 {
+    if n > 0 {
+        return ping();
+    }
+    return 0;
+}
+// A called function with an error: only that error is reported.
+fn broken() -> i32 {
+    return true; //~ error[T0001]: mismatched types: expected `i32`, found `bool`
+}
+fn calls_broken() -> i32 {
+    return broken();
+}
+const BAD = calls_broken();
+// Only calls on constants run: this one is still an error.
+fn main() {
+    let n = 2;
+    const F = half(n); //~ error[T0004]: the value of a constant must be known at compile time
+}
+// A run stops with the program's own failure, and cannot hurt the compiler.
+fn outside(at: usize) -> i32 {
+    let values = [3]i32{1, 2, 3};
+    return values[at]; //~ label: index out of bounds: the length is 3
+}
+const OUTSIDE = outside(5); //~ error[T0044]: this call cannot be evaluated at compile time
+fn outside_slice(at: usize) -> i32 {
+    let values = [3]i32{1, 2, 3};
+    let view: &[]i32 = &values;
+    return view[at]; //~ label: index out of bounds of the slice
+}
+const OUTSIDE_SLICE = outside_slice(5); //~ error[T0044]: this call cannot be evaluated at compile time
+fn spread_length(n: i32) -> [2]i32 {
+    return [2]i32{0..n...}; //~ label: array literal needs exactly 2 values
+}
+fn spread_sum() -> i32 {
+    return spread_length(3)[0];
+}
+const SPREAD = spread_sum(); //~ error[T0044]: this call cannot be evaluated at compile time
+fn read_none() -> i32 {
+    let p: *i32 = none;
+    return p.*;
+}
+const NONE = read_none(); //~ error[T0044]: this call cannot be evaluated at compile time
+fn too_big() -> i32 {
+    let values = [10000000]i32{(0..10000000)...};
+    return values[0];
+}
+const TOO_BIG = too_big(); //~ error[T0044]: this call cannot be evaluated at compile time
+fn too_deep(n: i32) -> i32 {
+    return too_deep(n + 1) + 1; //~ label: this went 100000 calls deep
+}
+const TOO_DEEP = too_deep(0); //~ error[T0044]: this call cannot be evaluated at compile time
+// `none` is no address, but nothing can be read through it.
+fn reads_none() -> i32 {
+    let nothing: *i32 = none;
+    return nothing.*; //~ label: this reads or writes memory the program does not own
+}
+const READS_NONE = reads_none(); //~ error[T0044]: this call cannot be evaluated at compile time
+// Few steps a call, but a call holds room for every value of its body, so
+// this runs out of stack, not of steps, and long before the host's memory.
+fn wide_calls(n: i32) -> i32 {
+    if n < 0 {
+        return (n + 1) * (n + 2) * (n + 3) * (n + 4) * (n + 5) * (n + 6) * (n + 7);
+    }
+    return wide_calls(n + 1) + 1; //~ label: this ran out of stack
+}
+const WIDE_CALLS = wide_calls(0); //~ error[T0044]: this call cannot be evaluated at compile time
+// One instruction can do a lot of work, and it counts: these stop soon, not
+// after a million copies of a large array.
+fn copies() -> i32 {
+    let mut values = [50000]i32{(0..50000)...};
+    for 0..190000 {
+        let held = values; //~ label: this ran more than 1000000 steps
+        values = held;
+    }
+    return 0;
+}
+const COPIES = copies(); //~ error[T0044]: this call cannot be evaluated at compile time
+fn fills() -> i32 {
+    let mut total = 0;
+    for 0..190000 {
+        let values = [400000]i32{(0..400000)...}; //~ label: this ran more than 1000000 steps
+        total = total + values[3];
+    }
+    return total;
+}
+const FILLS = fills(); //~ error[T0044]: this call cannot be evaluated at compile time
+// What only a run knows cannot be a constant, wherever the name is used.
+fn double(x: i32) -> i32 {
+    return x * 2;
+}
+fn unknown(given: i32) -> i32 { //~ label: `given` gets its value only when the program runs
+    const K = double(given); //~ error[T0004]: the value of a constant must be known at compile time
+    let later = 1; //~ label: `later` gets its value only when the program runs
+    const L = later + 1; //~ error[T0004]: the value of a constant must be known at compile time
+    return K + L;
+}
+// A known value a constant has no form for yet is told apart from those.
+struct Pair {
+    a: i32,
+    b: i32,
+}
+fn pair() -> Pair {
+    return Pair.{ a = 1, b = 2 };
+}
+fn numbers() -> [2]i32 {
+    return [2]i32{1, 2}; //~ label: a constant cannot hold an array yet
+}
+fn span() -> range[i32] {
+    return 0..2; //~ label: a constant cannot hold a range yet
+}
+const PAIR = pair(); //~ error[T0044]: this call cannot be evaluated at compile time
+const NUMBERS = numbers(); //~ error[T0044]: this call cannot be evaluated at compile time
+const SPAN = span(); //~ error[T0044]: this call cannot be evaluated at compile time
+const LITERAL: Pair = Pair.{ a = 1, b = 2 }; //~ error[T0004]: a constant cannot hold a struct yet
+// What holds up a constant is named, not a value it has no need to read: an
+// array's `len` is known from its type.
+fn named(after_len: i32) -> i32 { //~ label: `after_len` gets its value only when the program runs
+    let held = [3]i32{1, 2, 3};
+    const M = double(held.len as i32) + double(after_len); //~ error[T0004]: the value of a constant must be known at compile time
+    return M;
+}
+// All its values are known, so it is not told that one is not.
+const PICKED = [1]i32{double(2)}[0]; //~ error[T0004]: this value cannot be worked out at compile time yet
+// Rust refuses this too: all its uses would share one value.
+const LENT_MUTABLY = &mut 5; //~ error[T0004]: a constant cannot hold a mutable reference, as all its uses would share one value
+// An address can be used, but only the running program knows one, so what
+// would read it stops the run.
+fn same_pointer(p: *i32) -> *i32 {
+    return p;
+}
+fn gives_pointer() -> *i32 {
+    let mut n = 1;
+    return same_pointer(@n); //~ label: an address is known only when the program runs
+}
+const POINTER = gives_pointer(); //~ error[T0044]: this call cannot be evaluated at compile time
+fn compares_addresses() -> bool {
+    let mut a = 1;
+    let mut b = 2;
+    return @a == @b; //~ label: an address is known only when the program runs
+}
+const COMPARES_ADDRESSES = compares_addresses(); //~ error[T0044]: this call cannot be evaluated at compile time
+// A cast is the way to a pointer's bytes, and to what is next to a value.
+fn casts_pointer() -> u8 {
+    let mut n = 1;
+    let bytes = @n as *u8; //~ label: a pointer cast cannot run at compile time, as it could read an address
+    return bytes.*;
+}
+const CASTS_POINTER = casts_pointer(); //~ error[T0044]: this call cannot be evaluated at compile time
+// What a variable held is gone when it ends, even where a newer one could be.
+fn reads_ended() -> i32 {
+    return gives_pointer().*; //~ label: this reads or writes memory the program does not own
+}
+const READS_ENDED = reads_ended(); //~ error[T0044]: this call cannot be evaluated at compile time
+fn writes_ended() -> i32 {
+    let ended = gives_pointer();
+    ended.* = 5; //~ label: this reads or writes memory the program does not own
+    return 1;
+}
+const WRITES_ENDED = writes_ended(); //~ error[T0044]: this call cannot be evaluated at compile time
+fn reads_through(ended: *i32) -> i32 {
+    let mut mine = 7;
+    let held = @mine;
+    return ended.* + held.*; //~ label: this reads or writes memory the program does not own
+}
+fn ended_under_a_call() -> i32 {
+    return reads_through(gives_pointer());
+}
+const ENDED_UNDER_A_CALL = ended_under_a_call(); //~ error[T0044]: this call cannot be evaluated at compile time
+fn ended_with_its_block() -> i32 {
+    let mut outlived: *i32 = none;
+    for pass in 0..2 {
+        let mut n = pass;
+        outlived = @n;
+    }
+    return outlived.*; //~ label: this reads or writes memory the program does not own
+}
+const ENDED_WITH_ITS_BLOCK = ended_with_its_block(); //~ error[T0044]: this call cannot be evaluated at compile time
+fn from_an_earlier_pass() -> i32 {
+    let mut earlier: *i32 = none;
+    for pass in 0..2 {
+        let mut n = pass;
+        if pass == 1 {
+            return earlier.*; //~ label: this reads or writes memory the program does not own
+        }
+        earlier = @n;
+    }
+    return 0;
+}
+const FROM_AN_EARLIER_PASS = from_an_earlier_pass(); //~ error[T0044]: this call cannot be evaluated at compile time
+fn past_a_continue() -> i32 {
+    let mut earlier: *i32 = none;
+    for pass in 0..2 {
+        let mut n = pass;
+        if pass == 0 {
+            earlier = @n;
+            continue;
+        }
+        return earlier.*;
+    }
+    return 0;
+}
+const PAST_A_CONTINUE = past_a_continue(); //~ error[T0044]: this call cannot be evaluated at compile time
+fn casts_back() -> i32 {
+    let mut n = 3;
+    let raw: rawptr = @n;
+    let back = raw as *i32; //~ label: a pointer cast cannot run at compile time, as it could read an address
+    return back.*;
+}
+const CASTS_BACK = casts_back(); //~ error[T0044]: this call cannot be evaluated at compile time
+// A parameter has no scope end: it ends with its call.
+fn own_parameter(mut value: i32) -> *i32 {
+    return same_pointer(@value);
+}
+fn reads_parameter() -> i32 {
+    return own_parameter(1).*; //~ label: this reads or writes memory the program does not own
+}
+const READS_PARAMETER = reads_parameter(); //~ error[T0044]: this call cannot be evaluated at compile time
+// A C function called by a function a constant runs cannot run either.
+fn writes() -> i32 {
+    return Write(Stdout, c"x", 1); //~ label: an `extern` function cannot run at compile time
+}
+const WRITES = writes(); //~ error[T0044]: this call cannot be evaluated at compile time

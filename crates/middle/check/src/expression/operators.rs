@@ -3,11 +3,7 @@
 
 use arena::Id;
 use bigint::Limbs;
-use model::ast;
 use model::constant::Value;
-use model::operators::BinaryOp;
-use model::operators::UnaryOp;
-use model::semantic_types::Conversion;
 use model::semantic_types::Float;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
@@ -15,46 +11,15 @@ use model::thir::Expr;
 use model::thir::ExprKind;
 use model::thir::FactKind;
 use source::Span;
+use syntax::ast;
+use syntax::operators::BinaryOp;
+use syntax::operators::UnaryOp;
 
+use crate::Checked;
 use crate::builder::ThirBuilder;
 use crate::expression::unsuffixed_literal;
 
-impl ThirBuilder<'_, '_> {
-    /// `value as ty`: `value` as a value of the type `ty`, which its type
-    /// converts to with `as` or without it (`Types::conversion`). A number
-    /// literal takes the type `ty` if it can, so `300 as u8` is an error.
-    pub(super) fn check_cast(
-        &mut self,
-        value: Id<ast::Expr>,
-        ty: Id<ast::Type>,
-        span: Span,
-    ) -> Expr {
-        let to = self.checker.resolve_value_type(ty);
-        let checked = self.check_expr(value, Some(to));
-        if checked.ty == TypeId::INVALID || to == TypeId::INVALID {
-            return Expr::INVALID;
-        }
-        let value_span = self.checker.module().ast.exprs.span(value);
-        let found = checked.ty;
-        let conversion = self.checker.types.conversion(found, to);
-        if let Some(converted) = self.convert(checked, value_span, to, conversion) {
-            return converted;
-        }
-        let (found_text, to_text) = self.checker.type_texts(found, to);
-        let message = format!("`{found_text}` cannot be converted to `{to_text}`");
-        let types = &self.checker.types;
-        let diagnostic = self.type_error(
-            diagnostics::INVALID_CAST,
-            message,
-            span,
-            value,
-            found,
-            |ty| types.conversion(ty, to) != Conversion::Never,
-        );
-        self.checker.report(diagnostic);
-        Expr::INVALID
-    }
-
+impl<L: Checked> ThirBuilder<'_, '_, L> {
     /// The number literal at `number`, or its negation written at `negated`
     /// (`-128`, which fits `i8` where `128` does not). It takes its suffix's
     /// type, else the type `expected` if it can (`takes_type`), else `i32` or
@@ -126,7 +91,7 @@ impl ThirBuilder<'_, '_> {
     pub(super) fn check_unary(
         &mut self,
         op: UnaryOp,
-        operand: Id<ast::Expr>,
+        operand: Id<ast::Expr<L>>,
         span: Span,
         expected: Option<TypeId>,
     ) -> Expr {
@@ -156,7 +121,7 @@ impl ThirBuilder<'_, '_> {
         let result = checked.ty;
         let kind = match checked.kind {
             ExprKind::Constant(constant) => {
-                ExprKind::Constant(eval::operators::unary(op, &ty, &constant))
+                ExprKind::Constant(crate::fold::operators::unary(op, &ty, &constant))
             }
             kind => ExprKind::Unary {
                 op,
@@ -175,8 +140,8 @@ impl ThirBuilder<'_, '_> {
     pub(super) fn check_binary(
         &mut self,
         op: BinaryOp,
-        left_operand: Id<ast::Expr>,
-        right_operand: Id<ast::Expr>,
+        left_operand: Id<ast::Expr<L>>,
+        right_operand: Id<ast::Expr<L>>,
         span: Span,
         expected: Option<TypeId>,
     ) -> Expr {
@@ -297,7 +262,8 @@ impl ThirBuilder<'_, '_> {
             return Expr::INVALID;
         }
         if let ExprKind::Constant(value) = &right.kind
-            && let Some(message) = eval::operators::known_trap(op, &left_type, &right_type, value)
+            && let Some(message) =
+                crate::fold::operators::known_trap(op, &left_type, &right_type, value)
         {
             self.checker
                 .error(diagnostics::INVALID_OPERATION, message, right_span);
@@ -313,9 +279,14 @@ impl ThirBuilder<'_, '_> {
             && let (ExprKind::Constant(left_value), ExprKind::Constant(right_value)) =
                 (&left.kind, &right.kind)
         {
-            let folded =
-                eval::operators::binary(op, &left_type, left_value, &right_type, right_value)
-                    .expect("known traps were reported before folding");
+            let folded = crate::fold::operators::binary(
+                op,
+                &left_type,
+                left_value,
+                &right_type,
+                right_value,
+            )
+            .expect("known traps were reported before folding");
             return Expr {
                 ty,
                 kind: ExprKind::Constant(folded),
@@ -337,7 +308,7 @@ impl ThirBuilder<'_, '_> {
         &mut self,
         op: &str,
         ty: TypeId,
-        operand: Id<ast::Expr>,
+        operand: Id<ast::Expr<L>>,
         span: Span,
         fits: impl Fn(&Type) -> bool,
     ) -> Expr {

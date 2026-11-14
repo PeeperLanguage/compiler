@@ -1,0 +1,6 @@
+const First = Second + 1; //~ error[T0013]: `First` depends on itself
+//~ label: `First` is defined here
+//~ label: `First` uses `Second`
+const Second = First; //~ label: `Second` uses `First`, closing the cycle
+
+fn main() {}

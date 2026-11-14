@@ -1,6 +1,7 @@
 //! Keeping the open files current, checking their programs and
 //! publishing the diagnostics.
 
+use features::Peeper;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::path::Path;
@@ -155,7 +156,7 @@ impl Server<'_> {
         project: project::Project,
         file: &Path,
     ) -> Result<(), BoxError> {
-        let program = project::load(&project, &self.open_files);
+        let program = project::load::<Peeper>(&project, &self.open_files);
         let mut checked = self.checked.remove(&key).unwrap_or_default();
         let mut all: Vec<&diagnostics::Diagnostic> = program.diagnostics.iter().collect();
         // A program that cannot be checked keeps the last compile for the next.

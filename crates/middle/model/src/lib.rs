@@ -1,20 +1,16 @@
-//! The program's data, in one place: the syntax tree, THIR, MIR, the type
-//! model, constant values with their arithmetic, operator kinds, and the ids
-//! every phase shares (`ModuleId`, `DefId`). Each phase keeps its own node
-//! types (`ast`, `thir`, `mir`); the crates that build them hold only logic.
-//! See docs/ir-design.md.
+//! The program's data after parsing: THIR, MIR, the type model, constant
+//! values, and the ids every phase shares (`ModuleId`, `DefId`). The syntax
+//! tree is the `syntax` crate's. Each phase keeps its own node types
+//! (`thir`, `mir`); the crates that build them hold only logic. See
+//! docs/ir-design.md.
 
-pub mod ast;
 pub mod constant;
 pub mod layout;
 pub mod machine;
 pub mod mir;
-pub mod operators;
 pub mod program;
 pub mod semantic_types;
 pub mod thir;
-
-use crate::semantic_types::ConstArguments;
 
 /// A module of the program, by its place in the program's order. Tables of
 /// per-module results are vectors indexed by it.
@@ -42,6 +38,16 @@ impl ModuleId {
 pub struct DefId {
     pub module: ModuleId,
     pub index: u32,
+}
+
+/// What a function's `const` parameters are given, in order, by their place
+/// in `Types`'s list of them (`Types::const_arguments`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct ConstArguments(pub(crate) u32);
+
+impl ConstArguments {
+    /// None: the arguments of a function without `const` parameters.
+    pub const NONE: ConstArguments = ConstArguments(0);
 }
 
 /// A function as a call names it: its declaration, and what its `const`

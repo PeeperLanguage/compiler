@@ -9,15 +9,13 @@ use std::fmt::Write;
 use crate::Callee;
 use crate::DefId;
 use crate::ModuleId;
-use crate::constant::Constant;
 use crate::constant::Value;
-use crate::constant::value_text;
-use crate::operators::BinaryOp;
-use crate::operators::UnaryOp;
+use crate::semantic_types::Constant;
 use crate::semantic_types::ImplementationId;
 use crate::semantic_types::Type;
 use crate::semantic_types::TypeId;
 use crate::semantic_types::Types;
+use crate::semantic_types::value_text;
 use arena::Arena;
 use arena::Id;
 use arena::List;
@@ -26,6 +24,8 @@ use arena::Node;
 use arena::nodes;
 use source::SourceFile;
 use source::Span;
+use syntax::operators::BinaryOp;
+use syntax::operators::UnaryOp;
 
 nodes! {
     Body;
@@ -51,8 +51,9 @@ pub struct Body {
     /// name; `None` when its value had an error. Uses of it are folded.
     pub constants: Arena<Option<Constant>>,
     pub children: Children,
-    /// Checking it reported an error: later phases would only find what
-    /// follows from that, so it is not lowered.
+    /// Checking it reported an error, or it holds an invalid expression
+    /// whose error another body's check reported: later phases would only
+    /// find what follows from that, so it is not lowered.
     pub has_errors: bool,
 }
 
@@ -186,10 +187,9 @@ pub enum ExprKind {
     },
     /// `array.len`, a `usize`. For a slice, its length, read when the
     /// program runs. For an array, or a reference or raw pointer to one, only
-    /// where computing `array` calls a function: the array is computed, never
-    /// read, and the value is its type's length. Without a call an array's
-    /// `.len` is a `Constant` and the array is not computed, as Go's `len`
-    /// (`Body::has_call`).
+    /// where computing `array` runs something (a call, a run-time index, a
+    /// literal's parts): the array is computed, never read, and the value is
+    /// its type's length. Otherwise an array's `.len` is a `Constant`.
     Length(Id<Expr>),
     /// The element of the array, a place, or of the slice at the index, an
     /// integer; outside the array or slice, the program fails. A slice's
@@ -353,12 +353,27 @@ impl Body {
         T::arena(self).push(node, span)
     }
 
-    /// Whether computing `expression` calls a function, `print` too: then
-    /// it runs even where only its type is needed (`ExprKind::Length`).
+    /// Whether computing `expression` calls a function, `print` too, which
+    /// could change a value read before it.
     pub fn has_call(&self, expression: Id<Expr>) -> bool {
-        let kind = &self.exprs[expression].kind;
-        matches!(kind, ExprKind::Call { .. } | ExprKind::Print { .. })
-            || self.any_part(kind, |part| self.has_call(part))
+        // A list, not recursion: `a[0][0]...` nests as deep as it is written.
+        // `pending` stays empty, so unallocated, for one with no parts.
+        let mut part = expression;
+        let mut pending = Vec::new();
+        loop {
+            let kind = &self.exprs[part].kind;
+            if matches!(kind, ExprKind::Call { .. } | ExprKind::Print { .. }) {
+                return true;
+            }
+            self.any_part(kind, |inner| {
+                pending.push(inner);
+                false
+            });
+            match pending.pop() {
+                Some(next) => part = next,
+                None => return false,
+            }
+        }
     }
 
     /// The first variable with a name that `kind` reads, going through its

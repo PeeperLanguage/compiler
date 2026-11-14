@@ -1,0 +1,49 @@
+fn middle:
+  bb0:
+    store i32 start.1, arg1
+    %1 = load i32 start.1
+    %2 = sext i32 %1 to i64
+    %3 = ult i64 4, %2
+    check %3, "slice out of bounds"
+    %5 = ult i64 3, %2
+    check %5, "slice starts after it ends"
+    %7 = sub i64 3, %2
+    %8 = borrow 16 values.0[%2 * 4 of 4] as slice
+    store ptr view.2, %8
+    store i64 view.2[+8], %7
+    %11 = load i64 view.2[+8]
+    %12 = ule i64 %11, 0
+    check %12, "index out of bounds of the slice"
+    %14 = load i32 view.2[*, 0 * 4]
+    dead view.2
+    dead start.1
+    dead values.0
+    return %14
+  bb1:
+    dead view.2
+    dead start.1
+    dead values.0
+    fall off at `}`
+fn main:
+  bb0:
+    fall off at `}`
+fn tail:
+  bb0:
+    %0 = load i64 view.0[+8]
+    %1 = ult i64 %0, 1
+    check %1, "slice out of bounds"
+    %3 = sub i64 %0, 1
+    %4 = borrow view.0[*, 1 * 4] as slice
+    store ptr rest.1, %4
+    store i64 rest.1[+8], %3
+    %7 = load i64 rest.1[+8]
+    %8 = ule i64 %7, 0
+    check %8, "index out of bounds of the slice"
+    %10 = load i32 rest.1[*, 0 * 4]
+    dead rest.1
+    dead view.0
+    return %10
+  bb1:
+    dead rest.1
+    dead view.0
+    fall off at `}`

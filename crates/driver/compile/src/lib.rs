@@ -19,17 +19,16 @@ use check::Checker;
 use check::State;
 use diagnostics::Diagnostic;
 use eval::interpreter::Failure;
-use eval::interpreter::program::ProgramFacts;
 use eval::interpreter::program::Stream;
 use eval::interpreter::program::Written;
+use model::ConstArguments;
 use model::DefId;
 use model::FunctionCopy;
 use model::ModuleId;
-use model::ast;
-use model::constant::Constant;
 use model::machine::Machine;
 use model::mir;
-use model::semantic_types::ConstArguments;
+use model::mir::DebugTypes;
+use model::semantic_types::Constant;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
 use model::semantic_types::Types;
@@ -38,6 +37,9 @@ use runtime_abi::abi::PANIC_EXIT_CODE;
 use runtime_abi::messages::panic_text;
 use source::SourceFile;
 use source::Span;
+use syntax::ast;
+
+use features::Peeper;
 
 /// What a compile found, kept for the next compile of the same program.
 #[derive(Default)]
@@ -103,7 +105,7 @@ impl ModuleResults {
 /// dropped after.
 #[expect(
     clippy::large_enum_variant,
-    reason = "each is moved once into the callback, never stored; a box would allocate per function"
+    reason = "each is moved once to `use_output`, never kept in a list"
 )]
 pub enum Output<'c> {
     Function(CheckedFunction<'c>),
@@ -126,7 +128,7 @@ pub enum Output<'c> {
 
 /// A function with a body, or a copy of one with `const T: type`
 /// parameters, as a compile hands it on: built, used once, and dropped
-/// after, except its MIR, which is handed over (`into_mir`).
+/// after.
 pub struct CheckedFunction<'c> {
     pub function: FunctionCopy,
     /// The module whose compile built it: its own, or, for a copy, the one
@@ -138,20 +140,10 @@ pub struct CheckedFunction<'c> {
     /// the compile records facts (as for an editor); otherwise none. Only
     /// this function's locals are among their names, explained by `thir`.
     pub facts: &'c [thir::Fact],
-    mir: Option<mir::Body>, // `None` when checking it found an error
-    pub types: &'c Types,   // the program's types so far, which the bodies name
-}
-
-impl CheckedFunction<'_> {
-    /// Its MIR, as every reader of MIR takes it: with the code no path
-    /// reaches removed (`flow::cleanup`). `None` when checking it found an
-    /// error. Only a compile that reads MIR pays for the cleanup: in
-    /// `peeper check` of a large program it is about 5% of the work.
-    pub fn into_mir(self) -> Option<mir::Body> {
-        let mut mir = self.mir?;
-        flow::cleanup::remove_unused_code(&mut mir);
-        Some(mir)
-    }
+    /// Its path-checked MIR, `None` when checking it found an error.
+    pub mir: Option<mir::Body>,
+    pub types: &'c Types, // the program's types so far, which the bodies name
+    pub debug_types: &'c DebugTypes, // the program's so far, which `mir` names
 }
 
 /// What a program did when `interpret` ran it.
@@ -160,65 +152,44 @@ pub struct Interpreted {
     pub exit_code: u8,        // as a program's parent on Linux sees it: the low 8 bits
 }
 
-/// Compiles `program`, of `project`, as `run` does, then runs it from its entry
+/// Compiles `program` as `run` does, then runs it from its entry
 /// file's `main` with no backend or system (`eval::interpreter::program`).
 /// Gives what the compile found and, when that left a program to start, what
 /// it did. A program that cannot be checked has only loading's errors, and
 /// does not start.
 pub fn interpret(
-    program: &model::program::Program,
+    program: &model::program::Program<Peeper>,
     target: &'static Machine,
 ) -> (Results, Option<Interpreted>) {
     let modules = program.modules.as_slice();
     let mut bodies = HashMap::new();
-    let mut last_types = None;
     let results = run(
         program,
         target,
         Results::default(),
-        true,
-        false,
-        |output| match output {
-            Output::Function(checked) => {
-                let function = checked.function;
-                if let Some(mir) = checked.into_mir() {
-                    bodies.insert(function, mir);
-                }
+        Options {
+            require_main: true,
+            ..Options::default()
+        },
+        &mut |output| {
+            if let Output::Function(checked) = output
+                && let Some(body) = checked.mir
+            {
+                bodies.insert(checked.function, body);
             }
-            // Nothing here is reused, so the last module's facts come last,
-            // with every type.
-            Output::Facts { module, types, .. } if module.index() + 1 == modules.len() => {
-                last_types = Some(types.clone());
-            }
-            _ => {}
         },
     );
-    let (Some((main, _)), Some(types)) = (results.entry_point(), last_types) else {
+    let Some((main, _)) = results.entry_point() else {
         return (results, None);
-    };
-    let extern_symbol = |function| model::program::c_symbol(modules, function);
-    let struct_name = |definition| model::program::declared_text(modules, definition).to_string();
-    let field_names = |definition| {
-        let names = model::program::field_names(modules, definition);
-        names.map(str::to_string).collect()
-    };
-    let facts = ProgramFacts {
-        extern_symbol: &extern_symbol,
-        struct_name: &struct_name,
-        field_names: &field_names,
     };
     let main_function = FunctionCopy {
         definition: main,
         arguments: ConstArguments::NONE,
     };
-    let outcome = eval::interpreter::program::run(
-        main,
-        &bodies[&main_function],
-        &types,
-        target,
-        &|function| bodies.get(&function),
-        &facts,
-    );
+    let outcome =
+        eval::interpreter::program::run(main, &bodies[&main_function], target, &|function| {
+            bodies.get(&function)
+        });
     let mut output = outcome.output;
     let exit_code = match outcome.ending {
         Ok(code) => code as u8,
@@ -235,10 +206,22 @@ pub fn interpret(
             });
             PANIC_EXIT_CODE as u8
         }
-        Err(_) => unreachable!("a checked program's functions run, and it exits by `Ok`"),
+        Err(Failure::NoMir { .. }) => unreachable!("each function of a checked program has MIR"),
     };
     let interpreted = Interpreted { output, exit_code };
     (results, Some(interpreted))
+}
+
+/// What a compile does beyond checking and lowering (`run`).
+#[derive(Default)]
+pub struct Options {
+    /// A program with an entry file and no other error must declare there
+    /// a `main` it can start at (`Results::entry_point`): it is to be built
+    /// or run.
+    pub require_main: bool,
+    /// What checking finds about the text (`thir::Fact`) is recorded and
+    /// handed on, for an editor (`Output::Facts`).
+    pub record_facts: bool,
 }
 
 /// Checks every declaration of `program`, lowers each function to MIR and
@@ -247,29 +230,28 @@ pub fn interpret(
 /// whose imports' interfaces are unchanged keeps its diagnostics, and its
 /// bodies are not checked again. What it checks goes to `use_output` in
 /// declaration order, module by module: each function with a body as soon as
-/// it is built, with the facts found so far when `record_facts`, then
+/// it is built, with the facts found so far when `options.record_facts`, then
 /// dropped except its MIR, which is `use_output`'s: nothing here holds every
 /// function's bodies at once. Each module constant goes once checked, with
 /// its type and value, and last the module's remaining facts, none unless
-/// `record_facts`. Integers as wide as a pointer (`isize`, `usize`) have
-/// `target`'s `pointer_bits` bits. With `require_main`, a program with an
-/// entry file and no other error must declare there a `main` it can start
-/// at (`entry_point`). A program loading found an error in
+/// `options.record_facts`. Integers as wide as a pointer (`isize`, `usize`) have
+/// `target`'s `pointer_bits` bits. A program loading found an error in
 /// (`Program::checkable`) is not checked: its errors would follow from
-/// those, so it finds nothing.
+/// those, so it finds nothing. `use_output` is a `dyn`, so that this and
+/// the checking and lowering it runs are built once, here, not again in each
+/// crate that calls it with a closure of its own.
 pub fn run(
-    program: &model::program::Program,
+    program: &model::program::Program<Peeper>,
     target: &'static Machine,
     previous: Results,
-    require_main: bool,
-    record_facts: bool,
-    mut use_output: impl FnMut(Output),
+    options: Options,
+    use_output: &mut dyn FnMut(Output),
 ) -> Results {
     if !program.checkable {
         return Results::default();
     }
     let modules = program.modules.as_slice();
-    let mut checker = Checker::new(modules, target, record_facts);
+    let mut checker = Checker::new(modules, target, options.record_facts);
     let mut results: Vec<ModuleResults> = modules
         .iter()
         .map(|module| ModuleResults::new(module.ast.file.clone()))
@@ -335,7 +317,7 @@ pub fn run(
             };
             continue;
         }
-        compile_module(&mut checker, id, &mut thir, &mut use_output);
+        compile_module(&mut checker, id, &mut thir, use_output);
         let interface = interface(&checker, id, &results);
         let found = &mut results[index];
         found.interface = interface;
@@ -350,7 +332,7 @@ pub fn run(
     let mut entry_point = None;
     // A syntax error the parser read past is the loader's, and leaves a
     // whole tree, so the loader's errors count too.
-    if let Some(entry) = program.entry.filter(|_| require_main)
+    if let Some(entry) = program.entry.filter(|_| options.require_main)
         && !program.diagnostics.iter().any(Diagnostic::is_error)
         && !results
             .iter()
@@ -370,7 +352,10 @@ pub fn run(
 
 /// The `main` of the module `entry` and whether it returns the exit code, or
 /// the error that it has none a program can start at.
-fn find_entry_point(checker: &mut Checker, entry: ModuleId) -> Result<(DefId, bool), Diagnostic> {
+fn find_entry_point(
+    checker: &mut Checker<Peeper>,
+    entry: ModuleId,
+) -> Result<(DefId, bool), Diagnostic> {
     let module = &checker.modules[entry.index()];
     let tree = &module.ast;
     let main = tree
@@ -422,10 +407,10 @@ fn find_entry_point(checker: &mut Checker, entry: ModuleId) -> Result<(DefId, bo
 /// or not, and gives each, with its MIR and the facts found so far for a
 /// function, then the module's remaining facts, to `use_output`.
 fn compile_module(
-    checker: &mut Checker,
+    checker: &mut Checker<Peeper>,
     module: ModuleId,
     thir: &mut thir::Body,
-    use_output: &mut impl FnMut(Output),
+    use_output: &mut dyn FnMut(Output),
 ) {
     let tree = &checker.modules[module.index()].ast;
     for (index, declaration) in tree.declarations().enumerate() {
@@ -474,16 +459,16 @@ fn compile_module(
 /// and the facts found so far to `use_output`; nothing when it has no body
 /// or its signature has an error.
 fn build_function(
-    checker: &mut Checker,
+    checker: &mut Checker<Peeper>,
     module: ModuleId,
     function: FunctionCopy,
     thir: &mut thir::Body,
-    use_output: &mut impl FnMut(Output),
+    use_output: &mut dyn FnMut(Output),
 ) {
     let span = model::program::declared_name(checker.modules, function.definition)
         .0
         .span;
-    let Some(mir) = checker.build_function(function, span, thir, false) else {
+    let Some(mir) = checker.build_function(function, span, thir, true) else {
         return;
     };
     let facts = std::mem::take(&mut checker.module_checks[module.index()].facts);
@@ -494,13 +479,14 @@ fn build_function(
         facts: &facts,
         mir,
         types: &checker.types,
+        debug_types: &checker.debug_types.table,
     }));
 }
 
 /// Feeds `ty` to `hasher` by what it is, not by its id, which differs between
 /// compiles: a named type by its module's path and its name. What it holds
 /// is in the interface of the module declaring it (`interface`).
-fn hash_type(checker: &Checker, id: TypeId, hasher: &mut DefaultHasher) {
+fn hash_type(checker: &Checker<Peeper>, id: TypeId, hasher: &mut DefaultHasher) {
     let ty = &checker.types[id];
     std::mem::discriminant(ty).hash(hasher);
     match ty {
@@ -566,7 +552,7 @@ fn hash_type(checker: &Checker, id: TypeId, hasher: &mut DefaultHasher) {
 /// change reaches every module that can see it through a type, and each
 /// declaration's kind, name, and type, value or struct fields. Its bodies are
 /// not part of it.
-fn interface(checker: &Checker, module: ModuleId, done: &[ModuleResults]) -> u64 {
+fn interface(checker: &Checker<Peeper>, module: ModuleId, done: &[ModuleResults]) -> u64 {
     let modules = checker.modules;
     let checked = &checker.module_checks[module.index()];
     let (declared_types, constants) = (&checked.declared_types, &checked.constants);
@@ -605,14 +591,9 @@ fn interface(checker: &Checker, module: ModuleId, done: &[ModuleResults]) -> u64
             // `hash_type` stops at the name, so a struct's fields and an
             // interface's methods are hashed here.
             match (decl, &checker.types[ty]) {
-                (
-                    ast::Decl::Type(_),
-                    Type::Struct {
-                        definition, fields, ..
-                    },
-                ) => {
+                (ast::Decl::Type(_), ty) if let Some(members) = ty.members() => {
                     for (name, &field) in
-                        model::program::field_names(modules, *definition).zip(fields)
+                        model::program::field_names(modules, members.definition).zip(members.fields)
                     {
                         name.hash(&mut hasher);
                         hash_type(checker, field, &mut hasher);

@@ -1,9 +1,9 @@
+use model::ConstArguments;
 use model::DefId;
 use model::FunctionCopy;
-use model::ast;
-use model::semantic_types::ConstArguments;
 use model::thir::Body;
 use source::SourceFile;
+use syntax::ast;
 
 use crate::testing::Reported;
 use crate::testing::reported;
@@ -33,7 +33,7 @@ fn bodies(text: &str) -> (Vec<String>, Vec<Reported>) {
                 },
                 function.name.span,
                 &mut body,
-                false,
+                true,
             );
             if checked && !body.has_errors {
                 bodies.push(body);
@@ -59,7 +59,7 @@ fn statements_and_operators() {
                 let c = a + 1;
                 b = b + c;
                 const K: i64 = 2 * 3;
-                if a < 0 { return K; } else if !(a == 1) { b = -b; } else { let c = true; }
+                if a < 0 { return K; } else if !(a == 1) { b = -b; } else { let c = a == 2; }
                 let d: u8;
                 return b << 2u8;
             }",
@@ -74,7 +74,7 @@ fn statements_and_operators() {
     } else if (LogicalNot (a.0 EqualTo 1:i32)) {
         b.1 = (Negate b.1)
     } else {
-        let c.3 = true
+        let c.3 = (a.0 EqualTo 2:i32)
     }
     let d.4
     return (b.1 ShiftLeft 2:u8)
@@ -82,19 +82,14 @@ fn statements_and_operators() {
     );
 }
 
-/// A range's literal start takes the end's type; its variables are
-/// declared in the body. Its step is the ends' type made unsigned, 1
-/// when not written.
+/// A loop without a condition runs until a `break`; one with a condition
+/// while it holds.
 #[test]
 fn loops() {
     let (bodies, reported) = bodies(
         "fn f(n: i64) {
                 for { break; }
                 for n > 0 { continue; }
-                for i in 0..n { let j = i; }
-                for 0..3 { }
-                for k in 1..=n { }
-                for i, m in n..0:2 { }
             }",
     );
     assert!(reported.is_empty(), "{reported:?}");
@@ -106,15 +101,6 @@ fn loops() {
     for (n.0 GreaterThan 0:i64) {
         continue
     }
-    for i.1 in 0:i64..n.0 by 1:u64 {
-        let j.2 = i.1
-    }
-    for 0:i32..3:i32 by 1:u32 {
-    }
-    for k.3 in 1:i64..=n.0 by 1:u64 {
-    }
-    for i.4, m.5 in n.0..0:i64 by 2:u64 {
-    }
 "]
     );
 }
@@ -124,7 +110,7 @@ fn names_shadow_until_their_block_ends() {
     let (bodies, reported) = bodies(
         "fn f(x: i32) {
                 { let x = x + 1; let y = x; }
-                { let x = true; let z = x; }
+                { let x = x == 1; let z = x; }
                 let w = x;
                 { const x = 2u8; let v = x; }
             }",
@@ -137,7 +123,7 @@ fn names_shadow_until_their_block_ends() {
         let y.2 = x.1
     }
     {
-        let x.3 = true
+        let x.3 = (x.0 EqualTo 1:i32)
         let z.4 = x.3
     }
     let w.5 = x.0
@@ -154,7 +140,7 @@ fn names_shadow_until_their_block_ends() {
 fn hidden_names_come_back_level_by_level() {
     let (built, reported) = bodies(
         "fn f(x: i32) {
-                { let x = true; { let x = 2u8; let a = x; } let b = x; }
+                { let x = x == 1; { let x = 2u8; let a = x; } let b = x; }
                 let c = x;
             }",
     );
@@ -162,7 +148,7 @@ fn hidden_names_come_back_level_by_level() {
     assert_eq!(
         built,
         ["    {
-        let x.1 = true
+        let x.1 = (x.0 EqualTo 1:i32)
         {
             let x.2 = 2:u8
             let a.3 = x.2
@@ -209,7 +195,7 @@ fn a_block_declares_a_name_once() {
     let (shown, found) = bodies(
         "fn f(a: i32, a: i64) {
                 let b = 1;
-                let b = true;
+                let b = a == 1;
                 const C = 1;
                 let C = 2;
                 let a = 3;
@@ -271,7 +257,7 @@ fn errors_are_located() {
                 let b: u8 = -1;
                 let c: i8 = -(128);
                 let d = 1i32 + 2i64;
-                let e = true + false;
+                let e = (p == 1) + (p == 2);
                 let g = 1 / 0;
                 let h = 1u8 << 8;
                 let i = 1 << 1.5;
@@ -292,8 +278,8 @@ fn errors_are_located() {
                 break;
                 let q = 5f16;
                 let r: f64 = 0xff;
-                let t = -true;
-                { let m = true; }
+                let t = -(p == 1);
+                { let m = p == 1; }
                 alloc(1);
                 let .{ first, second as renamed } = 1;
                 let after = first + renamed;
@@ -314,7 +300,7 @@ fn errors_are_located() {
         (
             "T0004",
             "operator `+` cannot be applied to `bool`",
-            "true + false",
+            "(p == 1) + (p == 2)",
         ),
         ("T0004", "division by zero", "0"),
         ("T0004", "a shift count must be from 0 to 7", "8"),
@@ -356,7 +342,11 @@ fn errors_are_located() {
             "mismatched types: expected `f64`, found `i32`",
             "0xff",
         ),
-        ("T0004", "operator `-` cannot be applied to `bool`", "-true"),
+        (
+            "T0004",
+            "operator `-` cannot be applied to `bool`",
+            "-(p == 1)",
+        ),
         ("T0002", "unknown name `alloc`", "alloc"),
         (
             "T0043",
@@ -394,7 +384,7 @@ fn notes(text: &str) -> Vec<(String, Option<String>)> {
             },
             function.name.span,
             &mut Body::default(),
-            false,
+            true,
         );
         let note = |diagnostic: &diagnostics::Diagnostic| {
             let first = diagnostic.notes.first();
@@ -437,7 +427,7 @@ fn a_left_literal_gets_help_if_it_can_have_the_type() {
         ]
     );
     assert_eq!(
-        notes("fn f(x: i64) { let a = 1 + true; let b = 1.5 + x; }"),
+        notes("fn f(x: i64) { let a = 1 + (x == 1); let b = 1.5 + x; }"),
         [
             (mismatch("bool"), cast("i32")),
             (
@@ -477,16 +467,14 @@ fn unknown_names_get_suggestions() {
 #[test]
 fn temporaries() {
     let (bodies, reported) = bodies(
-        "fn make() -> [2]i32 { return [2]i32{1, 2}; }
+        "fn make() -> i32 { return 1; }
             fn id(r: &mut i32) -> &mut i32 in r { return r; }
-            fn sum(values: &[]i32) -> i32 { return values[0]; }
+            fn read(value: &i32) -> i32 { return value.*; }
             fn f() {
-                let total = sum(&make());
+                let total = read(&make());
                 let kept = &make();
-                let first = make()[0];
                 let mut x = 1;
                 id(&mut x).* = 2;
-                for v in &make() { }
             }",
     );
     assert!(reported.is_empty(), "{reported:?}");
@@ -494,41 +482,12 @@ fn temporaries() {
     // value makes is marked to last with it; one in a plain statement is not.
     assert_eq!(
         bodies[3],
-        "    let total.1 = call f2(&(kept _.0 = call f0():[2]i32)):i32
-    let kept.3 = &(kept _.2 = call f0():[2]i32)
-    let first.5 = (kept _.4 = call f0():[2]i32)[at 0:u64]
-    let mut x.6 = 1:i32
-    (_.7 = call f1(&mut x.6):&mut i32).* = 2:i32
-    {
-        let _.9 = &(kept _.8 = call f0():[2]i32)
-        for _.10 in 0:u64..2:u64 by 1:u64 {
-            let v.11 = &_.9.*[at _.10]
-        }
-    }
+        "    let total.1 = call f2(&(kept _.0 = call f0():i32)):i32
+    let kept.3 = &(kept _.2 = call f0():i32)
+    let mut x.4 = 1:i32
+    (_.5 = call f1(&mut x.4):&mut i32).* = 2:i32
 "
     );
-}
-
-#[test]
-fn temporaries_cannot_be_written_or_addressed() {
-    let (_, found) = bodies(
-        "fn make() -> [2]i32 { return [2]i32{1, 2}; }
-            fn f() {
-                make()[0] = 5;
-                let p = @make()[0];
-                let q = @5;
-            }",
-    );
-    let expected = reported(&[
-        ("T0007", "cannot assign to a temporary value", "make()[0]"),
-        (
-            "T0004",
-            "cannot take address of a temporary value",
-            "@make()[0]",
-        ),
-        ("T0004", "cannot take address of a temporary value", "@5"),
-    ]);
-    assert_eq!(found, expected);
 }
 
 #[test]

@@ -1,0 +1,19 @@
+// A function whose signature has an error reports it once. A body that
+// calls it reports nothing more, and is not built: its value has no type.
+fn broken(a: i32) -> Missing { //~ error[T0002]: unknown type `Missing`
+    return a;
+}
+
+struct Point { x: i32 }
+
+fn take(a: i32) {}
+
+fn main() {
+    let typed: i32 = broken(1);
+    take(typed);
+    let cast: i64 = broken(1) as i64;
+    let point: Point = broken(1);
+    take(point.x);
+    let array: [2]i32 = broken(1);
+    take(array[0]);
+}

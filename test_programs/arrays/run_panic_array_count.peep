@@ -1,0 +1,23 @@
+//@ run
+//@ exit-code: 101
+
+// A range with ends known only at run time is counted before any element is
+// written; the literal must give exactly its length.
+fn make(n: i32) -> [4]i32 {
+    return [4]i32{(0..n)..., 9};
+}
+
+// An array spread counts its whole length before the range is checked.
+fn join(n: i32) -> [5]i32 {
+    let a = [_]i32{7, 8, 9};
+    return [5]i32{a..., (0..n)...};
+}
+
+fn main() {
+    let first = make(3);
+    println("first:", first[0], first[1], first[2], first[3]);
+    let joined = join(2);
+    println("joined:", joined[0], joined[1], joined[2], joined[3], joined[4]);
+    let short = join(3);
+    println("short:", short[0]);
+}

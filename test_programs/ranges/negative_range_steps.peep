@@ -1,0 +1,11 @@
+// A range's step is a size of the ends' integer type made unsigned, never a
+// constant zero; counting down comes from the ends.
+fn main() {
+    let signed: i32 = 2;
+    for v in 0..10:0 {} //~ error[T0004]: a range's step must not be zero
+    for v in 0..10:-1 {} //~ error[L0003]: literal `-1` does not fit `u32`
+    for v in 0..10:signed {} //~ error[T0001]: mismatched types: expected `u32`, found `i32`
+    for v in 0..10:1.5 {} //~ error[T0001]: mismatched types: expected `u32`, found `f64`
+    // Only the ends are reported: the step is checked for its own errors.
+    for v in 0.5..2.0:1 {} //~ error[P0011]: a range's values must be integers, found `f64`
+}

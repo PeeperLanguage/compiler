@@ -35,7 +35,7 @@ stateDiagram-v2
   `reused`, `changed` and `ran_modules` between compiles; ids, types, THIR and
   MIR are rebuilt every compile.
 - Consumers of `Output` (`use_output` callback): the CLI driver (LLVM writer,
-  dumps), `compile::interpret` (keeps MIR after `flow::cleanup`), the LSP
+  dumps), `compile::interpret` (lowers THIR to the MIR of core concepts), the LSP
   (facts). Nothing holds every body at once.
 
 ## One function body (`Checker::build_function`)
@@ -63,20 +63,22 @@ reports its diagnostics; a later build drops what it finds again) or `Kept`
 
 ## Per declaration (`check::State`)
 
-`NotStarted` (or being checked: then it is on `Checker::checking`) →
-`Done(T)`. Asking for a declaration that is on `checking` is a cycle,
+`NotStarted` (or being checked: then it is on `CheckerInternals::declarations_being_checked`) →
+`Done(T)`. Asking for a declaration that is on `declarations_being_checked` is a cycle,
 reported once (T0013). Tables: `declared_type(d)`, `function_type(d)`,
 `constant(d)`, `body(d)`, `mir(d)` (`docs/ir-design.md`, Scheduling).
 
 ## After the checks
 
-- `flow::cleanup::remove_unused_code` drops `scope end`s, jump-only blocks
-  and unreachable blocks; only readers of a compiled body run it (backend,
-  dumps, `compile::interpret`). A compile-time run keeps `scope end`s.
+- One MIR (`model::mir`, made by `lower`) is read by the path checks, the
+  dumps, the interpreter and the LLVM writer. A function whose checks found
+  an error has none (`CheckedFunction::mir`). Unreached blocks stay in it;
+  the LLVM writer skips them.
 - `llvm`: one walk per function's MIR to LLVM text; `clang -c` per module;
   link with `libpeeper_rt_v1.a` and `-lm` (`docs/ir-design.md`, LLVM).
 - `eval::interpreter::program::run`: the same MIR, for `run -interpret` and
-  the browser.
+  the browser; compile-time calls run on it too
+  (`eval::interpreter::run_function`).
 
 ## Ownership rules the machine relies on (`docs/architecture.md`)
 

@@ -3,16 +3,15 @@
 use arena::Id;
 use arena::List;
 use diagnostics::Diagnostic;
-use model::ast::Block;
-use model::ast::Expr;
-use model::ast::MatchArm;
-use model::ast::Metadata;
-use model::ast::Pattern;
-use model::ast::Stmt;
-use model::operators::BinaryOp;
-use model::operators::Precedence;
+use syntax::ast::Block;
+use syntax::ast::Expr;
+use syntax::ast::Metadata;
+use syntax::ast::Stmt;
+use syntax::operators::BinaryOp;
+use syntax::operators::Precedence;
 use token::TokenKind;
 
+use crate::Grammar;
 use crate::Parser;
 use crate::decl::const_decl;
 use crate::decl::starts_declaration;
@@ -20,12 +19,11 @@ use crate::expr::starts_expression;
 use crate::starts_statement;
 
 /// Reads the statement the current keyword begins.
-type StatementRule = fn(&mut Parser) -> Id<Stmt>;
+pub type StatementRule<L> = fn(&mut Parser<L>) -> Id<Stmt<L>>;
 
 /// The reader of each statement a keyword begins, indexed by token kind; any
 /// other token begins an expression statement.
-static STATEMENTS: [Option<StatementRule>; 256] = {
-    let mut statements: [Option<StatementRule>; 256] = [None; 256];
+pub(crate) const fn statement_rows<L: Grammar>(statements: &mut [Option<StatementRule<L>>; 256]) {
     statements[TokenKind::Let as usize] = Some(let_statement);
     statements[TokenKind::Const as usize] = Some(|p| {
         let decl = const_decl(p, Metadata::NONE);
@@ -33,34 +31,26 @@ static STATEMENTS: [Option<StatementRule>; 256] = {
         p.tree.add(Stmt::Const(decl), span)
     });
     statements[TokenKind::Return as usize] = Some(return_statement);
-    statements[TokenKind::Panic as usize] = Some(|p| {
-        let start = p.next().span.start;
-        let message = p.expr(Precedence::Lowest);
-        p.end();
-        p.add(start, Stmt::Panic(message))
-    });
     statements[TokenKind::If as usize] = Some(if_statement);
     statements[TokenKind::For as usize] = Some(for_statement);
     statements[TokenKind::Break as usize] = Some(jump_statement);
     statements[TokenKind::Continue as usize] = Some(jump_statement);
-    statements[TokenKind::Match as usize] = Some(match_statement);
     statements[TokenKind::LeftBrace as usize] = Some(|p| {
         let block = p.block();
         p.block_statement(block)
     });
-    statements
-};
-
-/// Whether `kind` begins a statement other than an expression statement.
-pub(crate) fn is_statement_keyword(kind: TokenKind) -> bool {
-    STATEMENTS[kind as usize].is_some()
 }
 
-impl Parser {
+/// Whether `kind` begins a statement other than an expression statement.
+pub(crate) fn is_statement_keyword<L: Grammar>(kind: TokenKind) -> bool {
+    L::rules().statements[kind as usize].is_some()
+}
+
+impl<L: Grammar> Parser<L> {
     /// Reads a block. A keyword that begins a declaration but not a statement
     /// means its `}` is missing: the block ends there and the declaration is
     /// read next.
-    pub(crate) fn block(&mut self) -> Id<Block> {
+    pub fn block(&mut self) -> Id<Block<L>> {
         let Some(open) = self.expect(TokenKind::LeftBrace) else {
             return self.add(
                 self.last_end,
@@ -74,7 +64,7 @@ impl Parser {
             let kind = self.tok().kind;
             if kind == TokenKind::RightBrace
                 || kind == TokenKind::Eof
-                || starts_declaration(kind) && !is_statement_keyword(kind)
+                || starts_declaration::<L>(kind) && !is_statement_keyword::<L>(kind)
             {
                 break;
             }
@@ -83,7 +73,7 @@ impl Parser {
                 self.next();
                 continue;
             }
-            if starts_statement(kind) {
+            if starts_statement::<L>(kind) {
                 self.recovering = false;
             }
             let statement = self.stmt();
@@ -99,9 +89,9 @@ impl Parser {
 
     /// Reads a statement: one a keyword begins, or an expression statement, or
     /// an assignment `target = value;`.
-    fn stmt(&mut self) -> Id<Stmt> {
+    fn stmt(&mut self) -> Id<Stmt<L>> {
         source::grow_stack(|| {
-            if let Some(read) = STATEMENTS[self.tok().kind as usize] {
+            if let Some(read) = L::rules().statements[self.tok().kind as usize] {
                 return read(self);
             }
             let start = self.tok().span.start;
@@ -118,14 +108,14 @@ impl Parser {
     }
 
     /// Makes `block` a statement: a block inside a block, or an `else` block.
-    fn block_statement(&mut self, block: Id<Block>) -> Id<Stmt> {
+    fn block_statement(&mut self, block: Id<Block<L>>) -> Id<Stmt<L>> {
         let span = self.tree.blocks.span(block);
         self.tree.add(Stmt::Block(block), span)
     }
 
     /// Reads the block of an if, else or for; when it is missing, it reports
     /// "missing <what> body" where the block should start.
-    fn body(&mut self, what: &str) -> Option<Id<Block>> {
+    fn body(&mut self, what: &str) -> Option<Id<Block<L>>> {
         if self.at(TokenKind::LeftBrace) {
             return Some(self.block());
         }
@@ -139,38 +129,11 @@ impl Parser {
         );
         None
     }
-
-    /// Reads one arm's pattern, its `=>` and its block. A missing `=>` before
-    /// the block is read as if it were there.
-    fn match_arm(&mut self) -> (Id<Pattern>, Id<Block>) {
-        let t = self.tok();
-        let pattern = if t.kind == TokenKind::Underscore {
-            let start = self.next().span.start;
-            self.add(start, Pattern::Wildcard)
-        } else {
-            self.case_pattern()
-        };
-        if self.at(TokenKind::LeftBrace) {
-            let at = self.here();
-            let fix = self.fix(at, " =>");
-            self.repair(
-                Diagnostic::new(
-                    diagnostics::EXPECTED_TOKEN,
-                    "expected `=>` after match case",
-                )
-                .label(&self.tree.file, at, "")
-                .help("add missing `=>`", vec![fix]),
-            );
-        } else if self.expect(TokenKind::FatArrow).is_none() {
-            self.sync();
-        }
-        (pattern, self.block())
-    }
 }
 
 /// Reads `let mut name: Type = value;`, where `mut`, the type and the value
 /// may be left out, or `let .{ fields } = value;`.
-fn let_statement(p: &mut Parser) -> Id<Stmt> {
+fn let_statement<L: Grammar>(p: &mut Parser<L>) -> Id<Stmt<L>> {
     let start = p.next().span.start;
     if p.at(TokenKind::Dot) {
         let pattern = p.struct_pattern();
@@ -197,7 +160,7 @@ fn let_statement(p: &mut Parser) -> Id<Stmt> {
 
 /// Reads `if condition { } else if ... else { }`. A `=` written for `==` in
 /// the condition is read as `==`.
-fn if_statement(p: &mut Parser) -> Id<Stmt> {
+fn if_statement<L: Grammar>(p: &mut Parser<L>) -> Id<Stmt<L>> {
     source::grow_stack(|| {
         let start = p.next().span.start;
         let mut condition = p.expr(Precedence::Lowest);
@@ -248,7 +211,7 @@ fn if_statement(p: &mut Parser) -> Id<Stmt> {
 /// Reads `for { }`, `for control { }`, `for value in items { }` or `for
 /// index, value in items { }`. Whether `control` is a condition or a range
 /// to count through is its type's to say, which the checker decides.
-fn for_statement(p: &mut Parser) -> Id<Stmt> {
+fn for_statement<L: Grammar>(p: &mut Parser<L>) -> Id<Stmt<L>> {
     let start = p.next().span.start;
     let unnamed_index = p.at(TokenKind::Underscore) && p.ahead(1).kind == TokenKind::Comma;
     if unnamed_index
@@ -299,7 +262,7 @@ fn for_statement(p: &mut Parser) -> Id<Stmt> {
 
 /// Reads `break;` or `continue;`. Loop labels are not part of the language
 /// yet; a label is reported and skipped.
-fn jump_statement(p: &mut Parser) -> Id<Stmt> {
+fn jump_statement<L: Grammar>(p: &mut Parser<L>) -> Id<Stmt<L>> {
     let keyword = p.next();
     let t = p.tok();
     if t.kind == TokenKind::Ident {
@@ -325,43 +288,11 @@ fn jump_statement(p: &mut Parser) -> Id<Stmt> {
     p.add(keyword.span.start, node)
 }
 
-/// Reads `match subject { arms }`. An arm is `_ => { }`, `Enum::Case => { }`
-/// or `Enum::Case with pattern => { }`; arms are not separated by commas.
-fn match_statement(p: &mut Parser) -> Id<Stmt> {
-    let start = p.next().span.start;
-    let subject = p.expr(Precedence::Lowest);
-    let mut arms = List::EMPTY;
-    if let Some(open) = p.expect(TokenKind::LeftBrace) {
-        let mark = p.list_items.len();
-        // Every arm begins with `_` or a path and reads at least it, so the
-        // loop always moves on.
-        while p.at(TokenKind::Underscore) || p.at(TokenKind::Ident) {
-            let arm_start = p.tok().span.start;
-            let (pattern, body) = p.match_arm();
-            let arm = p.add(arm_start, MatchArm { pattern, body });
-            p.list_items.push(arm.into());
-            let t = p.tok();
-            if t.kind == TokenKind::Comma {
-                p.next();
-                let fix = p.fix(t.span, "");
-                p.repair(
-                    Diagnostic::new(diagnostics::EXPECTED_TOKEN, "match arms do not use commas")
-                        .label(&p.tree.file, t.span, "")
-                        .help("remove this comma", vec![fix]),
-                );
-            }
-        }
-        arms = p.finish_list(mark);
-        p.close(TokenKind::RightBrace, open);
-    }
-    p.add(start, Stmt::Match { subject, arms })
-}
-
 /// Reads `return value;`; the value may be left out, so a token that cannot
 /// begin one, such as the `}` after a `return` missing its `;`, ends it.
-fn return_statement(p: &mut Parser) -> Id<Stmt> {
+fn return_statement<L: Grammar>(p: &mut Parser<L>) -> Id<Stmt<L>> {
     let start = p.next().span.start;
-    let value = starts_expression(p.tok().kind).then(|| p.expr(Precedence::Lowest));
+    let value = starts_expression::<L>(p.tok().kind).then(|| p.expr(Precedence::Lowest));
     p.end();
     p.add(start, Stmt::Return(value))
 }

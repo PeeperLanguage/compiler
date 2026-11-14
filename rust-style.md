@@ -97,13 +97,13 @@ match these rules, so `cargo clippy -- -D warnings` holds them.
 - **Write each part into the builder.** Use `push_str` per part or `write!`;
   never `out.push_str(&(a + b))` or `format!` a part only to push it.
 - **An IR prints itself.** Each IR's printer lives beside its data, and tests
-  call that same printer. Expected output lives in `x_test` files that
-  `PEEPER_BLESS=1` rewrites, not in Rust strings.
+  call that same printer. Expected output lives in files beside the
+  test programs that `PEEPER_BLESS=1` rewrites, not in Rust strings.
 
 ## Where code goes
 
 - **Data lives in `model`; logic lives in the crate that builds it.** Name a
-  data module by its path: `use model::ast;`, then `ast::Expr`.
+  data module by its path: `use syntax::ast;`, then `ast::Expr`.
 - **`main` only wires the parts together.** Parsing arguments, compiling and
   reporting each live in their own module.
 - **A struct lists what it is made of first.** Storage reached only through

@@ -1,0 +1,78 @@
+//@ library
+
+// What a returned reference may not do: one error per function.
+fn read(n: &i32) -> i32 {
+    return n.*;
+}
+
+fn larger(a: &i32, b: &i32) -> &i32 {
+    if a.* > b.* {
+        return a;
+    }
+    return b;
+}
+
+fn left(a: &i32, b: &i32) -> &i32 in a {
+    return a;
+}
+
+fn pick(a: &mut i32) -> &mut i32 {
+    return a;
+}
+
+// Body errors: the result points into the function's own storage, or into
+// a parameter `in` leaves out.
+fn ReturnsLocal(a: &i32) -> &i32 {
+    let x = 1;
+    return &x; //~ error[T0036]: returns a reference into `x`, which is gone once the function returns
+}
+
+fn ValueParameter(n: i32, a: &i32) -> &i32 {
+    return &n; //~ error[T0036]: returns a reference into `n`, which is gone once the function returns
+}
+
+fn UndeclaredSource(a: &i32, b: &i32) -> &i32 in a {
+    return b; //~ error[T0016]: returns a reference into `b`, which `in` does not name
+    //~ help: add `b` to `in`
+}
+
+// The returned reference is in use until the `return`.
+fn ChangedBeforeReturn(a: &mut i32) -> &mut i32 {
+    let r = &mut a.*; //~ label: reference made here
+    a.* = 3; //~ error[T0037]: `a` is changed while a `&mut` reference to it is still in use
+    return r; //~ label: reference used later here
+}
+
+// Caller errors: the result keeps its sources borrowed while it is used.
+fn ChangeNamedSource() -> i32 {
+    let mut x = 1;
+    let y = 2;
+    let r = left(&x, &y);
+    x = 3; //~ error[T0037]: `x` is changed while a reference to it is still in use
+    return read(r);
+}
+
+fn DefaultBorrowsBoth() -> i32 {
+    let x = 1;
+    let mut y = 2;
+    let r = larger(&x, &y);
+    y = 3; // no `in`, so `r` borrows `y` too //~ error[T0037]: `y` is changed while a reference to it is still in use
+    return read(r);
+}
+
+fn OutlivesSource() -> i32 {
+    let r: &i32;
+    {
+        let x = 1;
+        r = larger(&x, &x);
+    } //~ error[T0037]: `x` is gone while a reference to it is still in use
+    return read(r); // `x` is gone, `r` still points into it
+}
+
+fn ReadUnderMutResult() -> i32 {
+    let mut x = 1;
+    let m = pick(&mut x);
+    let v = x; //~ error[T0037]: `x` is read while a `&mut` reference to it is still in use
+    m.* = 2;
+    return v;
+}

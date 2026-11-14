@@ -1,0 +1,14 @@
+// What `print` cannot take: nothing, `none` with no type, and a struct or an
+// array, even through a reference: those print one field or element at a time.
+struct Point { x: i32 }
+
+fn nothing() {}
+
+fn main() {
+    println(nothing()); //~ error[T0004]: `void` cannot be printed
+    println(none); //~ error[P0007]: `none` needs its type from where it is used: write `let p: *T = none`
+    let point = Point.{ x = 1 };
+    println(point); //~ error[T0004]: `Point` cannot be printed
+    println([2]i32{1, 2}); //~ error[T0004]: `[2]i32` cannot be printed
+    println(&point); //~ error[T0004]: `&Point` cannot be printed
+}

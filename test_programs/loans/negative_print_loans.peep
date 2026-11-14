@@ -1,0 +1,10 @@
+// `print` reads what it prints, so a `&mut` reference still in use conflicts
+// with it.
+struct Point { x: i32 }
+
+fn main() {
+    let mut point = Point.{ x = 1 };
+    let changed = &mut point;
+    println(point.x); //~ error[T0037]: `point` is read while a `&mut` reference to it is still in use
+    changed.x = 2; //~ label: reference used later here
+}

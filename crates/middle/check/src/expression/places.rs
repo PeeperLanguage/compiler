@@ -4,38 +4,37 @@ use arena::Id;
 use bigint::Limbs;
 use diagnostics::Diagnostic;
 use diagnostics::suggest::nearest_name;
-use model::ast;
-use model::ast::Ident;
 use model::constant::Value;
 use model::semantic_types::Integer;
+use model::semantic_types::Members;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
 use model::thir::Expr;
 use model::thir::ExprKind;
 use source::Span;
+use syntax::ast;
+use syntax::ast::Ident;
+use syntax::ast::WrittenRange;
 
+use crate::Checked;
 use crate::builder::ThirBuilder;
 
-impl ThirBuilder<'_, '_> {
+impl<L: Checked> ThirBuilder<'_, '_, L> {
     /// `value.field`: the field of a struct value, or of the struct a
     /// reference or typed raw pointer points to; or `len`, an array's, a
     /// slice's or a `&str`'s only field. An array's type gives it, so the
     /// array is not read.
-    pub(super) fn check_field(&mut self, value: Id<ast::Expr>, field: Ident) -> Expr {
-        let mut value = self.add_expr(value, None);
+    pub(super) fn check_field(&mut self, value: Id<ast::Expr<L>>, field: Ident) -> Expr {
+        let value = self.add_expr(value, None);
         let ty = self.body.exprs[value].ty;
         let pointee = self.checker.types[ty].pointee();
         let viewed = pointee.unwrap_or(ty);
         // `Some(length)` for an array, `Some(None)` for a slice or a `&str`,
-        // whose length is known only when the program runs: it is read from
-        // the value, so through the reference to it.
+        // whose length is known only when the program runs.
         let length = match &self.checker.types[viewed] {
             Type::Str => Some(None),
             other => other.elements().map(|(_, length)| length),
         };
-        if length == Some(None) {
-            value = self.through_pointer(value, self.body.exprs.span(value));
-        }
         // shortcut: `len` as a field until the language can write it as a
         // free function over any array; then move it there.
         if let Some(length) = length {
@@ -49,7 +48,29 @@ impl ThirBuilder<'_, '_> {
                 return Expr::INVALID;
             }
             let usize = self.checker.types.usize;
-            let Some(length) = length.filter(|_| !self.body.has_call(value)) else {
+            // An array's length is folded only where computing the array runs
+            // nothing: a variable or constant, its fields and dereferences,
+            // and elements at constant indexes, which are checked here. A
+            // call, a run-time index or a literal's parts still run, and may
+            // fail.
+            let mut part = value;
+            let runs_nothing = loop {
+                match self.body.exprs[part].kind {
+                    ExprKind::Variable(_) | ExprKind::Constant(_) => break true,
+                    ExprKind::Field { value, .. } | ExprKind::Dereference(value) => part = value,
+                    ExprKind::Index { array, index }
+                        if matches!(self.body.exprs[index].kind, ExprKind::Constant(_))
+                            && !self.checker.types[self.body.exprs[array].ty].is_slice_shaped() =>
+                    {
+                        part = array;
+                    }
+                    _ => break false,
+                }
+            };
+            // Read from the value, so through the reference to it: a slice's
+            // or a `&str`'s, or an array's that must still be computed.
+            let Some(length) = length.filter(|_| runs_nothing) else {
+                let value = self.through_pointer(value, self.body.exprs.span(value));
                 return Expr {
                     ty: usize,
                     kind: ExprKind::Length(value),
@@ -63,20 +84,19 @@ impl ThirBuilder<'_, '_> {
         }
         let value = self.through_pointer(value, self.body.exprs.span(value));
         let ty = self.body.exprs[value].ty;
-        let Type::Struct { fields, .. } = &self.checker.types[ty] else {
+        if self.checker.types[ty].members().is_none() {
             if ty != TypeId::INVALID {
                 let message = format!("`{}` has no fields", self.checker.type_text(ty));
                 self.checker
                     .error(diagnostics::INVALID_OPERATION, message, field.span);
             }
             return Expr::INVALID;
-        };
-        let fields = fields.clone();
-        let Some(index) = self.field_index(ty, field) else {
+        }
+        let Some((index, field_type)) = self.field_index(ty, field) else {
             return Expr::INVALID;
         };
         Expr {
-            ty: fields[index],
+            ty: field_type,
             kind: ExprKind::Field {
                 value,
                 index: index as u32,
@@ -91,12 +111,12 @@ impl ThirBuilder<'_, '_> {
     /// program runs. A written range slices, which only `&` does.
     pub(super) fn check_index(
         &mut self,
-        array: Id<ast::Expr>,
-        index: Id<ast::Expr>,
+        array: Id<ast::Expr<L>>,
+        index: Id<ast::Expr<L>>,
         span: Span,
     ) -> Expr {
         let tree = &self.checker.module().ast;
-        if let ast::Expr::Range { .. } = tree.exprs[index] {
+        if tree.written_range(index).is_some() {
             let message = format!("slicing borrows; write `&{}`", tree.file.slice(span));
             self.checker
                 .error(diagnostics::INVALID_OPERATION, message, span);
@@ -180,7 +200,7 @@ impl ThirBuilder<'_, '_> {
     /// index is (`ExprKind::Slice`). Ends known at compile time must be
     /// inside the array and in order; others, and every end of a slice's,
     /// are checked when the program runs. A step is an error.
-    pub(super) fn check_slice(&mut self, mutable: bool, indexed: Id<ast::Expr>) -> Expr {
+    pub(super) fn check_slice(&mut self, mutable: bool, indexed: Id<ast::Expr<L>>) -> Expr {
         let tree = &self.checker.module().ast;
         let ast::Expr::Index {
             value: array,
@@ -189,12 +209,12 @@ impl ThirBuilder<'_, '_> {
         else {
             unreachable!("the caller found an index")
         };
-        let ast::Expr::Range {
+        let Some(WrittenRange {
             inclusive,
             start,
             end,
             step,
-        } = tree.exprs[range]
+        }) = tree.written_range(range)
         else {
             unreachable!("the caller found a written range")
         };
@@ -252,11 +272,11 @@ impl ThirBuilder<'_, '_> {
     /// order when both are; `None` after an error.
     pub(super) fn check_slice_ends(
         &mut self,
-        ends: [Option<Id<ast::Expr>>; 2],
+        ends: [Option<Id<ast::Expr<L>>>; 2],
         inclusive: bool,
         viewed: TypeId,
         length: Option<u64>,
-        range: Id<ast::Expr>,
+        range: Id<ast::Expr<L>>,
     ) -> Option<[Option<Id<Expr>>; 2]> {
         // No slice is longer than the largest `usize`.
         let limit = length.unwrap_or(u64::MAX >> (64 - self.checker.target.pointer_bits));
@@ -314,7 +334,7 @@ impl ThirBuilder<'_, '_> {
 
     /// `reference.*`, written at `span`: the value a reference or a typed
     /// raw pointer points to.
-    pub(super) fn check_dereference(&mut self, reference: Id<ast::Expr>, span: Span) -> Expr {
+    pub(super) fn check_dereference(&mut self, reference: Id<ast::Expr<L>>, span: Span) -> Expr {
         let reference = self.add_expr(reference, None);
         let ty = self.body.exprs[reference].ty;
         match &self.checker.types[ty] {
@@ -376,18 +396,22 @@ impl ThirBuilder<'_, '_> {
         }
     }
 
-    /// The index of the field `name` of the struct type `ty`, in declaration
-    /// order; `None` after reporting that the struct has no such field, with
-    /// its nearest field name.
-    pub(super) fn field_index(&mut self, ty: TypeId, name: Ident) -> Option<usize> {
-        let Type::Struct { definition, .. } = self.checker.types[ty] else {
-            unreachable!("only a struct type has fields")
+    /// The index of the field `name` of the type `ty`, in declaration order,
+    /// and its type; `None` after reporting that the type has no such field,
+    /// with its nearest field name.
+    pub fn field_index(&mut self, ty: TypeId, name: Ident) -> Option<(usize, TypeId)> {
+        let Some(Members {
+            definition, fields, ..
+        }) = self.checker.types[ty].members()
+        else {
+            unreachable!("only a type with members has fields")
         };
         let file = &self.checker.module().ast.file;
         let text = name.text(file);
         let modules = self.checker.modules;
-        let found =
-            model::program::field_names(modules, definition).position(|field| field == text);
+        let found = model::program::field_names(modules, definition)
+            .position(|field| field == text)
+            .map(|index| (index, fields[index]));
         if found.is_none() {
             let message = format!("`{}` has no field `{text}`", self.checker.type_text(ty));
             let fields = model::program::field_names(modules, definition).map(|field| (field, 0));

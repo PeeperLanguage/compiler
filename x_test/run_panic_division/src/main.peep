@@ -1,9 +1,0 @@
-fn divide(left: i32, right: i32) -> i32 {
-    return left / right;
-}
-
-fn main() {
-    Write(Stdout, c"before\n", 7);
-    divide(1, 0);
-    Write(Stdout, c"after\n", 6);
-}

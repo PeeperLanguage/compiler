@@ -1,0 +1,290 @@
+// What a struct holding references may not do: one error per function, each
+// a real hazard. `run_struct_field_loans` has what is safe and accepted.
+struct Pair { first: &i32, second: &i32 }
+struct Outer { pair: Pair, count: i32 }
+struct Mark { label: &i32, count: i32 }
+struct Counter { value: &mut i32 }
+struct Grid { cells: &mut []i32 }
+struct Wrap { inner: &Pair }
+struct Two { left: &mut i32, right: &mut i32 }
+
+fn pair_of(a: &i32, b: &i32) -> Pair {
+    return Pair.{ first = a, second = b };
+}
+
+fn second_of(p: Pair) -> &i32 {
+    return p.second;
+}
+
+fn second_through(p: &Pair) -> &i32 {
+    return p.second;
+}
+
+fn look(p: &Pair) {}
+
+// A struct literal holds what its fields hold.
+fn Literal() {
+    let mut a = 1;
+    let b = 2;
+    let p = Pair.{ first = &a, second = &b };
+    a = 3; //~ error[T0037]: `a` is changed while a reference to it is still in use
+    println(p.first.*);
+}
+
+// So does one inside another.
+fn Nested() {
+    let mut a = 1;
+    let b = 2;
+    let o = Outer.{ pair = Pair.{ first = &a, second = &b }, count = 1 };
+    a = 3; //~ error[T0037]: `a` is changed while a reference to it is still in use
+    println(o.pair.first.*);
+}
+
+// Rust's E0597: the struct outlives what it borrows.
+fn Dangling() {
+    let a = 1;
+    let mut p = Pair.{ first = &a, second = &a };
+    {
+        let gone = 2;
+        p = Pair.{ first = &gone, second = &a };
+    } //~ error[T0037]: `gone` is gone while a reference to it is still in use
+    println(p.first.*);
+}
+
+// Using a struct whole uses what every field holds.
+fn WholeUse() {
+    let mut a = 1;
+    let b = 2;
+    let p = Pair.{ first = &a, second = &b };
+    a = 3; //~ error[T0037]: `a` is changed while a reference to it is still in use
+    look(&p);
+}
+
+// A field written on one path only may still hold what it held.
+fn FieldWriteOnOnePath(flag: bool) {
+    let mut a = 1;
+    let b = 2;
+    let mut p = Pair.{ first = &a, second = &b };
+    if flag {
+        p.first = &b;
+    }
+    a = 3; //~ error[T0037]: `a` is changed while a reference to it is still in use
+    println(p.first.*);
+}
+
+// A reference to a struct carries what the struct holds.
+fn ThroughReference() {
+    let a = 1;
+    let mut b = 2;
+    let p = Pair.{ first = &a, second = &b };
+    let r = &p;
+    let s = r.second;
+    b = 5; //~ error[T0037]: `b` is changed while a reference to it is still in use
+    println(s.*);
+}
+
+fn ThroughReferenceUse() {
+    let mut a = 1;
+    let b = 2;
+    let p = Pair.{ first = &a, second = &b };
+    let r = &p;
+    a = 3; //~ error[T0037]: `a` is changed while a reference to it is still in use
+    println(r.second.*);
+}
+
+// A field of a call's result holds what the call's result holds.
+fn FieldOfCall() {
+    let mut a = 1;
+    let b = 2;
+    let first = pair_of(&a, &b).first;
+    a = 3; //~ error[T0037]: `a` is changed while a reference to it is still in use
+    println(first.*);
+}
+
+fn CallResult() {
+    let mut a = 1;
+    let b = 2;
+    let p = pair_of(&a, &b);
+    a = 3; //~ error[T0037]: `a` is changed while a reference to it is still in use
+    println(p.second.*);
+}
+
+// A signature says only where a result comes from: Rust accepts these two with
+// lifetime names, which Peeper has no way to write yet.
+fn ThroughSignature() {
+    let mut a = 1;
+    let b = 2;
+    let r = second_of(pair_of(&a, &b));
+    a = 3; //~ error[T0037]: `a` is changed while a reference to it is still in use
+    println(r.*);
+}
+
+fn ThroughSignatureReference() {
+    let mut a = 1;
+    let b = 2;
+    let p = Pair.{ first = &a, second = &b };
+    let r = second_through(&p);
+    a = 3; //~ error[T0037]: `a` is changed while a reference to it is still in use
+    println(r.*);
+}
+
+// Rust's E0506 for a `&mut` field: the loan lasts while the struct is used.
+fn MutableField() {
+    let mut n = 1;
+    let c = Counter.{ value = &mut n };
+    n = 2; //~ error[T0037]: `n` is changed while a `&mut` reference to it is still in use
+    println(c.value.*);
+}
+
+fn MutableFieldLentTwice() {
+    let mut n = 1;
+    let mut c = Counter.{ value = &mut n };
+    let r = &mut c.value.*;
+    let s = &mut c.value.*; //~ error[T0037]: `c` is borrowed as `&mut` while a `&mut` reference to it is still in use
+    r.* = 2;
+    s.* = 3;
+}
+
+// A reference through a field lives on, and keeps what the field held.
+fn ThroughFieldGone() {
+    let mut n = 1;
+    let r: &mut i32;
+    {
+        let c = Counter.{ value = &mut n };
+        r = &mut c.value.*;
+    }
+    n = 2; //~ error[T0037]: `n` is changed while a `&mut` reference to it is still in use
+    r.* = 3;
+}
+
+fn MovedWhileLent() {
+    let mut n = 1;
+    let c = Counter.{ value = &mut n };
+    let r = &mut c.value.*;
+    let d = c; //~ error[T0037]: `c` is moved while a `&mut` reference to it is still in use
+    r.* = 2;
+    d.value.* = 3;
+}
+
+// A reference to a struct in a field carries what the struct holds.
+fn ThroughWrapped() {
+    let mut a = 1;
+    let b = 2;
+    let p = Pair.{ first = &a, second = &b };
+    let w = Wrap.{ inner = &p };
+    a = 3; //~ error[T0037]: `a` is changed while a reference to it is still in use
+    println(w.inner.first.*);
+}
+
+// Returned: T0036, as for a reference.
+fn ReturnsLocal(x: &i32) -> Pair {
+    let a = 1;
+    return Pair.{ first = x, second = &a }; //~ error[T0036]: returns a reference into `a`, which is gone once the function returns
+}
+
+fn ReturnsIntoParameter(m: Mark) -> &i32 {
+    return &m.count; //~ error[T0036]: returns a reference into `m`, which is gone once the function returns
+}
+
+// T0016: `in` names where a result comes from.
+fn NotNamed(p: Pair, other: &i32) -> &i32 in other {
+    return p.first; //~ error[T0016]: returns a reference into `p`, which `in` does not name
+}
+
+// T0034: a moved struct.
+fn UsedAfterMove() {
+    let a = 1;
+    let p = Pair.{ first = &a, second = &a };
+    let q = p;
+    println(p.first.*, q.first.*); //~ error[T0034]: `p` is used after it was moved
+}
+
+// T0035: a `&mut` field is lent again, never moved out.
+fn MovedOutThroughReference() {
+    let mut n = 1;
+    let c = Counter.{ value = &mut n };
+    let r = &c;
+    let v = r.value; //~ error[T0035]: cannot move out of a reference or pointer
+    //~ help: lend it again with `&mut r.value.*`, or `&r.value.*` to only read
+    println(v.*);
+}
+
+fn MovedOut() {
+    let mut n = 1;
+    let c = Counter.{ value = &mut n };
+    let r = c.value; //~ error[T0035]: cannot move a field out of its struct
+    //~ help: lend it again with `&mut c.value.*`, or `&c.value.*` to only read
+    r.* = 2;
+}
+
+fn SliceMovedOut() {
+    let mut cells = [1]i32{1};
+    let g = Grid.{ cells = &mut cells };
+    let c = g.cells; //~ error[T0035]: cannot move a field out of its struct
+    //~ help: lend it again with `&mut g.cells[..]`, or `&g.cells[..]` to only read
+    c[0] = 2;
+}
+
+// Two errors: the move, and what the second field points at is still lent,
+// as a read from behind a reference holds the loans of every field.
+fn ReadWholeFromBehindAReference() {
+    let first_source = 1;
+    let mut second_source = 2;
+    let pair = Pair.{ first = &first_source, second = &second_source };
+    let view = &pair;
+    let read = view.*; //~ error[T0035]: cannot move out of a reference or pointer
+    let second = read.second; // from here only this field's loans are in use
+    second_source = 3; //~ error[T0037]: `second_source` is changed while a reference to it is still in use
+    println(second.*);
+}
+
+// Writing one field replaces only its loans: `first` still holds `a`.
+fn OtherFieldWritten() {
+    let mut a = 1;
+    let b = 2;
+    let mut p = Pair.{ first = &a, second = &b };
+    p.second = &b;
+    a = 3; //~ error[T0037]: `a` is changed while a reference to it is still in use
+    println(p.first.*);
+}
+
+// A field written again no longer names what was lent through it, but the
+// reference taken through it still points at `n`.
+fn ReferenceThroughReplacedField() {
+    let mut n = 1;
+    let mut m = 2;
+    let mut c = Counter.{ value = &mut n };
+    let r = &mut c.value.*;
+    c.value = &mut m;
+    n = 5; //~ error[T0037]: `n` is changed while a `&mut` reference to it is still in use
+    r.* = 3;
+}
+
+// Writing `right` ends no loan taken through `left`.
+fn OtherFieldReplacedKeepsLoan() {
+    let mut x = 1;
+    let mut y = 2;
+    let mut z = 3;
+    let mut t = Two.{ left = &mut x, right = &mut y };
+    let r = &mut t.left.*;
+    t.right = &mut z;
+    t.left.* = 5; //~ error[T0037]: `t` is changed while a `&mut` reference to it is still in use
+    r.* = 4;
+}
+
+// Two fields deep: writing `h.two.right` ends no loan taken through
+// `h.two.left`, though both start with `h.two`.
+fn DeepOtherFieldKeepsLoan() {
+    let mut x = 1;
+    let mut y = 2;
+    let mut z = 3;
+    let mut h = Nest.{ two = Two.{ left = &mut x, right = &mut y } };
+    let r = &mut h.two.left.*;
+    h.two.right = &mut z;
+    h.two.left.* = 5; //~ error[T0037]: `h` is changed while a `&mut` reference to it is still in use
+    r.* = 4;
+}
+
+struct Nest { two: Two }
+
+fn main() {}

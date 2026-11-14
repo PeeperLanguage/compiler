@@ -1,0 +1,42 @@
+// What the checks on MIR reject in arrays: moving an element out, a change
+// while an element is lent (an index known only when the program runs may
+// be any element), and setting an element of an array that is not set yet;
+// a returned reference to one element holds the whole array.
+struct Name { text: &cstr }
+struct Holder { tokens: [2]i32 }
+
+fn slot(holder: &mut Holder) -> &mut i32 in holder {
+    return &mut holder.tokens[0];
+}
+
+fn returned() {
+    let mut holder = Holder.{ tokens = [2]i32{1, 2} };
+    let token = slot(&mut holder);
+    let other = holder.tokens[1]; //~ error[T0037]: `holder` is read while a `&mut` reference to it is still in use
+    token.* = other;
+}
+
+fn moved() {
+    let names = [1]Name{Name.{ text = c"a" }};
+    let taken = names[0]; //~ error[T0035]: cannot move an element out of its array
+    //~ help: move the whole array, or read only parts that copy
+}
+
+fn lent(at: usize) {
+    let mut values = [2]i32{1, 2};
+    let first = &mut values[at];
+    values[1] = 3; //~ error[T0037]: `values` is changed while a `&mut` reference to it is still in use
+    first.* = 4;
+}
+
+fn unset() {
+    let mut values: [2]i32;
+    values[0] = 1; //~ error[T0039]: cannot set an element of `values` before `values` is set
+}
+
+fn main() {
+    moved();
+    lent(0);
+    unset();
+    returned();
+}

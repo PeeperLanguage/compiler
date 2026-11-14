@@ -1,0 +1,73 @@
+// Loop errors: a jump outside a loop, ranges the checker rejects, and the
+// path checks across passes: one error per function.
+struct Point { x: i32, y: i32 }
+
+fn take(p: Point) {}
+
+fn read(n: &i32) -> i32 { return n.*; }
+
+fn BreakOutside() { break; } //~ error[P0004]: `break` outside a loop
+
+fn ContinueOutside() { continue; } //~ error[P0004]: `continue` outside a loop
+
+fn FloatRange() { for f in 0.5..2.0 {} } //~ error[P0011]: a range's values must be integers, found `f64`
+
+fn FloatRangeWithoutName() { for 1.5..3.0 {} } //~ error[P0011]: a range's values must be integers, found `f64`
+
+fn SetTwice() {
+    let x: i32;
+    for { x = 1; } //~ error[T0007]: cannot assign twice to immutable `x`
+}
+
+fn MovedInEarlierPass(count: i32) {
+    let p = Point.{ x = 1, y = 2 };
+    for count > 0 { take(p); } //~ error[T0034]: `p` is used after it was moved
+    //~ note: it was moved in an earlier pass of the loop
+}
+
+fn ReferenceOutlivesPass() -> i32 {
+    let outer = 0;
+    let mut r = &outer;
+    for i in 0..3 {
+        let total = read(r);
+        let v = i;
+        r = &v;
+    } //~ error[T0037]: `v` is gone while a reference to it is still in use
+    return 0;
+}
+
+fn ReferenceOutlivesBreak() -> i32 {
+    let outer = 0;
+    let mut r = &outer;
+    for {
+        let v = 1;
+        r = &v;
+        break; //~ error[T0037]: `v` is gone while a reference to it is still in use
+    }
+    return read(r);
+}
+
+// Both variables of the block are gone at its `}`: two errors.
+fn TwoReferencesOutlivePass() -> i32 {
+    let outer = 0;
+    let mut r = &outer;
+    let mut s = &outer;
+    for i in 0..2 {
+        let total = read(r) + read(s);
+        let a = 1;
+        let b = 2;
+        r = &a;
+        s = &b;
+    } //~ error[T0037]: `b` is gone while a reference to it is still in use
+    //~ error[T0037]: `a` is gone while a reference to it is still in use
+    return 0;
+}
+
+fn MissingReturn(n: i32) -> i32 {
+    for n > 0 { return 1; } //~ error[T0017]: not all control paths return a value
+}
+
+fn main() {
+    for {}
+    let after = 1; //~ warning[W0001]: unreachable code
+}

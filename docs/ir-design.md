@@ -40,10 +40,15 @@ scheduled per declaration, on demand (Zig, Rust), not module by module.
 - **decided** LLVM IR is written as text and compiled by clang.
 - **decided** One `model` crate owns the program's data: the syntax tree, the
   THIR and MIR node types, the type model, definition ids, constant values
-  and operator kinds. What operators mean on constant values is `eval`'s
-  (owner, 2026-10-26: "move them to eval"). The crates that build them
+  and operator kinds. What each operation gives on constant values is
+  `eval`'s (`eval::operations`; owner, 2026-10-26: "move them to eval");
+  check's folder only reads a constant's type into it (`check::fold`), so
+  nothing after lowering reads the checker's types. The crates that build them
   (`parser`, `check`, `lower` and later `llvm`) hold only logic. THIR and
   MIR keep their own node types: a tree and a graph have different shapes.
+  Changed 2026-11-13: the syntax tree and the operator kinds left `model`
+  for the `syntax` crate (`crates/core/syntax`), so the parser does not
+  depend on `model` (`docs/feature-front.md`, section 9).
   (Until 2026-10-17 this was an `ir` crate, with the tree in `ast` and THIR in
   `thir`.)
 - **decided** Order: this design first, then a thin program end to end, then one
@@ -74,25 +79,27 @@ that is built once and kept.
 ## Crates
 
 ```
-peeper ─► build ─► project ─► parser ─► model ─► arena
-            │
-            ├─► check ─► model, project, eval, lower, flow   AST -> THIR, signatures, folding; builds bodies
-            ├─► eval ──► model, runtime_abi   operators on constant values; the MIR interpreter
-            ├─► lower ─► model            THIR -> MIR; path checks
+peeper ─► build ─► project ─► parser ─► syntax ─► arena
+            │                  └─► model ─► syntax
+            ├─► check ─► syntax, model, project, eval, lower, flow   AST -> THIR, signatures, folding; builds bodies
+            ├─► eval ──► model, runtime_abi   what each MIR operation gives; the MIR interpreter
+            ├─► lower ─► syntax, model    THIR -> MIR; path checks
             └─► llvm ──► model, runtime_abi   MIR -> LLVM text; clang
 ```
 
-Every phase reads and writes its data in `model`; only `lower` reads THIR, and
+The parser writes the tree in `syntax`; every later phase reads and writes
+its data in `model`; only `lower` reads THIR, and
 `llvm` and the interpreter read MIR and signatures. Signatures (struct fields,
 enum variants, function types) are `model` data, written by check.
 
 | crate | owns |
 |---|---|
-| `model` | data only: `ast` (the syntax tree), `thir` (THIR nodes), `mir` (MIR graphs); `semantic_types` (`TypeId`, the type interner, the built-in types table); `constant` (constant values); `ModuleId`, `DefId`; `operators` (`BinaryOp`, `UnaryOp`); signatures |
-| `check` | the checker: scopes, name lookup, building THIR, writing signatures; the declaration tables (`Checker`) |
-| `eval` | what operators mean on constant values (`binary`, `unary`, `convert`, `known_trap`); the MIR interpreter (`interpreter::run_function` for a constant's call, `interpreter::program::run` for a whole program) |
+| `syntax` | the syntax tree (`ast`) and operator kinds (`operators`: `BinaryOp`, `UnaryOp`, `Precedence`) |
+| `model` | data only: `thir` (THIR nodes), `mir` (MIR graphs); `semantic_types` (`TypeId`, the type interner, the built-in types table); `constant` (constant values); `ModuleId`, `DefId`; signatures |
+| `check` | the checker: scopes, name lookup, building THIR, writing signatures; the declaration tables (`Checker`); folding operators and `as` on constants (`fold`: `binary`, `unary`, `convert`, `known_trap`) |
+| `eval` | what each MIR operation gives on register values (`operations`), which folding computes with; the MIR interpreter (`interpreter::run_function` for a constant's call, `interpreter::program::run` for a whole program) |
 | `runtime_abi` | what a running program does as seen from outside, shared by `llvm` and `eval`: streams and the exit code, runtime function names, panic messages, number text. The two `runtime/` files the runtime library needs too are read from there by `#[path]`, as that library is built with no crates |
-| `lower` | lowering from THIR; path checks |
+| `lower` | lowering from THIR; the MIR operation of each operator and `as` (`arithmetic`) |
 | `llvm` | LLVM text for a module; running clang and the linker |
 | `compile` | a compile: walks the modules in order, reuses unchanged ones, lowers each body (the `build` of `overall-design.md`, renamed) |
 
@@ -154,7 +161,8 @@ what the other cannot do:
   reads: a value has no struct or array form yet). A `const`
   declaration's value comes from this today.
 - **The interpreter** (`eval::interpreter::run_function`) runs what folding cannot: calls and control
-  flow, over MIR. In a constant's value (a module `const` or one in a body), a
+  flow, over the MIR of core concepts (`model::mir`,
+  `docs/feature-free-mir.md`). In a constant's value (a module `const` or one in a body), a
   call whose arguments are all constants is run at once
   (`Checker::evaluate_call`), so its result folds on (`f(3) + 2`). It keeps
   variables and values in memory (structs, arrays, ranges) in bytes laid out
@@ -163,8 +171,8 @@ what the other cannot do:
   a `&cstr`. `print` and `extern` functions are errors at compile time (T0044),
   as are a `panic`, a failed check, a bad address, running out of stack,
   100,000 calls at once and more than 1,000,000 steps (owner, 2026-10-26: a
-  fixed limit, no setting until a program needs one), where each 256 bytes
-  copied and each value of a filled range count as a step too. The error is
+  fixed limit, no setting until a program needs one), where each
+  instruction is a step and each 256 bytes copied count as a step too. The error is
   at the call, with a label where the run stopped. A constant's value goes into
   the program, and only the running program knows an address, so a constant may
   use an address but not read it (owner, 2026-11-01). `@`, storing a pointer,
@@ -175,12 +183,11 @@ what the other cannot do:
   such casts and reads the bytes behind them; Peeper's addresses are plain
   numbers, so it stops at the cast.
   Memory is stricter here too, as in Rust, where each thing is its own
-  allocation. Each call's frame and each variable, each time it starts, is a
-  block of memory never used before (256 MiB in all), and `scope end` ends a
-  variable's block. So a pointer to what ended stops the run at its next use,
-  and one from an earlier pass of a loop cannot reach this pass's variable. So
-  a body built for this run keeps its `scope end`s, unlike a compiled one
-  (`flow::cleanup`).
+  allocation. Each call's frame and each slot (a variable or a temporary),
+  each time it starts, is a block of memory never used before (256 MiB in
+  all), and a slot's `dead` ends its block. So a pointer to what ended stops
+  the run at its next use, and one from an earlier pass of a loop cannot
+  reach this pass's variable.
 - **A whole program** runs on the same interpreter (`interpreter::program::run`,
   through `compile::interpret`), which is how a web page runs code with no
   clang or LLVM, and what the experimental `peeper run -interpret` does in a
@@ -219,7 +226,7 @@ computed differed (issues #154, #155, PR #158). The rules that prevent them:
    width; the Go guard wrote the width as a constant of the count's type, so a
    `u2` count compared against 8 cut to 0.
 5. **Constants are written from the same bits** (`iN u0x...`), and
-   `crates/middle/eval/tests/llvm_parity.rs` runs every operator on widths 1
+   `crates/middle/check/tests/llvm_parity.rs` runs every operator on widths 1
    to 1000 in `lli` and in `model` and requires equal bits.
 
 Floats (`f32`, `f64`) follow the same idea:
@@ -295,7 +302,7 @@ mir(d)            MIR of function d (needs body(d)); also asked for by a call ru
   `Checker::build_function`, for the compile's walk and for a call run at
   compile time; check calls `lower` and `flow` itself (owner, 2026-10-26).
   Its first build reports what its checks find; a later one finds the same
-  and drops it. MIR built for a run is kept in `Checker::bodies` for the
+  and drops it. MIR built for a run is kept in `CheckerInternals::built_bodies` for the
   next run; the compile's walk still hands its MIR on and keeps none. A run
   first builds every function it may reach, except one still being checked,
   then only reads the table. A run that calls a function still being checked
@@ -373,77 +380,92 @@ conversion, an auto reference) are explicit nodes.
 
 ## MIR
 
-One graph per function, shaped like LLVM IR at `-O0` (what clang emits before
-optimizing), so writing LLVM text is a direct walk and every part keeps the
-source place it came from. Decided by the owner (2026-10-17): flat (shape A),
-as close to LLVM as possible, every part traceable to the source for messages
-and debuggers; the logic lives in a `lower` crate, the data in `model::mir`.
+One graph per function, of core concepts only (`model::mir`; every
+instruction is in docs/feature-free-mir.md, section 3): registers of a
+machine class (`i8` to `i128`, `f32`, `f64`, `ptr`) and slots of bytes. No
+part of it names a language feature: a struct is a slot with offsets, a
+slice two words, an interface value two pointers, a method call a load from
+a table and a call through the pointer. It is shaped like LLVM IR at `-O0`
+(what clang emits before optimizing), so writing LLVM text is a direct walk,
+and every part keeps the source place it came from. Decided by the owner:
+flat and close to LLVM (2026-10-17), core concepts only (2026-11-10). The
+logic lives in the `lower` crate, the only phase after checking that reads
+the program's types.
 
-- **Variables.** Each parameter and `let` is a variable slot with its type,
-  `mut`, and the span of its name: an `alloca` plus a `dbg.declare` in LLVM, so a
-  debugger finds it by name. Values reach a variable only through `store` and
-  leave it only through `load`.
-- **Instructions.** A block is a list of instructions, each one operation whose
-  id is the value it gives (`%3 = add %1, %2`): `load`, `store`, `length` (a
-  slice place's count, read for a bounds check), `check`, a binary or unary
-  operation, `convert`, `call`, `phi`, and for structs `load` of a
-  field path (`load s.1[1, 0]`: a `getelementptr` per index, stepping by the
-  element's size, and one for the fields' offsets; to LLVM a value kept in
-  memory is bytes, `[24 x i8], align 4` for `[2][3]i32`, as `model::layout`
-  places everything and LLVM needs only the types of what it loads),
-  `aggregate` (a struct value from its fields, LLVM's `insertvalue`) and
-  `field` of a struct value not in a variable (`extractvalue`). Operands are a constant, an argument
-  or an earlier instruction's value, never a variable. A constant operand is an
-  index into the body's constants table (each with its type), so an operand stays 8 bytes. Every
+- **Slots.** Each parameter, `let` and temporary is a slot of a size and an
+  alignment, with the offset of each pointer in it that may hold a loan
+  (`Slot::holders`): an `alloca` in LLVM, and a `dbg.declare` for a named
+  one, so a debugger finds it by name. Values reach a slot only through
+  `store` or a `copy` of bytes, and leave it only through `load`.
+- **Places.** A place is a root, a slot or a pointer value, then steps
+  (`Step`): `+8`, bytes further in; `*`, through the pointer there; or an
+  element, `[%3 * 4 of 6]`, its index checked to be inside first.
+- **Instructions.** A block is a list of instructions, each one operation
+  whose id is the value it gives (`%3 = add i32 %1, %2`): `load`, `store`,
+  `copy`, integer and float operations and comparisons, `convert`, `call`
+  (with how each argument is passed: in a register, or in memory by its
+  address; for a C function, how C passes it too), `check` with the message
+  a failure prints, `borrow` and `address` of a place, and two events only
+  the path checks read, `moved` and `dead`. A result kept in memory is
+  written to the place `result`, and a call names the place it writes
+  such a result into (`call make() into 16 p.0`). Operands are a constant, an
+  argument, a global or an earlier instruction's value, never a slot. Every
   instruction keeps the span of the expression it came from: LLVM's `!dbg`
   line, and where an error points.
-- **Terminators.** Each block ends in one: `br` (goto), `condbr` (with the span
-  of its condition), `ret` for a written `return`, `panic` for a written
-  `panic "message"` (no successor and no scope ends: a panic does not
-  unwind), or `fall off` at the closing
-  `}` of every function (LLVM gets `ret void` without a result; with one, the
-  missing-return check reports it when it is reachable, and LLVM gets
-  `unreachable`). `&&` and `||` lower to `condbr` and a `phi` where both paths
-  meet, as clang does.
+- **Terminators.** Each block ends in one: `jump`, `branch` (with the span
+  of its condition), `return` for a written `return`, `panic` for a written
+  `panic "message"` (no successor and no `dead`: a panic does not
+  unwind), or `fall off` at the closing `}` of every function (LLVM gets
+  `ret void` without a result; with one, the missing-return check reports
+  it when it is reachable, and LLVM gets `unreachable`). `&&` and `||` store
+  each side's value into a hidden `i8` slot: there is no `phi` (owner,
+  2026-11-10).
 - **Single assignment by construction.** An instruction's value is written once
-  and used after it, so the path checks only follow variables.
+  and used after it, so the path checks only follow slots.
 
 ```
 fn f(a: i32) -> i32 { let b = a * 2; if b > 3 { return b; } return 0; }
 
-bb0:  store a, %arg0          ; a: i32 at 1:6
-      %1 = load a              ; 1:31
-      %2 = mul %1, const 2     ; 1:31
-      store b, %2              ; let b at 1:27
-      %3 = load b
-      %4 = gt %3, const 3
-      condbr %4, bb1, bb2      ; condition at 1:43
-bb1:  %5 = load b
-      ret %5                   ; 1:52
-bb2:  ret const 0
+  bb0:
+    store i32 a.0, arg0
+    %1 = load i32 a.0
+    %2 = mul i32 %1, 2
+    store i32 b.1, %2
+    %4 = load i32 b.1
+    %5 = slt i32 3, %4
+    branch %5, bb1, bb2
+  bb1:
+    %6 = load i32 b.1
+    dead b.1
+    dead a.0
+    return %6
+  bb2:
+    dead b.1
+    dead a.0
+    return 0
+  bb3:
+    jump bb2
+  bb4:
+    dead b.1
+    dead a.0
+    fall off at `}`
 ```
 
 Path checks are dataflow passes over the blocks that share one fixed-point
 helper; a function whose checking already reported an error is not
-path-checked, since its errors would only follow from the first. LLVM emission
-and the interpreter both read MIR; nothing below MIR reads THIR.
-
-After the path checks, `flow::cleanup` removes what they needed and nothing
-later does: `scope end`s, blocks that only jump, and blocks no path reaches,
-which are about a fifth of the lines of a typical body. A jump to a block
-that starts with a `Phi` stays, as the `Phi` names its predecessors, and a
-`Phi` drops the arms of removed blocks. The instructions of removed blocks stay
-in `Body::instructions`, unused: renumbering them costs more than they do.
-Only what reads a compiled body runs this: the driver, for the backend and
-dumps, and `compile::interpret`. `peeper check` and the language server read
-no MIR after the checks, and a constant's run needs its `scope end`s.
+path-checked, since its errors would only follow from the first. The LLVM
+writer and the interpreter both read MIR; nothing below MIR reads THIR or a
+type. Nothing removes what the path checks needed: a block no path reaches
+(`bb3`, `bb4` above) stays in the MIR, the LLVM writer leaves it out and jumps
+past empty blocks, and the `moved` and `dead` events write no code
+(`InstructionKind::runs`).
 
 The missing-return check (T0017, `flow`) reports a function whose
 `fall off` block is reachable. It walks back from that block through blocks
-with no instructions; on each path, the first branch met names its condition
+with no code that runs; on each path, the first branch met names its condition
 ("if this is false, nothing is returned"), and the first block with
-instructions names its last one ("this path ends without returning"). When the
-end block itself has instructions, only the end is named, since one `return`
+code names its last instruction ("this path ends without returning"). When the
+end block itself has code, only the end is named, since one `return`
 there fixes every path. `Checker::check_body` gives no THIR for a body whose check
 reported an error, so such a function is neither lowered nor path-checked.
 
@@ -451,32 +473,33 @@ The variable state check
 (`flow::variable_state::report_variable_state_errors`) is forward dataflow
 with three bits per variable at each block's start: set on every path to it
 ("and" at joins), set on some path ("or"), and moved on some path and not set
-since ("or"). A `store` to a whole variable sets the first two and clears
-the third; a `move` of one clears the first and sets the third.
+since ("or"). A `store` or `copy` to a whole slot sets the first two and
+clears the third; a `moved` of one clears the first and sets the third; its
+`dead` forgets it, so a loop's next pass may set it again.
 
 Lowering decides what copies (`Type::is_copy`: numbers, `bool`, `&cstr`,
-`&T`): a whole variable whose type copies is a `load`, else a `move`; any
-other place whose type copies is a `load` of the place, else a `move` of it.
-So the check never looks at types to tell a copy from a move.
+`&T`): a read of a place whose type does not copy is followed by a `moved`
+of that place. So the check never looks at types to tell a copy from a
+move.
 
-A place (`mir::Place`) is a variable and the steps from it, each a field or a
-dereference (`mir::Projection`), as in Rust's MIR: `r.*.x` goes through the
-reference in `r`, then to a field. The checker makes the implicit step of
-`r.x` an explicit `Dereference` in THIR, and lowering turns each into a step,
-so neither the check nor the LLVM writer works it out from types. A
-reference or raw pointer may be in a field, and `pp.*.*` takes two steps, so
-a dereference may be any step. Each element's index is
+A place (`mir::Place`) is a root and the steps from it, as in Rust's MIR:
+`r.*.y` is `r.0[*, +4]`, through the reference in `r`, then 4 bytes in. The
+checker makes the implicit step of `r.x` an explicit `Dereference` in THIR,
+and lowering turns each into a `*` step and each field into its offset, so
+neither the checks nor the LLVM writer works it out from types. A reference
+or raw pointer may be in a field, and `pp.*.*` takes two steps, so a `*` may
+be any step. Each element's index is
 computed before the place is used, in the order written, and each dereference
 reads its pointer only then, as rustc does: in `p.*[f(@p)]` a call that
 repoints `p` changes which array is read (owner, 2026-10-29). Lowering checks
 each index right after computing it, as rustc does, and the step keeps it as
 a `usize`: against an array's length, unless it is a constant the checker
-found inside, or a slice's, read then with a `length` of the slice place. So
+found inside, or a slice's, loaded then from the slice's second word. So
 in `s[g()][h()]` a `g` outside stops the program before `h` runs (owner,
 2026-11-03), and the backends and the interpreter only turn a place into an
-address. A `length` reads only the slice's own storage, as rustc's shallow
-read: a loan of its elements does not stop it, and the use that follows is
-checked in full. Nothing may change the slice between its check and that use
+address. That load reads only the slice's own storage, as rustc's shallow
+read: a loan of its elements does not stop it, `.len` keeps no loan (owner,
+2026-11-11), and the use that follows is checked in full. Nothing may change the slice between its check and that use
 (rustc's E0510); today nothing can: no slice is stored through a reference
 (T0043, "assignments of references through a reference") or reached through
 a raw pointer, though arrays and references hold slices, and that rule must
@@ -532,15 +555,15 @@ the program runs. The loan rules hold for it as for a reference: both answer
 `Type::borrows`, which the write checks ask, so no rule is
 copied. A slice may be an array element, a struct field or behind a
 reference, never behind a raw pointer. THIR writes
-`s[i]` as an `Index` of `s` with no dereference; lowering adds the
-`SliceElements` step before the index, so a write through a slice is behind a
-reference for every check, as `r.*[i]` is. `&a` where a slice is expected is
+`s[i]` as an `Index` of `s` with no dereference; lowering adds a `*` step
+through the slice's first word before the index, so a write through a slice
+is behind a reference for every check, as `r.*[i]` is. `&a` where a slice is expected is
 a `Borrow` of `a` with the slice type (`Conversion::Reborrow`); a borrow of a
 slice place as a slice (a `&mut []` lent again, or used as a `&[]`) is a
 `Borrow` of its elements, `s.*`; as `&&[]T` it is a `Borrow` of the slice
 itself (`Types::lends_slice_elements`, which the write check and lowering
-both ask). `s.len` loads the slice, never moving a `&mut []`, and takes
-its field 1: a read of the slice, as `s.len()` borrows it in Rust.
+both ask). `s.len` loads the slice's second word, never moving a
+`&mut []`: a read of the slice that keeps no loan.
 
 An owned interface (`Shape`, `Type::Interface`) is laid out as an interface
 reference: the address of the struct it took and that struct's table. A
@@ -561,12 +584,11 @@ pointer, or set through a reference (T0043), the rules of any loan holder.
 
 `&a[i..j]` (or `&mut`, or `..=`) is THIR's `Slice` of the array place `a`,
 each end left out or an integer of any type, as an index is; ends known at
-compile time are checked there. Lowering makes it one `Borrow` of the place
-`a[from i, count n]`, as the MIR prints it: its last step, a `Subslice`,
-names an entry of the body's `subslices`, which starts at `i` and counts
-`n = j - i`, both `usize`s. The loan rules see one borrow of `a`, two-phase
-`&mut` included, and a subslice may overlap any element. The start and count
-sit in that side table, being rare, so no place step grows. Each end not
+compile time are checked there. Lowering makes it a `borrow` of the
+element at `i`, stored as the slice's first word, with the count `n = j - i`
+stored after it as a `usize`. The loan check sees one borrow of `a` from
+element `i` to the array's end, two-phase `&mut` included, so the elements
+before `i` stay free (owner, 2026-11-11). Each end not
 known at compile time is checked before that by `Check`s that lowering
 writes: an end no wider than a `usize` is converted first (a negative one,
 extended, is above any length), a wider one is compared in its own type
@@ -575,8 +597,8 @@ added, and the ends against each other unless a start of 0 or an end at the
 length makes them in order.
 
 `&s[i..j]` of a slice `s` is the same `Slice`, of the slice place, and the
-same `Borrow`, of `s.*[from i, count n]`: its elements, behind it. The
-length is the slice's, read once before (`length`), so every end but a
+same `borrow`, of the element at `i` behind it (`s.0[*, %i * 4]`). The
+length is the slice's, loaded once before, so every end but a
 start of 0 is checked when the program runs, even a constant one; the
 checker rejects only constant ends that no slice can hold (negative, past
 the target's `usize`) or that are out of order. `&mut` needs a `&mut []`
@@ -587,14 +609,14 @@ hidden variable (a `&mut []` lent again, so `s` is usable after), the range
 ends at its `len`, read once before the first pass, and each pass sets `v`
 to `&items[i]` or `&mut items[i]`, as for a loop over a reference. The loop
 lends the slice for all its passes, so its body cannot use `s`.
-`[N]T{s...}` is one part of an `ArrayParts`, its elements copied; they must
+`[N]T{s...}` copies the slice's elements into the literal; they must
 copy, and a `&mut []` variable is lent as a `&[]`, so it is usable after. Its
 count is known only when the program runs, so `[_]T{s...}` is rejected.
 
-A use (`load`, `length`, `move`, `borrow`, `address`, or a read or write of a place) not set on
+A use (`load`, `copy`, `borrow`, `address`, or a read or write of a place) not set on
 every path is T0034 ("`x` is used after it was moved", with each place it was
 moved) when the moved bit is on, else T0039 ("`x` is used before it is set").
-A write through a reference only reads its variable. A `move` of a field, or
+A write through a reference only reads its variable. A `moved` of a field, or
 through a reference, is always T0035 ("cannot move a field out of its struct", or "cannot move out of
 a reference or pointer"). A `store` to
 a variable without `mut` that may already be set is T0007 ("cannot assign
@@ -624,12 +646,13 @@ callers read only the signature. A `borrow` of a place holds the loans of the
 holders in or on the way to it: `&mut r.*` holds `r`'s, so what `r` refers to
 stays borrowed while the new reference is in use, and `&p` holds `p`'s, so what
 is read through the reference still counts them. A place names its holders
-exactly when every step is a field or a constant index: a `store` there, as
+exactly when every step is an offset or a constant index: a write there, as
 to a whole variable, replaces their loans (owner, 2026-11-08), and ends each
 loan of a place through it, which now names what the new reference points
 to. An index known only when the program runs may be any element: a read
-uses every element's holders and a store adds to each, as does an array
-literal's spread (`ArrayParts`). No loan is stored behind a reference (T0043, "assignments of
+uses that part of every element's holders and a store adds to each; a
+spread of a length known while compiling writes each element exactly
+(owner, 2026-11-11). No loan is stored behind a reference (T0043, "assignments of
 references through a reference"): it would outlive what it borrows unseen. So
 `p.input = &p.input[1..]` through `p: &mut Parser` is refused, though Rust
 accepts it, until a signature can say that two parameters share an origin; a
@@ -643,15 +666,15 @@ field is lent again where a `&mut` variable is, as a call argument or loop
 iterable, and never moved out (T0035): `&mut h.value.*`, or `h.value` there.
 A shared loan forbids
 changing, moving, ending and `&mut` borrowing its place; a `&mut` loan
-forbids every access; places overlap when one's steps start with the
-other's, so other fields stay free, and so do other elements at indexes
-known while compiling; an index known only when the program runs, or a
-subslice, may meet any element. Lowering writes a `scope end` at a
-block's `}`, and at a `break`, `continue` or `return` that leaves the block,
-for each variable of that block, and one where each temporary ends; it writes no code (`InstructionKind::runs`), is gone from a
-compiled body (`flow::cleanup`) and is how a reference
-that outlives its variable is caught. The variable state check forgets a
-variable at its `scope end`, so a loop's next pass may set it again. Changing a variable, or its
+forbids every access; places conflict when their byte ranges meet at
+each level both reach, so other fields stay free, and so do other elements
+at indexes known while compiling; an index known only when the program runs
+meets the same part of every element, and a slice reaches from its start
+to the array's end. Lowering writes a `dead` at a block's `}`, and at a
+`break`, `continue` or `return` that leaves the block, for each variable of
+that block, and one where each temporary ends; it writes no code
+(`InstructionKind::runs`) and is how a reference that outlives its variable
+is caught. Changing a variable, or its
 scope ending, does not touch a loan reached through the reference stored
 in it: `r = &mut b` while `s = &mut r.*` is in use is valid (owner,
 2026-10-24). After it, `r.*` names `b`, so the loan of `r.*` ends there and
@@ -670,7 +693,9 @@ then it acts as a shared loan, so `update(&mut x, read(&x))` and
 `take(&mut x, x > 0)` are valid; when the call starts it is checked as a
 `&mut` borrow against every reference still in use there, the call's other
 arguments included, so `both(&mut x, &x)` is an error, with the note "a
-`&mut` argument takes hold when the call starts".
+`&mut` argument takes hold when the call starts". An argument passed in
+memory is a copy, so a borrow stored there and used only by the call is
+reserved too (owner, 2026-11-11).
 
 A function may return a reference (owner, 2026-10-25). Its type's
 `origins` are the parameters the result may point into: those `-> &T in a`
@@ -678,7 +703,7 @@ or `in (a, b)` names, else every parameter holding a reference, or every one
 holding a `&mut` for a `&mut` result; the signature errors are T0016 (and T0002 for a name
 that is no parameter). The loan check gives each parameter holding one a
 parameter loan, numbered after the borrows, at the entry `store` of its
-argument; it conflicts with nothing in the body. A `return` uses its value,
+argument, or at the start for one kept in memory; it conflicts with nothing in the body. A `return` uses its value,
 and a returned reference may hold no loan of the function's own storage
 (T0036, "returns a reference into `x`, which is gone once the function
 returns") and only the parameter loans the origins name (T0016, with the
@@ -688,7 +713,7 @@ of the arguments at the callee's origins, so they stay borrowed while it
 is in use, and a `&mut` argument there is not reserved: its loan outlives
 the call. Callers read only the signature, never the callee's body.
 
-The unreachable-code check (W0001, `flow::warn_unreachable_code`)
+The unreachable-code check (W0001, `flow::unreachable::warn_unreachable_code`)
 warns once at the first code of each stretch of blocks no path reaches, such
 as code after a `return` ("this never runs"); the blocks that stretch leads to
 are not warned about again. Reachability ignores constant values, as for the
@@ -707,7 +732,7 @@ These live in the checker, which knows the blocks. The blocks are the body's
 scopes: THIR's `blocks` arena holds each with its parent, the function's
 first, and each local names its block. Lowering copies them into MIR's
 `debug_scopes` by the same ids, and stamps each instruction, terminator and
-variable with its debug scope; only debug info reads them. The LLVM backend
+slot with its debug scope; only debug info reads them. The LLVM backend
 makes a `DILexicalBlock` of each that declares a variable, under its nearest
 such ancestor.
 
@@ -715,58 +740,75 @@ such ancestor.
 of a program without errors, or only the kind named, one file per module under
 build/debug/dumps in the project folder or beside the file
 (`myapp:deep/x` to `myapp/deep/x.mir`), like the old `-keep-gen` and rustc's
-`-Zdump-mir`. The MIR shown is what the backend reads, after `flow::cleanup`. The printers are `thir::Body::text` and `mir::Body::text`, beside
-the data, and `llvm::Module::text` for `ll`. MIR tests are `x_test`
-folders with `mode = "mir"` and an `expected.mir` file, as in rustc's
-`tests/mir-opt`; `PEEPER_BLESS=1` rewrites the expected files.
+`-Zdump-mir`. The MIR shown is what the path checks and the backends read,
+with the globals each body names after its blocks. The printers are `thir::Body::text` and `mir::Body::text`, beside
+the data, and `llvm::Module::text` for `ll`. MIR tests are test programs
+with `//@ dump: mir` and a `.mir` file beside them; `PEEPER_BLESS=1`
+rewrites the expected files.
 
 ## LLVM
 
-`crates/backend/llvm` writes one module's LLVM text from its functions' MIR,
-one walk per function (`peeper -dump ll` shows it):
+`crates/backend/llvm` writes one module's LLVM text from its functions'
+MIR of core concepts (`model::mir`), one walk per function (`peeper
+-dump ll` shows it). It reads no language type while writing a body: only
+classes, sizes, how each value is passed and the debug types lowering made.
 
-- Each variable is an `alloca` in an `entry` block, with `llvm.dbg.declare`;
-  each instruction gets a `!dbg` line from its span; each function a
-  `DISubprogram`. A debugger shows variables by name.
-- Symbols: a function's `#[extern("name")]`, else `module_path.name`, quoted.
+- Each slot is an `alloca [size x i8]` with its alignment in an `entry`
+  block, then a branch to `bb0`; a slot a debugger shows has
+  `llvm.dbg.declare` with its debug type. Each line gets a `!dbg` from its
+  span, each function a `DISubprogram`, and each debug scope that declares
+  such a slot a `DILexicalBlock`. Debug types are written from a work list,
+  so a deep struct or pointer chain does not recurse.
+- Symbols: a function's `#[extern("name")]`, else `module_path.name`, a
+  copy's `const` arguments after it in `<..>`, quoted. Each is made on the
+  compile thread (it needs `Types`) and handed to the worker that writes the
+  module.
 - An `extern` function is C's, so it has no body, and every other function
   has one; `extern` on a function is the one attribute there is, and any
-  other is an error (owner, 2026-10-29). Its integers pass as clang passes
-  C's `_BitInt(N)` on the target (`Machine::c_abi`): extended to `int`, as
-  themselves, as two `i64` limbs, or in memory (`sret`, `byval`), with x86-64
-  System V's register count; `i128` passes as `__int128` (on Windows x64 too,
-  owner, 2026-10-29). An integer wider than C has on the target (128 bits on
-  AArch64) is an error.
-- Integer division, remainder and shifts by a value not known at compile time
-  check first and continue in a new block (`bb3.1`); a `phi` names the block
-  where its incoming MIR block ends. Division by zero and a shift count
-  outside 0 to width - 1 panic; signed `MIN / -1` is `MIN` and `MIN % -1` is
-  0, as check folds them.
+  other is an error (owner, 2026-10-29). Lowering decides how each of its
+  values passes (`lower/core/c_abi.rs`, by `Machine::c_abi`, for 32-bit and
+  64-bit targets alike) and puts it in the call's `CSignature`: in a register
+  with `signext`/`zeroext`, in `i64` pieces, as a vector (a result only), or
+  in memory (`byval`, `sret`, or by address); the writer only follows it. Its
+  integers pass as clang passes C's `_BitInt(N)` on the target, with x86-64
+  System V's register count; `i128` passes as `__int128` (on Windows x64
+  too, owner, 2026-10-29). An integer wider than C has on the target (128
+  bits on AArch64) is an error.
+- A MIR `Check` branches on its comparison's `i1` to a panic block and
+  continues in a new block (`bb3.1`); there is no `phi`: a value that
+  joins from two blocks, as `&&` gives, is stored in a slot (measured
+  2026-11-11: a `phi` is slower at `-O0`; branches in place of the slot
+  stop a loop's vectorizing at `-O2`). A comparison is widened to a byte
+  only when something reads it as one, not as a condition. A jump goes
+  past a block that writes nothing and only jumps on, and a block no jump
+  then reaches is not written; the MIR keeps both for the path checks and
+  the unreachable-code warning. Division by zero and a shift count outside
+  0 to width - 1 are checks lowering emits; signed `MIN / -1` is `MIN` and
+  `MIN % -1` is 0, as check folds them: the writer divides by 1 and negates
+  when the divisor is -1 (`body::signed_division`), unless the divisor is a
+  constant other than -1.
 - A panic, a failed check or a written `panic "message"`, writes one string
   constant made at compile time (`panic: division by zero` or `panic:
   message`, then `  --> file:line:column`) through the prelude's `write` to the
   standard error and calls its `exit` with 101: no runtime function of its own.
-- A slice is `%slice = type { ptr, iN }`, N the pointer's width, written at
-  the top of every module, and passed as that one value, not kept in memory
-  like an array, so a slice argument is never copied. At a place's step
-  through a slice the walker loads the elements' address; an index is a
-  `getelementptr` index, an `iN` lowering checked, even a constant one into a
-  slice; a borrow of all a slice's elements loads the slice, and any other
-  borrow as a slice builds both parts with `insertvalue`; a subslice step is
-  a `getelementptr` index at its start, an `iN` checked before, and the slice
-  takes its count. A debugger shows it as a
-  struct with `ptr` and `len`. A slice spread in an array literal is
-  counted from its length, one bit wider than the element, checked with the
-  other parts before any element is written, and copied with one `memcpy`;
-  that array is built in its own memory, never at the place it is stored to
-  or `%result`, which the slice may view.
-- `print` and `println` call the runtime's print functions, one per number,
-  `bool`, `&cstr` or pointer, with the text known at compile time (spaces,
-  struct names, brackets) gathered into one string between them. A struct or
-  array prints through a private function per type, which calls those of the
-  structs and arrays in it, and an array's loops over its elements, so the
-  code grows with neither the length nor how often a struct holds another.
-  Each is `noinline optnone`: it only calls the runtime.
+- Values are bytes. A place is a root (a slot or an address) and steps: an
+  offset, a load of an address held there, or an index times a size. Offsets
+  and constant indexes add up into one `getelementptr inbounds i8`; a place
+  that moves nowhere is its root's address with no line at all. A slice or
+  `&str` is two words in memory, an address and a length, passed like any
+  value kept in memory: the caller makes one private copy and passes its
+  address, and the callee's parameter is that copy (`%a1`, no `alloca`,
+  `Body::parameter_in_memory`). Lowering builds a literal, a slice, a
+  range, an interface value or a call's result right where it goes when
+  that place is new (`lower_into`: a `let`, an argument's copy, the
+  result, a field of one of them); an assignment's value is built apart,
+  as it may read its target. Strings are
+  `@.str.N` globals of their exact bytes (a `&cstr` literal's include its
+  zero), one per distinct bytes in a module.
+- `print` and `println` are runtime calls lowering emits: one per number,
+  `bool`, `&cstr`, `&str` or pointer, with the spaces and the newline
+  gathered into strings between them. A struct or an array does not print
+  (`check` `printable`); a program prints its fields or elements.
 
 `peeper build [-o program] [path]` and `peeper run [path] [-- arguments...]`
 work as the Go compiler's did, except that `run` takes the program's
@@ -837,7 +879,7 @@ entry and no `main`, and `build`, `run` and `-interpret` refuse it;
   even; a float becomes an integer cut toward zero, saturated at the ends
   of its range, NaN as 0 (Rust's rule, as LLVM's plain `fptosi` gives
   poison there). Folding and LLVM agree for every width
-  (`crates/middle/eval/tests/llvm_parity.rs`): `llvm` writes LLVM's own
+  (`crates/middle/check/tests/llvm_parity.rs`): `llvm` writes LLVM's own
   `sitofp`/`uitofp` and `llvm.fpto{s,u}i.sat`, which need LLVM 23 or newer
   above 128 bits (LLVM 22 crashes on the one and gives a wrong finite float
   for the other, llvm/llvm-project#189054), so the bundled toolchain is LLVM

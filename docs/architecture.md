@@ -165,7 +165,7 @@ this rule (#165 came from breaking it).
 | `source` | source files and byte spans; line and column on demand | rewritten (old one tracked line and column per character and allocated every location) |
 | `token`, `lexer` | tokens, lexing | old frontend, reviewed |
 | `literal` | rules of literal text shared by the phases: values of string, character and byte literals, and number literals (base, digits, suffix) in `literal::numeric` | string rules split out of the lexer; number rules rewritten, old ones were regex based |
-| `parser` (tree in `model::ast`) | syntax tree, parsing | old frontend, reviewed (parser only parses) |
+| `parser` (tree in `syntax::ast`) | syntax tree, parsing | old frontend, reviewed (parser only parses) |
 | `diagnostics` | one diagnostic value and how it is printed | rewritten small; the old Go emitter and `suggest.go` reviewed |
 | `project` | import resolution from a package map, workers, graph, cycles; `project::manifest` reads `peeper.toml` in one folder (the project name), and `project_in` makes the project from it for the command line and the browser alike | new; ideas from old loader/resolver |
 | `peeper` | the command line: `check`, `fix`, `build`, `run`, `init`, `lsp` | new |
@@ -188,8 +188,14 @@ and has one job:
   `expr.rs`.
 - **Recursive descent for everything else**: statements (`stmt.rs`), types
   (`types.rs`), declarations (`decl.rs`), patterns. The keyword that begins
-  a statement or declaration picks its rule from a table too (`STATEMENTS`,
-  `DECLARATIONS`), the same way.
+  a statement or declaration picks its rule from a table too, the same way,
+  and so does a keyword that begins a type (`struct { ... }`).
+- The tables are one `Rules` value per language, built by `const` code:
+  `Rules::core()` adds the core's rows, and the `features` crate's list
+  (`crates/features/src/lib.rs`) adds each feature's (`structs::rows`,
+  `interfaces::rows`, `raw_pointers::rows`). A feature's rule lives in its
+  file (`crates/features/src/structs.rs`), and calls the parser's public
+  reading methods.
 - Rules in a table are plain functions taking `p: &mut Parser`; shared helpers
   stay methods.
 - `lib.rs` holds only what all rules share: the token cursor, errors and

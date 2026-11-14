@@ -1,0 +1,8 @@
+heap: 10 3 true
+heap to nothing: true
+heap from none: true
+arena: true true 10 10
+arena full: true 10
+pool: true true 10
+stack: true 10
+resizing an older piece

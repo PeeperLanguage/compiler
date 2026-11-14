@@ -15,8 +15,8 @@
 //! stack segment when little stack is left, so no nesting depth overflows the
 //! stack.
 
-mod decl;
-mod expr;
+pub mod decl;
+pub mod expr;
 mod literals;
 mod pattern;
 mod stmt;
@@ -33,15 +33,116 @@ use arena::List;
 use arena::Node;
 use diagnostics::Diagnostic;
 use diagnostics::fix::Fix;
-use model::ast::Ident;
-use model::ast::Tree;
 use source::SourceFile;
 use source::Span;
+use syntax::ast::Ident;
+use syntax::ast::Language;
+use syntax::ast::Tree;
+use syntax::operators::BinaryOp;
+use syntax::operators::Precedence;
 use token::Token;
 use token::TokenKind;
 
+use crate::decl::DeclarationRule;
+use crate::expr::AfterPathRule;
+use crate::expr::InfixRule;
+use crate::expr::PrefixRule;
+use crate::stmt::StatementRule;
+use crate::types::TypeStartRule;
+
+/// What the parser asks of a language: the rules of each token
+/// (docs/feature-front.md, section 4.1).
+pub trait Grammar: Language {
+    /// The core's rows (`Rules::core`) and each feature's, built once.
+    fn rules() -> &'static Rules<Self>;
+}
+
+/// The rules of each token, indexed by token kind. A token without a prefix
+/// rule cannot begin an expression; a token without an infix rule never
+/// continues one. `binary` is the operator a token of the `binary` rule
+/// writes. A statement or declaration rule reads what its keyword begins;
+/// any other token begins an expression statement. Two rules for one token
+/// are a build error, not one replacing the other.
+pub struct Rules<L: Language> {
+    prefix: [Option<PrefixRule<L>>; 256],
+    /// After a path, the rule of the token there when the token after it is
+    /// the one paired with it (`Point.{` begins a struct literal).
+    after_path: [Option<(TokenKind, AfterPathRule<L>)>; 256],
+    infix: [Option<(Precedence, InfixRule<L>)>; 256],
+    binary: [Option<BinaryOp>; 256],
+    statements: [Option<StatementRule<L>>; 256],
+    declarations: [Option<DeclarationRule<L>>; 256],
+    /// The type each token begins (`struct { ... }`, `[4]T`), read after the
+    /// token; a declaration of one by its keyword (`struct Name { ... }`)
+    /// reads it after the name (`type_decl`).
+    type_starts: [Option<TypeStartRule<L>>; 256],
+}
+
+impl<L: Grammar> Rules<L> {
+    /// The core's rules, which each feature's are added to.
+    pub const fn core() -> Rules<L> {
+        let mut rules = Rules {
+            prefix: [None; 256],
+            after_path: [None; 256],
+            infix: [None; 256],
+            binary: [None; 256],
+            statements: [None; 256],
+            declarations: [None; 256],
+            type_starts: [None; 256],
+        };
+        expr::expression_rows(&mut rules);
+        stmt::statement_rows(&mut rules.statements);
+        decl::declaration_rows(&mut rules);
+        rules
+    }
+
+    /// Reads the statement the keyword `kind` begins with `read`.
+    pub const fn statement(&mut self, kind: TokenKind, read: StatementRule<L>) {
+        assert!(
+            self.statements[kind as usize].is_none(),
+            "two rules begin a statement with one token"
+        );
+        self.statements[kind as usize] = Some(read);
+    }
+
+    /// Reads the declaration `kind` begins with `read`.
+    pub const fn declaration(&mut self, kind: TokenKind, read: DeclarationRule<L>) {
+        assert!(
+            self.declarations[kind as usize].is_none(),
+            "two rules begin a declaration with one token"
+        );
+        self.declarations[kind as usize] = Some(read);
+    }
+
+    /// Reads the type the token `kind` begins with `read`. A token the
+    /// core's types begin with cannot be one: `Parser::type_expr` reads
+    /// those first.
+    pub const fn type_start(&mut self, kind: TokenKind, read: TypeStartRule<L>) {
+        assert!(
+            !types::starts_core_type(kind) && self.type_starts[kind as usize].is_none(),
+            "two rules begin a type with one token"
+        );
+        self.type_starts[kind as usize] = Some(read);
+    }
+
+    /// Reads with `read` what a path continues with when the token after it
+    /// is `first` and the next one `second`.
+    pub const fn after_path(
+        &mut self,
+        first: TokenKind,
+        second: TokenKind,
+        read: AfterPathRule<L>,
+    ) {
+        assert!(
+            self.after_path[first as usize].is_none(),
+            "two rules continue a path with one token"
+        );
+        self.after_path[first as usize] = Some((second, read));
+    }
+}
+
 /// Returns the syntax tree of `file` and the lexical and syntax errors in it.
-pub fn parse(file: &Arc<SourceFile>) -> (Tree, Vec<Diagnostic>) {
+pub fn parse<L: Grammar>(file: &Arc<SourceFile>) -> (Tree<L>, Vec<Diagnostic>) {
     let (tokens, errors) = lexer::scan(file);
     let mut p = Parser {
         tree: Tree::new(file.clone()),
@@ -58,8 +159,8 @@ pub fn parse(file: &Arc<SourceFile>) -> (Tree, Vec<Diagnostic>) {
     (p.tree, p.errors)
 }
 
-struct Parser {
-    tree: Tree, // the tree being built
+pub struct Parser<L: Language> {
+    pub tree: Tree<L>, // the tree being built
     tokens: Vec<Token>,
     pos: usize,
     last_end: u32, // end of the last token read
@@ -69,7 +170,7 @@ struct Parser {
     list_items: Vec<NonZeroU32>, // the items of the lists being read, innermost last
 }
 
-impl Parser {
+impl<L: Grammar> Parser<L> {
     /// The index of the current token: the next one that is not a doc comment.
     /// Doc comments are read only where a declaration may begin (see
     /// `doc_comment`); everywhere else the parser looks past them.
@@ -81,32 +182,17 @@ impl Parser {
         i
     }
 
-    fn tok(&self) -> Token {
+    pub fn tok(&self) -> Token {
         self.tokens[self.current()]
     }
 
-    fn at(&self, kind: TokenKind) -> bool {
+    pub fn at(&self, kind: TokenKind) -> bool {
         self.tok().kind == kind
-    }
-
-    /// Whether the current token is `yes`; it must be `yes` or `no`, as for a
-    /// rule registered for those two kinds only.
-    fn is_either(&self, yes: TokenKind, no: TokenKind) -> bool {
-        match self.tok().kind {
-            kind if kind == yes => true,
-            kind if kind == no => false,
-            kind => unreachable!(
-                "expected `{}` or `{}`, found `{}`",
-                yes.text(),
-                no.text(),
-                kind.text()
-            ),
-        }
     }
 
     /// The token `n` tokens after the current one, or the end of file past the
     /// end.
-    fn ahead(&self, mut n: usize) -> Token {
+    pub fn ahead(&self, mut n: usize) -> Token {
         let mut i = self.current();
         while n > 0 && self.tokens[i].kind != TokenKind::Eof {
             i += 1;
@@ -118,7 +204,11 @@ impl Parser {
         self.tokens[i]
     }
 
-    fn next(&mut self) -> Token {
+    #[expect(
+        clippy::should_implement_trait,
+        reason = "a parser moves over its tokens, which it is not an iterator of"
+    )]
+    pub fn next(&mut self) -> Token {
         self.pos = self.current();
         let t = self.tokens[self.pos];
         if t.kind != TokenKind::Eof {
@@ -129,7 +219,7 @@ impl Parser {
     }
 
     /// An empty span at the end of what was read.
-    fn here(&self) -> Span {
+    pub fn here(&self) -> Span {
         Span::at(self.last_end as usize)
     }
 
@@ -141,7 +231,7 @@ impl Parser {
         self.tree.file.slice(t.span)
     }
 
-    fn fix(&self, span: Span, new_text: &str) -> Fix {
+    pub fn fix(&self, span: Span, new_text: &str) -> Fix {
         Fix {
             file: self.tree.file.clone(),
             span,
@@ -152,7 +242,7 @@ impl Parser {
     /// Adds `node`, spanning from `start`, where the token beginning it was, to
     /// the end of the last token read. A node that read nothing (its start lies
     /// past what was read) is an empty span at the read position.
-    fn add<T: Node<Container = Tree>>(&mut self, start: u32, node: T) -> Id<T> {
+    pub fn add<T: Node<Container = Tree<L>>>(&mut self, start: u32, node: T) -> Id<T> {
         let span = Span::new(start.min(self.last_end) as usize, self.last_end as usize);
         self.tree.add(node, span)
     }
@@ -161,7 +251,7 @@ impl Parser {
     /// Nothing is reported while recovering already, or when a lexical error lies
     /// between the last token read and the current one: an illegal character
     /// makes no token, so the parser's error would only repeat it.
-    fn fail(&mut self, d: Diagnostic) {
+    pub fn fail(&mut self, d: Diagnostic) {
         if !self.recovering && !self.after_lexical_error() {
             self.errors.push(d);
         }
@@ -171,7 +261,7 @@ impl Parser {
 
     /// Reports a mistake the parser reads past as if the missing token were
     /// there, so it stays in step and goes on reporting.
-    fn repair(&mut self, d: Diagnostic) {
+    pub fn repair(&mut self, d: Diagnostic) {
         if !self.recovering {
             self.errors.push(d);
         }
@@ -185,7 +275,7 @@ impl Parser {
         })
     }
 
-    fn expect(&mut self, kind: TokenKind) -> Option<Token> {
+    pub fn expect(&mut self, kind: TokenKind) -> Option<Token> {
         if self.at(kind) {
             return Some(self.next());
         }
@@ -245,7 +335,7 @@ impl Parser {
     /// at this depth, what stands before it cannot be in the list: that is
     /// reported, and parsing skips to the closer. Otherwise the closer is
     /// missing, and the error also marks `open` if it is on an earlier line.
-    fn close(&mut self, kind: TokenKind, open: Token) {
+    pub fn close(&mut self, kind: TokenKind, open: Token) {
         if self.at(kind) {
             self.next();
             return;
@@ -275,7 +365,7 @@ impl Parser {
     /// to a `}` closing the current block, a keyword that starts a statement, or
     /// the end of file. Brackets opened on the way are skipped whole, and a stray
     /// closing `)` or `]` is skipped. Passing a `;` puts the parser in step again.
-    fn sync(&mut self) {
+    pub fn sync(&mut self) {
         let mut depth = 0usize;
         while !self.at(TokenKind::Eof) {
             match self.tok().kind {
@@ -292,7 +382,7 @@ impl Parser {
                     self.recovering = false;
                     return;
                 }
-                kind if depth == 0 && starts_statement(kind) => return,
+                kind if depth == 0 && starts_statement::<L>(kind) => return,
                 _ => {}
             }
             self.next();
@@ -381,7 +471,7 @@ impl Parser {
 
     /// Reads `open`, the items of a list up to `close` (see `items`), and
     /// `close`. A missing `open` is reported and gives an empty list.
-    fn delimited<T>(
+    pub fn delimited<T>(
         &mut self,
         open: TokenKind,
         close: TokenKind,
@@ -439,7 +529,7 @@ impl Parser {
     }
 
     /// Reads a name; a missing one is empty, where it should be.
-    fn name(&mut self) -> Ident {
+    pub fn name(&mut self) -> Ident {
         let span = match self.expect(TokenKind::Ident) {
             Some(t) => t.span,
             None => self.here(),
@@ -451,7 +541,7 @@ impl Parser {
     /// again. A `;` missing at the end of a line, before what starts the next
     /// statement or closes the block, is read as if it were there: nothing
     /// needs skipping. Otherwise the parser skips to where parsing can go on.
-    fn end(&mut self) {
+    pub fn end(&mut self) {
         if self.at(TokenKind::Semicolon) {
             self.next();
             self.recovering = false;
@@ -462,7 +552,7 @@ impl Parser {
         let next_starts = matches!(
             t.kind,
             TokenKind::RightBrace | TokenKind::Eof | TokenKind::Ident
-        ) || starts_statement(t.kind);
+        ) || starts_statement::<L>(t.kind);
         if next_line && next_starts {
             let d = self.missing(TokenKind::Semicolon);
             self.repair(d);
@@ -476,11 +566,11 @@ impl Parser {
 
 /// Whether `kind` begins a statement or declaration wherever it appears, so
 /// parsing is in step again there.
-fn starts_statement(kind: TokenKind) -> bool {
-    stmt::is_statement_keyword(kind) || decl::starts_declaration(kind)
+fn starts_statement<L: Grammar>(kind: TokenKind) -> bool {
+    stmt::is_statement_keyword::<L>(kind) || decl::starts_declaration::<L>(kind)
 }
 
-fn is_name(kind: TokenKind) -> bool {
+pub fn is_name(kind: TokenKind) -> bool {
     kind == TokenKind::Ident
 }
 

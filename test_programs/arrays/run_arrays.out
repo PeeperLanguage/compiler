@@ -1,0 +1,15 @@
+literal: 1 2 3
+inferred: 4 5
+written: 1 7 3
+indexes: 3 1 2 3 2
+nested: 6 0 9
+fields: 30 2 5
+copied: 9 1
+passed: 6 4
+returned: 0 10 20
+through: 11 12 13
+borrowed: 7 8
+raw: 21
+empty: done
+aliased: 1.5 2.5
+slot: 0 5

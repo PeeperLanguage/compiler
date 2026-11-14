@@ -1,0 +1,6 @@
+fn main() {
+    let same = c"a" == c"b"; //~ error[T0004]: operator `==` cannot be applied to `&cstr`
+    let negated = -c"a"; //~ error[T0004]: operator `-` cannot be applied to `&cstr`
+    let number: i32 = c"x"; //~ error[T0001]: mismatched types: expected `i32`, found `&cstr`
+    let plain: &cstr = "plain"; //~ error[T0001]: mismatched types: expected `&cstr`, found `&str`
+}

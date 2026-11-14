@@ -1,0 +1,16 @@
+// Text has no fixed size: only its view, `&str` or `&cstr`, is a value, and
+// a view never changes the text.
+struct Pet { name: str } //~ error[P0011]: `str` is text of any length, so it has no fixed size
+//~ label: use `&str` for text
+type Label = cstr; //~ error[P0011]: `cstr` is C text of any length, so it has no fixed size
+//~ label: use `&cstr` for C text
+
+fn shout(text: &mut str) {} //~ error[P0011]: `&mut str` is not a type: text views are read only
+fn names(all: [2]str) {} //~ error[P0011]: `str` is text of any length, so it has no fixed size
+
+fn main() {
+    let c_text: cstr = c"x"; //~ error[P0011]: `cstr` is C text of any length, so it has no fixed size
+    // `&&str` is a reference to a view, which works.
+    let view: &str = "ok";
+    let held: &&str = &view;
+}

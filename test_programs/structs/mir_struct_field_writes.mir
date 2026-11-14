@@ -1,0 +1,14 @@
+fn main:
+  bb0:
+    store i32 line.0[+0, +0], 1
+    store i32 line.0[+0, +4], 2
+    store i32 line.0[+8, +0], 3
+    store i32 line.0[+8, +4], 4
+    store i32 line.0[+0, +4], 5
+    store i32 other.1[+0], 6
+    store i32 other.1[+4], 7
+    copy 8 line.0[+8], other.1
+    moved 8 other.1
+    dead other.1
+    dead line.0
+    fall off at `}`

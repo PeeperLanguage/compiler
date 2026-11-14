@@ -4,22 +4,25 @@
 use std::sync::Arc;
 
 use diagnostics::Diagnostic;
+use eval::interpreter::ADDRESS_NOT_KNOWN;
+use eval::interpreter::ConstantShape;
 use eval::interpreter::Failure;
-use model::Callee;
+use model::ConstArguments;
 use model::DefId;
 use model::FunctionCopy;
 use model::ModuleId;
-use model::ast;
 use model::constant::Value;
 use model::mir;
-use model::semantic_types::ConstArguments;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
 use model::thir;
 use rustc_hash::FxHashSet;
 use source::Span;
+use syntax::ast;
+use syntax::ast::Language;
 
 use crate::COPY_DEPTH_LIMIT;
+use crate::Checked;
 use crate::Checker;
 use crate::Checking;
 use crate::Copied;
@@ -29,42 +32,44 @@ use crate::Copied;
 pub(crate) enum Built {
     /// Built once, so what its checks found is reported.
     Reported,
-    /// Built for a run at compile time and kept for the next run: its MIR,
-    /// `None` when it has no body or had an error.
+    /// Built for a run at compile time and kept for the next run: its MIR
+    /// of core concepts, `None` when it has no body or had an error.
     Kept(Option<Box<mir::Body>>),
 }
 
-impl Checker<'_> {
+impl<L: Checked> Checker<'_, L> {
     /// Builds the body of the function `copy`, asked for at `used_at`, into
-    /// `thir`, only to run it at compile time when `to_run`: checks it
+    /// `thir`, recording its facts when `records_facts` (not when it is
+    /// built only to run at compile time, `evaluate_call`): checks it
     /// (`check_body`), lowers it to MIR and runs the path checks. `None` when
     /// it has no body or its signature had an error; else its MIR, `None`
-    /// when it had an error. What it finds is reported by its first build
-    /// only: a later one (the compile's, after a run at compile time, or the
-    /// other way round) finds the same and drops it.
+    /// when it had an error, naming the program's debug types
+    /// (`debug_types`). What it finds is reported by its first build only:
+    /// a later one (the compile's, after a run at compile time, or the other
+    /// way round) finds the same and drops it.
     pub fn build_function(
         &mut self,
         copy: FunctionCopy,
         used_at: Span,
         thir: &mut thir::Body,
-        to_run: bool,
+        records_facts: bool,
     ) -> Option<Option<mir::Body>> {
         let module = copy.definition.module.index();
         let ty = self.copy_type(copy, used_at);
         // Decided now: a run at compile time inside this build builds it too.
-        let first = !self.bodies.contains_key(&copy);
+        let first = !self.internals.built_bodies.contains_key(&copy);
         if first {
-            self.bodies.insert(copy, Built::Reported);
+            self.internals.built_bodies.insert(copy, Built::Reported);
         }
         let reported = self.module_checks[module].diagnostics.len();
-        let checked = self.check_body(copy, used_at, thir, to_run);
+        let checked = self.check_body(copy, used_at, thir, records_facts);
         let mir = checked.then(|| self.lower_function(copy.definition, ty, thir));
         let found = &mut self.module_checks[module].diagnostics;
         let failed = found[reported..].iter().any(Diagnostic::is_error);
         if !first {
             found.truncate(reported);
         } else if copy.arguments != ConstArguments::NONE {
-            let into = self.copies[&copy].reported_in;
+            let into = self.internals.function_copies[&copy].reported_in;
             self.report_from_copy(copy, reported, into);
         }
         mir.map(|mir| mir.filter(|_| !failed))
@@ -82,21 +87,22 @@ impl Checker<'_> {
         if copy.arguments == ConstArguments::NONE || pattern == TypeId::INVALID {
             return pattern;
         }
-        if let Some(copied) = self.copies.get(&copy) {
+        if let Some(copied) = self.internals.function_copies.get(&copy) {
             return copied.signature;
         }
         let made_inside = self
-            .checking
+            .internals
+            .declarations_being_checked
             .last()
             .expect("a call is being checked")
             .copy();
-        let (depth, reported_in) = match self.copies.get(&made_inside) {
+        let (depth, reported_in) = match self.internals.function_copies.get(&made_inside) {
             Some(inside) => (inside.depth + 1, inside.reported_in),
             None => (1, self.current_module()),
         };
         if depth > COPY_DEPTH_LIMIT {
             // Reported once: the body that made the copy has the error.
-            if std::mem::replace(&mut self.copies_stopped, true) {
+            if std::mem::replace(&mut self.internals.copies_too_deep, true) {
                 return TypeId::INVALID;
             }
             let name = model::program::declared_path(self.modules, copy.definition);
@@ -106,7 +112,7 @@ impl Checker<'_> {
             );
             return self.error(diagnostics::CIRCULAR_DEPENDENCY, message, used_at);
         }
-        self.copies.insert(
+        self.internals.function_copies.insert(
             copy,
             Copied {
                 signature: TypeId::INVALID,
@@ -128,10 +134,14 @@ impl Checker<'_> {
             self.checking_in(checking, |checker| checker.check_function(copy.definition));
         let caller = self.current_module();
         self.report_from_copy(copy, reported, caller);
-        let copied = self.copies.get_mut(&copy).expect("the copy was just made");
+        let copied = self
+            .internals
+            .function_copies
+            .get_mut(&copy)
+            .expect("the copy was just made");
         copied.signature = signature;
         if signature != TypeId::INVALID {
-            self.unbuilt_copies.push(copy);
+            self.internals.copies_to_build.push(copy);
         }
         signature
     }
@@ -140,7 +150,10 @@ impl Checker<'_> {
     /// compile has not built (`build_function`), the newest first; building
     /// one may make more. None once copies nested too deep.
     pub fn next_copy(&mut self) -> Option<FunctionCopy> {
-        self.unbuilt_copies.pop().filter(|_| !self.copies_stopped)
+        self.internals
+            .copies_to_build
+            .pop()
+            .filter(|_| !self.internals.copies_too_deep)
     }
 
     /// Moves what checking `copy` reported in its function's module, past
@@ -159,12 +172,8 @@ impl Checker<'_> {
             called_in,
             called_at,
             ..
-        } = self.copies[&copy];
-        let name = self.types.copy_text(
-            model::program::declared_path(modules, definition),
-            copy.arguments,
-            |definition| model::program::declared_text(modules, definition),
-        );
+        } = self.internals.function_copies[&copy];
+        let name = model::program::copy_name(modules, &self.types, copy);
         let file = &modules[called_in.index()].ast.file;
         let into = &mut self.module_checks[into.index()].diagnostics;
         for diagnostic in found {
@@ -194,31 +203,25 @@ impl Checker<'_> {
     ) -> Option<mir::Body> {
         let modules = self.modules;
         let module = definition.module.index();
-        let Type::Function {
-            parameters,
-            result,
-            origins,
-            ..
-        } = &self.types[ty]
-        else {
+        let Type::Function { result, .. } = &self.types[ty] else {
             unreachable!("a checked body has a function type")
         };
-        let mir = lower::lower(thir, parameters.len(), *result, &self.types)?;
+        let debug_types = &mut self.debug_types;
+        let mir = lower::lower(thir, ty, &self.types, self.target, modules, debug_types)?;
         let file = &modules[module].ast.file;
         let diagnostics = &mut self.module_checks[module].diagnostics;
         let types = &self.types;
-        flow::variable_state::report_variable_state_errors(&mir, types, file, diagnostics);
-        flow::loans::report_loan_errors(&mir, types, origins, file, diagnostics);
-        flow::warn_unreachable_code(&mir, file, diagnostics);
+        flow::variable_state::report_variable_state_errors(&mir, file, diagnostics);
+        let pointer_bytes = self.target.pointer_bytes();
+        flow::loans::report_loan_errors(&mir, pointer_bytes, file, diagnostics);
+        flow::unreachable::warn_unreachable_code(&mir, file, diagnostics);
         // Last: it points at the closing brace.
-        flow::report_missing_return(
-            &mir,
-            file,
-            types,
-            *result,
-            |definition| model::program::declared_text(modules, definition),
-            diagnostics,
-        );
+        let result_text = || {
+            types.text(*result, |definition| {
+                model::program::declared_text(modules, definition)
+            })
+        };
+        flow::missing_return::report_missing_return(&mir, file, result_text, diagnostics);
         Some(mir)
     }
 
@@ -238,41 +241,31 @@ impl Checker<'_> {
         // cycle, not one that only may.
         let (mut reached, mut pending) = (FxHashSet::default(), vec![function]);
         while let Some(next) = pending.pop() {
-            if self.copies_stopped {
+            if self.internals.copies_too_deep {
                 return None; // reported
             }
             if !reached.insert(next) {
                 continue;
             }
-            if !matches!(self.bodies.get(&next), Some(Built::Kept(_))) {
-                if self.checking.iter().any(|checking| checking.copy() == next) {
+            if !matches!(self.internals.built_bodies.get(&next), Some(Built::Kept(_))) {
+                if self
+                    .internals
+                    .declarations_being_checked
+                    .iter()
+                    .any(|checking| checking.copy() == next)
+                {
                     continue;
                 }
                 let mut thir = thir::Body::default();
-                let mir = self.build_function(next, span, &mut thir, true).flatten();
-                self.bodies.insert(next, Built::Kept(mir.map(Box::new)));
+                let body = self.build_function(next, span, &mut thir, false).flatten();
+                self.internals
+                    .built_bodies
+                    .insert(next, Built::Kept(body.map(Box::new)));
             }
-            let Some(Built::Kept(Some(mir))) = self.bodies.get(&next) else {
+            let Some(Built::Kept(Some(body))) = self.internals.built_bodies.get(&next) else {
                 continue;
             };
-            // A method is called through a table, so each function in one
-            // may run.
-            for id in mir.instructions.ids() {
-                match mir.instructions[id].kind {
-                    mir::InstructionKind::Call {
-                        callee: Callee::Function(function),
-                        ..
-                    } => pending.push(function),
-                    mir::InstructionKind::ToInterface { implementation, .. } => {
-                        let methods = self.types.implementation(implementation).iter();
-                        pending.extend(methods.map(|&definition| FunctionCopy {
-                            definition,
-                            arguments: ConstArguments::NONE,
-                        }));
-                    }
-                    _ => {}
-                }
-            }
+            pending.extend(body.named_functions());
         }
         let module = self.current_module().index();
         let ran = &mut self.module_checks[module].ran_modules;
@@ -281,7 +274,31 @@ impl Checker<'_> {
                 ran.push(copy.definition.module);
             }
         }
-        let mir_of = |copy: FunctionCopy| match self.bodies.get(&copy) {
+        let ty = self.copy_type(function, span);
+        let Type::Function {
+            parameters, result, ..
+        } = &self.types[ty]
+        else {
+            unreachable!("a body is a function's")
+        };
+        let shape = |ty: TypeId| match &self.types[ty] {
+            Type::Bool => ConstantShape::Bool,
+            &Type::Integer(integer) => ConstantShape::Integer {
+                bits: integer.bits,
+                signed: integer.signed,
+            },
+            &Type::Float(float) => ConstantShape::Float(float.class()),
+            Type::RawPointer { .. } => ConstantShape::RawPointer,
+            Type::CString => ConstantShape::CString,
+            Type::Str => ConstantShape::Str,
+            other => ConstantShape::Refused(constant_refusal(other)),
+        };
+        let shaped_arguments: Vec<(&Value, ConstantShape)> = (arguments.iter())
+            .zip(parameters)
+            .map(|(argument, &ty)| (argument, shape(ty)))
+            .collect();
+        let result = shape(*result);
+        let mir_of = |copy: FunctionCopy| match self.internals.built_bodies.get(&copy) {
             Some(Built::Kept(mir)) => mir.as_deref(),
             None | Some(Built::Reported) => None,
         };
@@ -292,8 +309,8 @@ impl Checker<'_> {
                     match eval::interpreter::run_function(
                         function.definition,
                         body,
-                        arguments,
-                        &self.types,
+                        &shaped_arguments,
+                        result,
                         self.target,
                         &mir_of,
                     ) {
@@ -308,14 +325,13 @@ impl Checker<'_> {
                             function,
                             span,
                         }) => (callee, Some((function, span))),
-                        Err(Failure::Exited(_)) => unreachable!("a constant's call cannot exit"),
                     }
                 }
                 None => (function, None),
             };
             // Another copy of a function being checked is no cycle.
-            if let Some(start) =
-                (self.checking.iter()).position(|checking| checking.copy() == callee)
+            if let Some(start) = (self.internals.declarations_being_checked.iter())
+                .position(|checking| checking.copy() == callee)
             {
                 self.report_cycle(start, span);
                 return None;
@@ -347,12 +363,25 @@ impl Checker<'_> {
 }
 
 /// The function `definition`, as written.
-pub(crate) fn function_declaration(
-    modules: &[model::program::Module],
+pub(crate) fn function_declaration<L: Language>(
+    modules: &[model::program::Module<L>],
     definition: DefId,
-) -> &ast::Function {
+) -> &ast::Function<L> {
     match model::program::declaration(modules, definition) {
         ast::Decl::Function(function) => function,
         _ => unreachable!("`{definition:?}` is a function"),
+    }
+}
+
+/// Why a constant cannot hold a value of the type `ty`.
+pub(crate) fn constant_refusal(ty: &Type) -> &'static str {
+    match ty {
+        Type::Struct { .. } => "a constant cannot hold a struct yet",
+        Type::Array { .. } => "a constant cannot hold an array yet",
+        Type::Range { .. } => "a constant cannot hold a range yet",
+        _ if ty.borrows() == Some(true) => {
+            "a constant cannot hold a mutable reference, as all its uses would share one value"
+        }
+        _ => ADDRESS_NOT_KNOWN,
     }
 }

@@ -1,0 +1,6 @@
+type First = Second; //~ error[T0013]: `First` is an alias of itself
+//~ label: `First` is an alias of `Second`
+type Second = First; //~ label: `Second` is an alias of `First`, closing the cycle
+type Itself = Itself; //~ error[T0013]: `Itself` is an alias of itself
+
+fn main() {}

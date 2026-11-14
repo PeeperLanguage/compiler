@@ -16,5 +16,5 @@ fn main() {
     let half: Meters = 21;
     let whole: i32 = double(half);  // a `Distance` is an `i32`
     let home: Origin = Point.{ x = 0, y = whole };
-    println("whole:", whole, "over limit:", whole > Limit, "home:", home);
+    println("whole:", whole, "over limit:", whole > Limit, "home:", home.y);
 }
