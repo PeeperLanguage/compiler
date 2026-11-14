@@ -118,7 +118,7 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
 
     /// The variable that `start`, where a place starts (`place_root`), is
     /// in: its own or a temporary's; `None` for a value in neither.
-    pub(crate) fn start_variable(&self, start: Id<Expr>) -> Option<Id<Variable>> {
+    pub fn start_variable(&self, start: Id<Expr>) -> Option<Id<Variable>> {
         match self.body.exprs[start].kind {
             ExprKind::Variable(variable) | ExprKind::Temporary { variable, .. } => Some(variable),
             _ => None,
@@ -130,7 +130,7 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
     /// written: up to the nearest raw pointer, a shared reference or slice if
     /// any, else the nearest reference, slice or that raw pointer. A slice's
     /// element is behind the slice, as a reference's target is behind it.
-    pub(crate) fn place_root(&self, place: Id<Expr>) -> (Id<Expr>, Option<Id<Expr>>) {
+    pub fn place_root(&self, place: Id<Expr>) -> (Id<Expr>, Option<Id<Expr>>) {
         let pointer = |reference: Id<Expr>| &self.checker.types[self.body.exprs[reference].ty];
         let shared = |reference| pointer(reference).borrows() == Some(false);
         let mut root = place;
@@ -272,7 +272,7 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
     /// `&mut []` itself is not moved. A written `&place` or `&a[i..j]`,
     /// already checked, borrows its place itself as `to`; a slice lends its
     /// own elements.
-    pub(super) fn reborrow(&mut self, reference: Expr, span: Span, to: TypeId) -> Expr {
+    pub fn reborrow(&mut self, reference: Expr, span: Span, to: TypeId) -> Expr {
         let place = match (&reference.kind, &self.checker.types[reference.ty]) {
             (ExprKind::Borrow(_) | ExprKind::Slice { .. }, _) => {
                 return Expr {

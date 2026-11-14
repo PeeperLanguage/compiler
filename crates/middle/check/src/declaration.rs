@@ -42,8 +42,8 @@ const MOST_HOLDERS: usize = 4_096;
 
 impl<L: Checked> Checker<'_, L> {
     /// The type the module's type declaration or alias `definition` declares:
-    /// a feature's (`declare_type`), or the type an alias names. Enums and
-    /// type parameters are not supported yet.
+    /// a feature's (`declare_type`), or the type an alias names. Type
+    /// parameters are not supported yet.
     pub(crate) fn check_type_declaration(&mut self, definition: DefId) -> TypeId {
         let tree = &self.module().ast;
         let (written, is_alias) = match tree.decls[tree.declaration(definition.index)] {
@@ -57,12 +57,10 @@ impl<L: Checked> Checker<'_, L> {
         if is_alias {
             return self.resolve_value_type(written.ty);
         }
-        let what = match tree.types[written.ty] {
-            ast::Type::Feature(ty) => return L::declare_type(self, definition, written, ty),
-            ast::Type::Enum(_) => "enum declarations",
-            _ => unreachable!("the parser gives a type declaration only these types"),
+        let ast::Type::Feature(ty) = tree.types[written.ty] else {
+            unreachable!("the parser gives a type declaration only a feature's type")
         };
-        self.not_supported(written.name.span, what)
+        L::declare_type(self, definition, written, ty)
     }
 
     /// Reports each attribute of the declaration `definition` but an
@@ -672,7 +670,7 @@ impl<L: Checked> Checker<'_, L> {
 
     /// `&target`, or `&mut target` when `mutable` (`element_type`); an
     /// interface reference to an interface.
-    pub(crate) fn reference_type(&mut self, mutable: bool, target: TypeId) -> TypeId {
+    pub fn reference_type(&mut self, mutable: bool, target: TypeId) -> TypeId {
         if self.is_interface(target) {
             return self.types.intern(Type::InterfaceReference {
                 mutable,
@@ -981,7 +979,6 @@ impl<L: Checked> Checker<'_, L> {
                     let resolved = self.resolve_type(target);
                     return self.reference_to(mutable, resolved, tree.types.span(target));
                 }
-                ast::Type::Optional(_) => "optional types",
                 ast::Type::Slice { mutable, element }
                 | ast::Type::Variadic { mutable, element } => {
                     let element = self.resolve_value_type(element);
@@ -991,7 +988,6 @@ impl<L: Checked> Checker<'_, L> {
                     };
                 }
                 ast::Type::Function(_) => "function types",
-                ast::Type::Enum(_) => "enum types",
             };
             self.not_supported(span, what)
         })
@@ -1034,9 +1030,7 @@ fn names_type_parameter<L: Language>(
         } => names_type_parameter(tree, written, parameters),
         ast::Type::Path(_)
         | ast::Type::Generic { .. }
-        | ast::Type::Optional(_)
         | ast::Type::Function(_)
-        | ast::Type::Enum(_)
         | ast::Type::Owner
         | ast::Type::Type
         | ast::Type::Invalid => false,

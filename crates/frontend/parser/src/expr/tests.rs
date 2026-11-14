@@ -82,15 +82,6 @@ fn grouped(t: &Tree<Bare>, id: Id<Expr<Bare>>) -> String {
                 grouped(t, right)
             )
         }
-        Expr::Is { value, case } => {
-            format!("({} is {})", grouped(t, value), text(t.types.span(case)))
-        }
-        Expr::OrElse { value, fallback } => {
-            format!("({} orelse {})", grouped(t, value), grouped(t, fallback))
-        }
-        Expr::Pipe { value, call } => {
-            format!("({} |> {})", grouped(t, value), grouped(t, call))
-        }
         Expr::Unary { value, .. } | Expr::Reference { value, .. } => {
             let (span, inner) = (t.exprs.span(id), t.exprs.span(value));
             let prefix = t.file.text[span.start as usize..inner.start as usize].trim();
@@ -141,11 +132,6 @@ fn precedence() {
         ("-a.b(c)[d]", "-a.b(c)[d]"),
         ("!a && b", "(!a && b)"),
         ("&mut a + b", "(&mut a + b)"),
-        ("a is E::B && c", "((a is E::B) && c)"),
-        ("a orelse b orelse c", "(a orelse (b orelse c))"),
-        ("a || b orelse c", "((a || b) orelse c)"),
-        ("a |> f(b) |> g()", "((a |> f(b)) |> g())"),
-        ("a + b |> f()", "((a + b) |> f())"),
         ("x.y.z[0][i]", "x.y.z[0][i]"),
         ("-r.* * r.x.*", "(-r.* * r.x.*)"),
         ("&mut r.*.x", "&mut r.*.x"),
@@ -159,12 +145,10 @@ fn precedence() {
 #[test]
 fn parses_expressions() {
     let text = r#"fn f() {
-    'x';
-    b'y';
     none;
-    Shape::Line with Box<i32>::new(1);
+    Box<i32>::new(1);
     sum(1, (a)..., &mut b...);
-    println(items[n]);
+    items[n];
 }
 "#;
     let want = r#"module
@@ -172,23 +156,15 @@ fn parses_expressions() {
     declared name f
     block
       expression statement
-        character literal 'x'
-      expression statement
-        character literal byte character b'y'
-      expression statement
         none literal none
       expression statement
-        variant literal
+        call expression
           path
-            type name Shape
-            type name Line
-          call expression
-            path
-              generic type
-                type name Box
-                type name i32
-              type name new
-            number literal 1
+            generic type
+              type name Box
+              type name i32
+            type name new
+          number literal 1
       expression statement
         call expression
           name reference sum
@@ -200,10 +176,9 @@ fn parses_expressions() {
             reference expression mut
               name reference b
       expression statement
-        print expression println
-          index expression
-            name reference items
-            name reference n
+        index expression
+          name reference items
+          name reference n
 "#;
     assert!(messages(text).is_empty());
     assert_eq!(dump_of(text), want);
@@ -211,14 +186,7 @@ fn parses_expressions() {
 
 #[test]
 fn expression_errors() {
-    for (text, message) in [
-        ("a is b;", "enum case must use a fully named path"),
-        ("a |> b;", "pipe target must be a free-function call"),
-        ("a |> b.c();", "pipe cannot call a method"),
-        ("a.;", "expected `identifier`, found `;`"),
-    ] {
-        one_error(&format!("fn f() {{ {text} }}"), message, None);
-    }
+    one_error("fn f() { a.; }", "expected `identifier`, found `;`", None);
 }
 
 /// Values after a slice type are an array's, lent: `&[_]i32{ 1, 2 }`.

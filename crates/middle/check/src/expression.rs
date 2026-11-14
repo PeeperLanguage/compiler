@@ -270,13 +270,6 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
                     self.check_reference(mutable, value, span, expected)
                 }
                 ast::Expr::None => self.check_none(span, expected),
-                ast::Expr::Print { newline, values } => self.check_print(newline, values),
-                ast::Expr::Char { .. } => self.unsupported_expr(span, "character literals"),
-                ast::Expr::VariantLiteral { .. } => self.unsupported_expr(span, "variant literals"),
-                ast::Expr::Is { .. } => self.unsupported_expr(span, "`is` tests"),
-                ast::Expr::OrElse { .. } => self.unsupported_expr(span, "`orelse` fallbacks"),
-                ast::Expr::Block(_) => self.unsupported_expr(span, "block expressions"),
-                ast::Expr::Pipe { .. } => self.unsupported_expr(span, "pipes"),
             }
         })
     }
@@ -321,13 +314,6 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
             return Expr::INVALID;
         }
         self.check_borrow(mutable, place)
-    }
-
-    /// An expression of a kind that `what` names, at `span`, which no check
-    /// exists for yet.
-    fn unsupported_expr(&mut self, span: Span, what: &str) -> Expr {
-        self.checker.not_supported(span, what);
-        Expr::INVALID
     }
 
     /// `checked`, from `expression`, as a value of the type `ty` (`coerce`);

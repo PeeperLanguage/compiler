@@ -57,6 +57,14 @@ pub trait Checked: Language {
         expected: Option<TypeId>,
     ) -> thir::Expr;
 
+    /// The feature statement `stmt`, written at `span`; `None` when it
+    /// leaves no statement, after an error.
+    fn check_stmt(
+        builder: &mut ThirBuilder<'_, '_, Self>,
+        stmt: Self::Stmt,
+        span: Span,
+    ) -> Option<thir::Stmt>;
+
     /// The type the feature type `ty`, written at `span`, names.
     fn resolve_type(checker: &mut Checker<'_, Self>, ty: Self::Type, span: Span) -> TypeId;
 

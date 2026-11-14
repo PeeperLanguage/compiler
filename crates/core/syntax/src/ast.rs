@@ -29,6 +29,8 @@ pub trait Language: Copy + Debug + 'static {
     type Expr: Copy + Debug + Send + Sync;
     /// A feature's written type.
     type Type: Copy + Debug + Send + Sync;
+    /// A feature's statement.
+    type Stmt: Copy + Debug + Send + Sync;
 
     /// The precedence the feature expression `expr`'s last part was read at
     /// (`Expr::precedence`).
@@ -251,9 +253,8 @@ pub enum Decl<L: Language> {
         ty: Option<Id<Type<L>>>,
         value: Option<Id<Expr<L>>>,
     },
-    /// `enum Name<T> { variants }` or a feature's, such as
-    /// `struct Name<T> { fields }` or `iface Name<T> { methods }`; its type,
-    /// a `Type::Enum` or `Type::Feature`, says which
+    /// a feature's, such as `struct Name<T> { fields }` or
+    /// `iface Name<T> { methods }`; its type, a `Type::Feature`, says which
     Type(TypeDecl<L>),
     /// `type Name<T> = Type;`
     Alias(TypeDecl<L>),
@@ -355,8 +356,6 @@ pub enum Type<L: Language> {
     Bracketed { name: Ident, inner: Id<Type<L>> },
     /// `&T` or `&mut T`
     Reference { mutable: bool, target: Id<Type<L>> },
-    /// `?T`
-    Optional(Id<Type<L>>),
     /// `&[]T`, or `&mut []T` when `mutable`
     Slice { mutable: bool, element: Id<Type<L>> },
     /// `...T`, or `...mut T` when `mutable`: a variadic parameter's type, the
@@ -364,8 +363,6 @@ pub enum Type<L: Language> {
     Variadic { mutable: bool, element: Id<Type<L>> },
     /// `fn(T) -> R in a`
     Function(Signature<L>),
-    /// `enum { variants }`
-    Enum(List<Variant<L>>),
     /// The type the function belongs to, `Point` in `fn Point::sum(&self)`;
     /// in an interface, the type that meets it. Only `self` has it.
     Owner,
@@ -396,8 +393,8 @@ pub enum Stmt<L: Language> {
     /// a `Decl::Const`
     Const(Id<Decl<L>>),
     Return(Option<Id<Expr<L>>>),
-    /// `panic message;`
-    Panic(Id<Expr<L>>),
+    /// a feature's statement
+    Feature(L::Stmt),
     /// an expression followed by `;`
     Expression(Id<Expr<L>>),
     /// `target = value;`
@@ -433,11 +430,6 @@ pub enum Stmt<L: Language> {
     },
     Break,
     Continue,
-    /// `match subject { arms }`
-    Match {
-        subject: Id<Expr<L>>,
-        arms: List<MatchArm<L>>,
-    },
 }
 
 /// `pattern => { }`; the pattern is a `Pattern::Wildcard` or a `Pattern::Case`.
@@ -483,8 +475,6 @@ pub enum Expr<L: Language> {
     Path(Id<Type<L>>),
     /// the number is its text
     Number,
-    /// `'x'`, or `b'x'` when `byte`; `literal::value` decodes the text
-    Char { byte: bool },
     /// `none`
     None,
     /// `left op right`
@@ -497,11 +487,6 @@ pub enum Expr<L: Language> {
     Unary { op: UnaryOp, value: Id<Expr<L>> },
     /// `&x` or `&mut x`
     Reference { mutable: bool, value: Id<Expr<L>> },
-    /// `print(values)`, or `println(values)` when `newline`
-    Print {
-        newline: bool,
-        values: List<Expr<L>>,
-    },
     /// `f(arguments)`
     Call {
         callee: Id<Expr<L>>,
@@ -516,31 +501,9 @@ pub enum Expr<L: Language> {
         value: Id<Expr<L>>,
         index: Id<Expr<L>>,
     },
-    /// `Enum::Variant with payload`; the case is a `Type::Path`
-    VariantLiteral {
-        case: Id<Type<L>>,
-        payload: Id<Expr<L>>,
-    },
     /// `values...`, an entry of an array literal or an argument of a call:
     /// each value of the array, slice or range `values` in order
     Spread(Id<Expr<L>>),
-    /// `x is Enum::Variant`
-    Is {
-        value: Id<Expr<L>>,
-        case: Id<Type<L>>,
-    },
-    /// `x orelse fallback`; the fallback may be a `Block`
-    OrElse {
-        value: Id<Expr<L>>,
-        fallback: Id<Expr<L>>,
-    },
-    /// a block as an `orelse` fallback
-    Block(Id<Block<L>>),
-    /// `x |> f(arguments)`, kept as written; the call is a `Call`
-    Pipe {
-        value: Id<Expr<L>>,
-        call: Id<Expr<L>>,
-    },
     /// `( expression )`
     Parentheses(Id<Expr<L>>),
     /// a type where a value could go, written so it can only be a type
@@ -560,23 +523,16 @@ impl<L: Language> Expr<L> {
     pub fn precedence(&self) -> Precedence {
         match self {
             Expr::Binary { op, .. } => op.precedence(),
-            // A pipe reads its call at prefix precedence.
-            Expr::Unary { .. } | Expr::Reference { .. } | Expr::Pipe { .. } => Precedence::Prefix,
-            Expr::Is { .. } => Precedence::Equality,
-            // These end in an expression read at the lowest precedence.
-            Expr::OrElse { .. } | Expr::VariantLiteral { .. } => Precedence::Lowest,
+            Expr::Unary { .. } | Expr::Reference { .. } => Precedence::Prefix,
             Expr::Name
             | Expr::Path(_)
             | Expr::Number
-            | Expr::Char { .. }
             | Expr::None
-            | Expr::Print { .. }
             | Expr::Call { .. }
             | Expr::Selector { .. }
             | Expr::Dereference(_)
             | Expr::Index { .. }
             | Expr::Spread(_)
-            | Expr::Block(_)
             | Expr::Parentheses(_)
             | Expr::Type(_)
             | Expr::Invalid => Precedence::Call,

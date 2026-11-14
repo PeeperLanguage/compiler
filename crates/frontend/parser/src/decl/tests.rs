@@ -76,7 +76,7 @@ fn Counter::Get(&self) {}
 fn Counter::Into(self) {}
 fn Counter::Doubled(mut self) {}
 fn exit(code: i32);
-fn Use(callback: fn(value: &Box, i32) -> &Box in value, view: &[]u8, edit: &mut []u8) -> ?a::Box<Box<T>>;
+fn Use(callback: fn(value: &Box, i32) -> &Box in value, view: &[]u8, edit: &mut []u8) -> a::Box<Box<T>>;
 ";
     let want = "module
   function declaration
@@ -152,14 +152,13 @@ fn Use(callback: fn(value: &Box, i32) -> &Box in value, view: &[]u8, edit: &mut 
       declared name edit
       slice type mut
         type name u8
-    optional type
-      path
-        type name a
+    path
+      type name a
+      generic type
+        type name Box
         generic type
           type name Box
-          generic type
-            type name Box
-            type name T
+          type name T
 ";
     assert!(messages(text).is_empty());
     assert_eq!(dump_of(text), want);
@@ -199,8 +198,7 @@ const Answer: i32 = 42;
 const Untyped = 1;
 #[extern(rt_exit)]
 fn exit(code: i32);
-enum Status { Ready, Waiting: Pair<i32>, }
-type Alias<T> = ?T;
+type Alias<T> = T;
 fn Pair::new() {}
 "#;
     let want = r#"module
@@ -223,21 +221,10 @@ fn Pair::new() {}
     parameter
       declared name code
       type name i32
-  enum declaration
-    declared name Status
-    enum type
-      variant
-        declared name Ready
-      variant
-        declared name Waiting
-        generic type
-          type name Pair
-          type name i32
   type alias declaration
     declared name Alias
     declared name T
-    optional type
-      type name T
+    type name T
   function declaration
     owner type Pair
     declared name new
@@ -258,7 +245,6 @@ fn declaration_errors() {
         ),
         ("fn (p: Point) f() {}", "expected `identifier`, found `(`"),
         ("type A i32;", "expected `=`, found `identifier`"),
-        ("enum E { A B }", "expected `,`"),
     ] {
         one_error(text, message, None);
     }

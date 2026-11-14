@@ -4,7 +4,6 @@ use arena::Id;
 use diagnostics::Diagnostic;
 use syntax::ast::Expr;
 use token::Token;
-use token::TokenKind;
 
 use crate::Grammar;
 use crate::Parser;
@@ -35,12 +34,6 @@ impl<L: Grammar> Parser<L> {
             ),
         );
     }
-}
-
-/// Reads `'x'` or `b'x'`.
-pub(crate) fn character_literal<L: Grammar>(p: &mut Parser<L>) -> Id<Expr<L>> {
-    let byte = p.is_either(TokenKind::ByteChar, TokenKind::Char);
-    p.leaf(Expr::Char { byte })
 }
 
 /// Reads `none`.

@@ -1,4 +1,4 @@
-//! Types: names and paths, references, optionals, arrays, function types, and the
+//! Types: names and paths, references, slices, function types, and the
 //! types a keyword begins, as the enum type of a type declaration.
 
 use arena::Id;
@@ -7,35 +7,22 @@ use diagnostics::Diagnostic;
 use source::Span;
 use syntax::ast::Param;
 use syntax::ast::Type;
-use syntax::ast::Variant;
 use token::Token;
 use token::TokenKind;
 
 use crate::Grammar;
 use crate::Parser;
-use crate::Rules;
-use crate::is_name;
 
 /// Reads the type a token begins, after the token, as one starting at
 /// `start`.
 pub type TypeStartRule<L> = fn(&mut Parser<L>, u32) -> Id<Type<L>>;
-
-/// Adds the core's types a token begins to `rules`.
-pub(crate) const fn type_start_rows<L: Grammar>(rules: &mut Rules<L>) {
-    rules.type_start(TokenKind::Enum, Parser::enum_type);
-}
 
 /// Whether `kind` begins one of the types `Parser::type_expr` has an arm
 /// for, so a new arm there is added here too.
 pub(crate) const fn starts_core_type(kind: TokenKind) -> bool {
     matches!(
         kind,
-        TokenKind::Ident
-            | TokenKind::Ampersand
-            | TokenKind::AndAnd
-            | TokenKind::Question
-            | TokenKind::QuestionQuestion
-            | TokenKind::Fn
+        TokenKind::Ident | TokenKind::Ampersand | TokenKind::AndAnd | TokenKind::Fn
     )
 }
 
@@ -69,7 +56,6 @@ impl<L: Grammar> Parser<L> {
                     let mutable = false;
                     self.add(t.span.start, Type::Reference { mutable, target })
                 }
-                TokenKind::Question | TokenKind::QuestionQuestion => self.optional_type(),
                 TokenKind::Fn => self.function_type(),
                 _ => {
                     if let Some(read) = L::rules().type_starts[t.kind as usize] {
@@ -161,24 +147,6 @@ impl<L: Grammar> Parser<L> {
         self.close(TokenKind::Greater, open);
     }
 
-    /// Reads `?T`. A second marker changes nothing (`??T` is `?T`); it is kept
-    /// in the tree as written and left to a lint to report.
-    fn optional_type(&mut self) -> Id<Type<L>> {
-        let mut markers = Vec::new(); // where each `?` starts; `??` is one token holding two
-        while self.at(TokenKind::Question) || self.at(TokenKind::QuestionQuestion) {
-            let t = self.next();
-            markers.push(t.span.start);
-            if t.kind == TokenKind::QuestionQuestion {
-                markers.push(t.span.start + 1);
-            }
-        }
-        let mut inner = self.type_expr();
-        for &start in markers.iter().rev() {
-            inner = self.add(start, Type::Optional(inner));
-        }
-        inner
-    }
-
     /// Reads `fn(name: T, U) -> R in name`; parameter names are optional.
     fn function_type(&mut self) -> Id<Type<L>> {
         let start = self.next().span.start;
@@ -202,26 +170,5 @@ impl<L: Grammar> Parser<L> {
             },
         );
         self.add(start, Type::Function(signature))
-    }
-
-    /// Reads `{ Name, Name: Payload, ... }`, the variants of an enum type that
-    /// starts at `start`.
-    fn enum_type(&mut self, start: u32) -> Id<Type<L>> {
-        let variants = self.delimited(
-            TokenKind::LeftBrace,
-            TokenKind::RightBrace,
-            true,
-            is_name,
-            |p| {
-                let start = p.tok().span.start;
-                let name = p.name();
-                let payload = p.at(TokenKind::Colon).then(|| {
-                    p.next();
-                    p.type_expr()
-                });
-                p.add(start, Variant { name, payload })
-            },
-        );
-        self.add(start, Type::Enum(variants))
     }
 }

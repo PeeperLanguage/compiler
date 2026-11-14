@@ -8,6 +8,7 @@ use source::SourceFile;
 use syntax::ast;
 
 use super::*;
+use crate::pipes::Pipe;
 use crate::testing::Tree;
 
 /// The expression `id` with each cast and operation that holds a cast in
@@ -30,7 +31,7 @@ fn grouped(tree: &Tree, id: Id<ast::Expr<Peeper>>) -> String {
                 grouped(tree, right)
             )
         }
-        ast::Expr::Pipe { value, call } => {
+        ast::Expr::Feature(FeatureExpr::Pipe(Pipe { value, call })) => {
             format!("({} |> {})", grouped(tree, value), grouped(tree, call))
         }
         _ => text(tree.exprs.span(id)),

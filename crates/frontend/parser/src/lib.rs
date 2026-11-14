@@ -93,8 +93,16 @@ impl<L: Grammar> Rules<L> {
         expr::expression_rows(&mut rules);
         stmt::statement_rows(&mut rules.statements);
         decl::declaration_rows(&mut rules);
-        types::type_start_rows(&mut rules);
         rules
+    }
+
+    /// Reads the statement the keyword `kind` begins with `read`.
+    pub const fn statement(&mut self, kind: TokenKind, read: StatementRule<L>) {
+        assert!(
+            self.statements[kind as usize].is_none(),
+            "two rules begin a statement with one token"
+        );
+        self.statements[kind as usize] = Some(read);
     }
 
     /// Reads the declaration `kind` begins with `read`.
@@ -182,21 +190,6 @@ impl<L: Grammar> Parser<L> {
         self.tok().kind == kind
     }
 
-    /// Whether the current token is `yes`; it must be `yes` or `no`, as for a
-    /// rule registered for those two kinds only.
-    fn is_either(&self, yes: TokenKind, no: TokenKind) -> bool {
-        match self.tok().kind {
-            kind if kind == yes => true,
-            kind if kind == no => false,
-            kind => unreachable!(
-                "expected `{}` or `{}`, found `{}`",
-                yes.text(),
-                no.text(),
-                kind.text()
-            ),
-        }
-    }
-
     /// The token `n` tokens after the current one, or the end of file past the
     /// end.
     pub fn ahead(&self, mut n: usize) -> Token {
@@ -226,7 +219,7 @@ impl<L: Grammar> Parser<L> {
     }
 
     /// An empty span at the end of what was read.
-    fn here(&self) -> Span {
+    pub fn here(&self) -> Span {
         Span::at(self.last_end as usize)
     }
 
@@ -372,7 +365,7 @@ impl<L: Grammar> Parser<L> {
     /// to a `}` closing the current block, a keyword that starts a statement, or
     /// the end of file. Brackets opened on the way are skipped whole, and a stray
     /// closing `)` or `]` is skipped. Passing a `;` puts the parser in step again.
-    fn sync(&mut self) {
+    pub fn sync(&mut self) {
         let mut depth = 0usize;
         while !self.at(TokenKind::Eof) {
             match self.tok().kind {
@@ -548,7 +541,7 @@ impl<L: Grammar> Parser<L> {
     /// again. A `;` missing at the end of a line, before what starts the next
     /// statement or closes the block, is read as if it were there: nothing
     /// needs skipping. Otherwise the parser skips to where parsing can go on.
-    fn end(&mut self) {
+    pub fn end(&mut self) {
         if self.at(TokenKind::Semicolon) {
             self.next();
             self.recovering = false;

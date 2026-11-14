@@ -36,7 +36,6 @@ pub type DeclarationRule<L> = fn(&mut Parser<L>, Metadata<L>) -> Id<Decl<L>>;
 pub(crate) const fn declaration_rows<L: Grammar>(rules: &mut Rules<L>) {
     rules.declaration(TokenKind::Fn, function_decl);
     rules.declaration(TokenKind::Const, const_decl);
-    rules.declaration(TokenKind::Enum, type_decl);
     rules.declaration(TokenKind::Type, type_decl);
 }
 

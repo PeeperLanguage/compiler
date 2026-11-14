@@ -5,9 +5,7 @@ use arena::List;
 use diagnostics::Diagnostic;
 use syntax::ast::Block;
 use syntax::ast::Expr;
-use syntax::ast::MatchArm;
 use syntax::ast::Metadata;
-use syntax::ast::Pattern;
 use syntax::ast::Stmt;
 use syntax::operators::BinaryOp;
 use syntax::operators::Precedence;
@@ -21,7 +19,7 @@ use crate::expr::starts_expression;
 use crate::starts_statement;
 
 /// Reads the statement the current keyword begins.
-pub(crate) type StatementRule<L> = fn(&mut Parser<L>) -> Id<Stmt<L>>;
+pub type StatementRule<L> = fn(&mut Parser<L>) -> Id<Stmt<L>>;
 
 /// The reader of each statement a keyword begins, indexed by token kind; any
 /// other token begins an expression statement.
@@ -33,17 +31,10 @@ pub(crate) const fn statement_rows<L: Grammar>(statements: &mut [Option<Statemen
         p.tree.add(Stmt::Const(decl), span)
     });
     statements[TokenKind::Return as usize] = Some(return_statement);
-    statements[TokenKind::Panic as usize] = Some(|p| {
-        let start = p.next().span.start;
-        let message = p.expr(Precedence::Lowest);
-        p.end();
-        p.add(start, Stmt::Panic(message))
-    });
     statements[TokenKind::If as usize] = Some(if_statement);
     statements[TokenKind::For as usize] = Some(for_statement);
     statements[TokenKind::Break as usize] = Some(jump_statement);
     statements[TokenKind::Continue as usize] = Some(jump_statement);
-    statements[TokenKind::Match as usize] = Some(match_statement);
     statements[TokenKind::LeftBrace as usize] = Some(|p| {
         let block = p.block();
         p.block_statement(block)
@@ -59,7 +50,7 @@ impl<L: Grammar> Parser<L> {
     /// Reads a block. A keyword that begins a declaration but not a statement
     /// means its `}` is missing: the block ends there and the declaration is
     /// read next.
-    pub(crate) fn block(&mut self) -> Id<Block<L>> {
+    pub fn block(&mut self) -> Id<Block<L>> {
         let Some(open) = self.expect(TokenKind::LeftBrace) else {
             return self.add(
                 self.last_end,
@@ -137,33 +128,6 @@ impl<L: Grammar> Parser<L> {
             ),
         );
         None
-    }
-
-    /// Reads one arm's pattern, its `=>` and its block. A missing `=>` before
-    /// the block is read as if it were there.
-    fn match_arm(&mut self) -> (Id<Pattern<L>>, Id<Block<L>>) {
-        let t = self.tok();
-        let pattern = if t.kind == TokenKind::Underscore {
-            let start = self.next().span.start;
-            self.add(start, Pattern::Wildcard)
-        } else {
-            self.case_pattern()
-        };
-        if self.at(TokenKind::LeftBrace) {
-            let at = self.here();
-            let fix = self.fix(at, " =>");
-            self.repair(
-                Diagnostic::new(
-                    diagnostics::EXPECTED_TOKEN,
-                    "expected `=>` after match case",
-                )
-                .label(&self.tree.file, at, "")
-                .help("add missing `=>`", vec![fix]),
-            );
-        } else if self.expect(TokenKind::FatArrow).is_none() {
-            self.sync();
-        }
-        (pattern, self.block())
     }
 }
 
@@ -322,38 +286,6 @@ fn jump_statement<L: Grammar>(p: &mut Parser<L>) -> Id<Stmt<L>> {
         Stmt::Break
     };
     p.add(keyword.span.start, node)
-}
-
-/// Reads `match subject { arms }`. An arm is `_ => { }`, `Enum::Case => { }`
-/// or `Enum::Case with pattern => { }`; arms are not separated by commas.
-fn match_statement<L: Grammar>(p: &mut Parser<L>) -> Id<Stmt<L>> {
-    let start = p.next().span.start;
-    let subject = p.expr(Precedence::Lowest);
-    let mut arms = List::EMPTY;
-    if let Some(open) = p.expect(TokenKind::LeftBrace) {
-        let mark = p.list_items.len();
-        // Every arm begins with `_` or a path and reads at least it, so the
-        // loop always moves on.
-        while p.at(TokenKind::Underscore) || p.at(TokenKind::Ident) {
-            let arm_start = p.tok().span.start;
-            let (pattern, body) = p.match_arm();
-            let arm = p.add(arm_start, MatchArm { pattern, body });
-            p.list_items.push(arm.into());
-            let t = p.tok();
-            if t.kind == TokenKind::Comma {
-                p.next();
-                let fix = p.fix(t.span, "");
-                p.repair(
-                    Diagnostic::new(diagnostics::EXPECTED_TOKEN, "match arms do not use commas")
-                        .label(&p.tree.file, t.span, "")
-                        .help("remove this comma", vec![fix]),
-                );
-            }
-        }
-        arms = p.finish_list(mark);
-        p.close(TokenKind::RightBrace, open);
-    }
-    p.add(start, Stmt::Match { subject, arms })
 }
 
 /// Reads `return value;`; the value may be left out, so a token that cannot

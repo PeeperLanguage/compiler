@@ -28,14 +28,6 @@ fn parses_statements() {
     for i, item in items { }
     for n { }
     for v in values { }
-    match shape {
-        Shape::Dot => { }
-        Shape::Line with .{ end } => { }
-        Shape::Maybe with none => { }
-        Shape::Wrap with Inner::Leaf with value => { }
-        _ => { }
-    }
-    panic message;
     { }
 }
 ";
@@ -100,46 +92,6 @@ fn parses_statements() {
         declared name v
         name reference values
         block { }
-      match statement
-        name reference shape
-        match arm
-          case pattern
-            path
-              type name Shape
-              type name Dot
-          block { }
-        match arm
-          case pattern
-            path
-              type name Shape
-              type name Line
-            struct pattern
-              field pattern
-                field name end
-          block { }
-        match arm
-          case pattern
-            path
-              type name Shape
-              type name Maybe
-            none pattern none
-          block { }
-        match arm
-          case pattern
-            path
-              type name Shape
-              type name Wrap
-            case pattern
-              path
-                type name Inner
-                type name Leaf
-              declared name value
-          block { }
-        match arm
-          wildcard pattern _
-          block { }
-      panic statement
-        name reference message
       block { }
 ";
     assert!(messages(text).is_empty());
@@ -180,26 +132,6 @@ fn statement_errors() {
         ("for x in items", "missing for body", None),
         ("for a.b in x {}", "invalid loop variable", None),
         ("break outer;", "labeled break is not supported yet", None),
-        (
-            "match x { A::B {} }",
-            "expected `=>` after match case",
-            Some("match x { A::B => {} }"),
-        ),
-        (
-            "match x { A::B => {}, _ => {} }",
-            "match arms do not use commas",
-            Some("match x { A::B => {} _ => {} }"),
-        ),
-        (
-            "match x { a => {} }",
-            "enum case must use a fully named path",
-            None,
-        ),
-        (
-            "match x { A::B with => {} }",
-            "expected a pattern after `with`",
-            None,
-        ),
         (
             "let .{ a = b } = v;",
             "a destructure field is renamed with `as`",

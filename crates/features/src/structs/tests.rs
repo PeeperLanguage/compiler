@@ -7,6 +7,7 @@ use source::Span;
 use syntax::ast;
 
 use super::*;
+use crate::enums::VariantLiteral;
 use crate::testing::Tree;
 use crate::testing::messages;
 use crate::testing::parse_text;
@@ -120,7 +121,9 @@ fn parses_expressions() {
         literal(&tree, found[1]),
         (None, vec!["a = &mut v".into(), "b = !flag".into()])
     );
-    let ast::Expr::VariantLiteral { case, payload } = tree.exprs[found[2]] else {
+    let ast::Expr::Feature(FeatureExpr::VariantLiteral(VariantLiteral { case, payload })) =
+        tree.exprs[found[2]]
+    else {
         panic!("not a variant literal")
     };
     assert_eq!(written(&tree, tree.types.span(case)), "Shape::Line");

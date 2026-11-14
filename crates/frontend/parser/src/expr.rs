@@ -18,7 +18,6 @@ use token::TokenKind;
 use crate::Grammar;
 use crate::Parser;
 use crate::Rules;
-use crate::literals::character_literal;
 use crate::literals::none_literal;
 use crate::literals::number_literal;
 
@@ -68,23 +67,15 @@ pub(crate) const fn expression_rows<L: Grammar>(rules: &mut Rules<L>) {
     rules.prefix(TokenKind::Ident, name_or_path);
     rules.prefix(TokenKind::SelfValue, self_name);
     rules.prefix(TokenKind::Number, number_literal);
-    rules.prefix(TokenKind::Char, character_literal);
-    rules.prefix(TokenKind::ByteChar, character_literal);
     rules.prefix(TokenKind::None, none_literal);
     rules.prefix(TokenKind::LeftParen, parentheses);
 
-    // prefix operators and built-in calls
+    // prefix operators
     rules.prefix(TokenKind::Plus, leading_plus);
     rules.prefix(TokenKind::Minus, unary);
     rules.prefix(TokenKind::Bang, unary);
     rules.prefix(TokenKind::Tilde, unary);
     rules.prefix(TokenKind::Ampersand, reference);
-    rules.prefix(TokenKind::Print, print);
-    rules.prefix(TokenKind::Println, print);
-
-    // ranges, fallback and pipe
-    rules.infix(TokenKind::Orelse, Precedence::OrElse, or_else);
-    rules.infix(TokenKind::PipeArrow, Precedence::Pipe, pipe);
 
     // logical
     rules.binary_operator(TokenKind::OrOr, BinaryOp::LogicalOr);
@@ -98,7 +89,6 @@ pub(crate) const fn expression_rows<L: Grammar>(rules: &mut Rules<L>) {
     // equality and comparison
     rules.binary_operator(TokenKind::EqualEqual, BinaryOp::EqualTo);
     rules.binary_operator(TokenKind::BangEqual, BinaryOp::NotEqualTo);
-    rules.infix(TokenKind::Is, Precedence::Equality, case_test);
     rules.binary_operator(TokenKind::Less, BinaryOp::LessThan);
     rules.binary_operator(TokenKind::LessEqual, BinaryOp::LessOrEqual);
     rules.binary_operator(TokenKind::Greater, BinaryOp::GreaterThan);
@@ -206,31 +196,16 @@ impl<L: Grammar> Parser<L> {
         }
         false
     }
-
-    /// Reports `case` unless it is a full path `Enum::Case` (or a type already
-    /// reported as invalid).
-    pub(crate) fn require_path(&mut self, case: Id<Type<L>>) {
-        if !matches!(self.tree.types[case], Type::Path(_) | Type::Invalid) {
-            let span = self.tree.types.span(case);
-            self.repair(
-                Diagnostic::new(
-                    diagnostics::INVALID_EXPRESSION,
-                    "enum case must use a fully named path",
-                )
-                .label(&self.tree.file, span, "write `Enum::Variant`"),
-            );
-        }
-    }
 }
 
-/// Reads a name; or, when a path or type arguments follow it, a path
-/// (`a::B`, `Box<T>::new`), a struct literal (`Point.{...}`) or a variant
-/// literal (`Enum::Case with payload`).
 /// Reads `self`, the name of a type's function's first parameter.
 fn self_name<L: Grammar>(p: &mut Parser<L>) -> Id<Expr<L>> {
     p.leaf(Expr::Name)
 }
 
+/// Reads a name; or, when a path or type arguments follow it, a path
+/// (`a::B`, `Box<T>::new`) or what a feature reads after one
+/// (`Point.{...}`).
 fn name_or_path<L: Grammar>(p: &mut Parser<L>) -> Id<Expr<L>> {
     if !p.starts_path() {
         return p.leaf(Expr::Name);
@@ -239,17 +214,6 @@ fn name_or_path<L: Grammar>(p: &mut Parser<L>) -> Id<Expr<L>> {
     let start = p.tree.types.span(path).start;
     if let Some(read) = L::rules().after_path_rule(p.tok().kind, p.ahead(1).kind) {
         return read(p, path);
-    }
-    if p.at(TokenKind::With) && matches!(p.tree.types[path], Type::Path(_)) {
-        p.next();
-        let payload = p.expr(Precedence::Lowest);
-        return p.add(
-            start,
-            Expr::VariantLiteral {
-                case: path,
-                payload,
-            },
-        );
     }
     p.add(start, Expr::Path(path))
 }
@@ -359,23 +323,6 @@ fn reference<L: Grammar>(p: &mut Parser<L>) -> Id<Expr<L>> {
     p.add(start, Expr::Reference { mutable, value })
 }
 
-/// Reads `print(values)` or `println(values)`, which take any number of
-/// values.
-fn print<L: Grammar>(p: &mut Parser<L>) -> Id<Expr<L>> {
-    let keyword = p.next();
-    let node = Expr::Print {
-        newline: keyword.kind == TokenKind::Println,
-        values: p.delimited(
-            TokenKind::LeftParen,
-            TokenKind::RightParen,
-            false,
-            starts_expression::<L>,
-            |p| p.expr(Precedence::Lowest),
-        ),
-    };
-    p.add(keyword.span.start, node)
-}
-
 /// Reads `[index]` after `value`.
 fn index<L: Grammar>(p: &mut Parser<L>, value: Id<Expr<L>>) -> Id<Expr<L>> {
     let open = p.next();
@@ -393,57 +340,6 @@ fn selector<L: Grammar>(p: &mut Parser<L>, value: Id<Expr<L>>) -> Id<Expr<L>> {
     }
     let field = p.name();
     p.add(p.start_of(value), Expr::Selector { value, field })
-}
-
-/// Reads `is Enum::Case` after `value`; the case is a full path.
-fn case_test<L: Grammar>(p: &mut Parser<L>, value: Id<Expr<L>>) -> Id<Expr<L>> {
-    p.next();
-    let case = p.type_expr();
-    p.require_path(case);
-    p.add(p.start_of(value), Expr::Is { value, case })
-}
-
-/// Reads `orelse fallback` or `orelse { block }` after `value`. The fallback
-/// may itself end in `orelse`: a orelse b orelse c is a orelse (b orelse c).
-fn or_else<L: Grammar>(p: &mut Parser<L>, value: Id<Expr<L>>) -> Id<Expr<L>> {
-    p.next();
-    let fallback = if p.at(TokenKind::LeftBrace) {
-        let block = p.block();
-        let span = p.tree.blocks.span(block);
-        p.tree.add(Expr::Block(block), span)
-    } else {
-        p.expr(Precedence::Lowest) // one below OrElse: groups to the right
-    };
-    p.add(p.start_of(value), Expr::OrElse { value, fallback })
-}
-
-/// Reads `|> f(arguments)` after `value`. Its right side takes only what
-/// binds tighter than a prefix operator, a call, so `a |> len() as i32` is
-/// (a |> len()) as i32. The target must call a function, not a method.
-fn pipe<L: Grammar>(p: &mut Parser<L>, value: Id<Expr<L>>) -> Id<Expr<L>> {
-    p.next();
-    let call = p.expr(Precedence::Prefix);
-    match p.tree.exprs[call] {
-        Expr::Call { callee, .. } if matches!(p.tree.exprs[callee], Expr::Selector { .. }) => {
-            let span = p.tree.exprs.span(callee);
-            p.repair(
-                Diagnostic::new(diagnostics::INVALID_EXPRESSION, "pipe cannot call a method")
-                    .label(&p.tree.file, span, "use `value.method(...)`"),
-            );
-        }
-        Expr::Call { .. } => {}
-        _ => {
-            let span = p.tree.exprs.span(call);
-            p.repair(
-                Diagnostic::new(
-                    diagnostics::INVALID_EXPRESSION,
-                    "pipe target must be a free-function call",
-                )
-                .label(&p.tree.file, span, "write `value |> function(...)`"),
-            );
-        }
-    }
-    p.add(p.start_of(value), Expr::Pipe { value, call })
 }
 
 #[cfg(test)]

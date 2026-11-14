@@ -15,7 +15,6 @@ use syntax::ast::Decl;
 use syntax::ast::Expr;
 use syntax::ast::Ident;
 use syntax::ast::Import;
-use syntax::ast::MatchArm;
 use syntax::ast::Metadata;
 use syntax::ast::Param;
 use syntax::ast::Pattern;
@@ -23,7 +22,6 @@ use syntax::ast::Signature;
 use syntax::ast::Stmt;
 use syntax::ast::Tree;
 use syntax::ast::Type;
-use syntax::ast::Variant;
 
 use token::TokenKind;
 
@@ -51,10 +49,8 @@ enum Item {
     Decl(Id<Decl<Bare>>),
     Param(Id<Param<Bare>>),
     Type(Id<Type<Bare>>),
-    Variant(Id<Variant<Bare>>),
     Block(Id<Block<Bare>>),
     Stmt(Id<Stmt<Bare>>),
-    MatchArm(Id<MatchArm<Bare>>),
     Pattern(Id<Pattern<Bare>>),
     Expr(Id<Expr<Bare>>),
     Leaf(&'static str, Span),
@@ -188,13 +184,10 @@ impl<'t> Dumper<'t> {
                         ("const declaration", None, span, nested)
                     }
                     Decl::Type(d) | Decl::Alias(d) => {
-                        let kind = match (t.decls[id], t.types[d.ty]) {
-                            (Decl::Alias(_), _) => "type alias declaration",
-                            (_, Type::Enum(_)) => "enum declaration",
-                            _ => {
-                                unreachable!("the parser gives a type declaration only these types")
-                            }
+                        let Decl::Alias(_) = t.decls[id] else {
+                            unreachable!("only a feature begins a type declaration")
                         };
+                        let kind = "type alias declaration";
                         let mut nested: Vec<Item> = self.metadata(d.metadata).into_iter().collect();
                         nested.push(declared(d.name));
                         nested.extend(self.names("declared name", d.type_parameters));
@@ -221,12 +214,6 @@ impl<'t> Dumper<'t> {
                     nested,
                 )
             }
-            Item::Variant(id) => {
-                let v = t.children.variants[id];
-                let mut nested = vec![declared(v.name)];
-                nested.extend(v.payload.map(Item::Type));
-                ("variant", None, t.children.variants.span(id), nested)
-            }
             Item::Type(id) => self.type_node(id),
             Item::Block(id) => (
                 "block",
@@ -243,19 +230,9 @@ impl<'t> Dumper<'t> {
                 Stmt::Const(decl) => return self.item(Item::Decl(decl), depth),
                 _ => self.stmt(id),
             },
-            Item::MatchArm(id) => {
-                let arm = t.children.match_arms[id];
-                (
-                    "match arm",
-                    None,
-                    t.children.match_arms.span(id),
-                    vec![Item::Pattern(arm.pattern), Item::Block(arm.body)],
-                )
-            }
             Item::Pattern(id) => self.pattern(id),
             Item::Expr(id) => match t.exprs[id] {
                 Expr::Path(ty) => return self.item(Item::Type(ty), depth),
-                Expr::Block(block) => return self.item(Item::Block(block), depth),
                 _ => self.expr(id),
             },
         };
@@ -300,7 +277,6 @@ impl<'t> Dumper<'t> {
                 vec![Item::Leaf("type name", name.span), Item::Type(inner)],
             ),
             Type::Reference { mutable: m, target } => ("reference type", mutable(m), one(target)),
-            Type::Optional(inner) => ("optional type", None, one(inner)),
             Type::Owner => ("self type", None, vec![]),
             Type::Type => ("type of a type", None, vec![]),
             Type::Variadic {
@@ -312,15 +288,6 @@ impl<'t> Dumper<'t> {
                 element,
             } => ("slice type", mutable(m), one(element)),
             Type::Function(signature) => ("function type", None, self.signature(None, signature)),
-            Type::Enum(variants) => (
-                "enum type",
-                None,
-                t.children
-                    .lists
-                    .items(variants)
-                    .map(Item::Variant)
-                    .collect(),
-            ),
             Type::Invalid => ("invalid type", None, vec![]),
         };
         (kind, op, span, nested)
@@ -345,7 +312,7 @@ impl<'t> Dumper<'t> {
                 None,
                 value.map(Item::Expr).into_iter().collect(),
             ),
-            Stmt::Panic(message) => ("panic statement", None, vec![Item::Expr(message)]),
+            Stmt::Feature(feature) => match feature {},
             Stmt::Expression(e) => ("expression statement", None, vec![Item::Expr(e)]),
             Stmt::Assign { target, value } => (
                 "assign statement",
@@ -386,11 +353,6 @@ impl<'t> Dumper<'t> {
             }
             Stmt::Break => ("break statement", None, vec![]),
             Stmt::Continue => ("continue statement", None, vec![]),
-            Stmt::Match { subject, arms } => {
-                let mut nested = vec![Item::Expr(subject)];
-                nested.extend(t.children.lists.items(arms).map(Item::MatchArm));
-                ("match statement", None, nested)
-            }
             Stmt::Block(_) | Stmt::Const(_) => {
                 unreachable!("written as their block or declaration")
             }
@@ -435,11 +397,6 @@ impl<'t> Dumper<'t> {
             Expr::Feature(feature) => match feature {},
             Expr::Name => ("name reference", None, vec![]),
             Expr::Number => ("number literal", None, vec![]),
-            Expr::Char { byte } => (
-                "character literal",
-                byte.then_some(TokenKind::ByteChar.text()),
-                vec![],
-            ),
             Expr::None => ("none literal", None, vec![]),
             Expr::Binary { op, left, right } => (
                 "binary expression",
@@ -450,15 +407,6 @@ impl<'t> Dumper<'t> {
             Expr::Reference { mutable: m, value } => {
                 ("reference expression", mutable(m), one(value))
             }
-            Expr::Print { newline, values } => (
-                "print expression",
-                Some(if newline {
-                    TokenKind::Println.text()
-                } else {
-                    TokenKind::Print.text()
-                }),
-                t.children.lists.items(values).map(Item::Expr).collect(),
-            ),
             Expr::Call { callee, arguments } => {
                 let mut nested = one(callee);
                 nested.extend(t.children.lists.items(arguments).map(Item::Expr));
@@ -473,21 +421,11 @@ impl<'t> Dumper<'t> {
             Expr::Index { value, index } => {
                 ("index expression", None, two(value, Item::Expr(index)))
             }
-            Expr::VariantLiteral { case, payload } => (
-                "variant literal",
-                None,
-                vec![Item::Type(case), Item::Expr(payload)],
-            ),
             Expr::Spread(values) => ("spread", None, one(values)),
-            Expr::Is { value, case } => ("is expression", None, two(value, Item::Type(case))),
-            Expr::OrElse { value, fallback } => {
-                ("orelse expression", None, two(value, Item::Expr(fallback)))
-            }
-            Expr::Pipe { value, call } => ("pipe expression", None, two(value, Item::Expr(call))),
             Expr::Parentheses(inner) => ("parentheses", None, one(inner)),
             Expr::Type(ty) => ("type expression", None, vec![Item::Type(ty)]),
             Expr::Invalid => ("invalid expression", None, vec![]),
-            Expr::Path(_) | Expr::Block(_) => unreachable!("written as their type or block"),
+            Expr::Path(_) => unreachable!("written as its type"),
         };
         (kind, op, t.exprs.span(id), nested)
     }

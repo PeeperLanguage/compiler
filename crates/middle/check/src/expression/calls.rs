@@ -1,5 +1,5 @@
-//! Checking names, paths and calls: what a name stands for as a value, a
-//! call's arguments, and `print`.
+//! Checking names, paths and calls: what a name stands for as a value, and
+//! a call's arguments.
 
 use std::num::NonZeroU32;
 
@@ -17,7 +17,6 @@ use model::semantic_types::Constant;
 use model::semantic_types::Members;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
-use model::semantic_types::Types;
 use model::thir::Expr;
 use model::thir::ExprKind;
 use model::thir::Local;
@@ -36,57 +35,6 @@ use crate::function::function_declaration;
 use crate::scope;
 
 impl<L: Checked> ThirBuilder<'_, '_, L> {
-    /// `print(values)`, or `println(values)` when `newline`: each value of a
-    /// type `printable` takes. A plain string literal is printed as a `&cstr`,
-    /// though it is not one anywhere else.
-    // shortcut: a built-in until a library function takes any number of
-    // values of any printable type; then delete it with THIR's and MIR's
-    // `Print`.
-    pub(super) fn check_print(&mut self, newline: bool, values: List<ast::Expr<L>>) -> Expr {
-        let tree = &self.checker.module().ast;
-        let mut checked: Vec<NonZeroU32> = Vec::with_capacity(values.len());
-        for value in tree.children.lists.items(values) {
-            let span = tree.exprs.span(value);
-            let expr = self.check_expr(value, None);
-            let ty = expr.ty;
-            let types = &self.checker.types;
-            // On an error the others are still checked, for their own.
-            if !printable(types, ty) {
-                if ty != TypeId::INVALID {
-                    let message = format!("`{}` cannot be printed", self.checker.type_text(ty));
-                    self.checker
-                        .error(diagnostics::INVALID_OPERATION, message, span);
-                }
-                continue;
-            }
-            let mut printed = self.body.add(expr, span);
-            // Printing reads a value, never takes it: a `&mut` reference in
-            // a place, the one printable value that moves, is lent as `&`.
-            if let Type::Reference {
-                mutable: true,
-                target,
-            } = types[ty]
-                && self.start_variable(self.place_root(printed).0).is_some()
-            {
-                let reference = self.body.exprs[printed].clone();
-                let shared = self.checker.reference_type(false, target);
-                let lent = self.reborrow(reference, span, shared);
-                printed = self.body.add(lent, span);
-            }
-            checked.push(printed.into());
-        }
-        if checked.len() < values.len() {
-            return Expr::INVALID;
-        }
-        Expr {
-            ty: TypeId::VOID,
-            kind: ExprKind::Print {
-                newline,
-                values: self.body.children.lists.add(&checked),
-            },
-        }
-    }
-
     /// The name or path written at `span`, which stands for `symbol`, as a
     /// value. `None` when finding the symbol reported an error.
     pub(super) fn check_symbol_value(&mut self, symbol: Option<Symbol>, span: Span) -> Expr {
@@ -570,25 +518,6 @@ fn constant_expr(constant: Option<Constant>) -> Expr {
             kind: ExprKind::Constant(value),
         },
         None => Expr::INVALID,
-    }
-}
-
-/// Whether `print` writes a value of the type `ty`: a number, `bool`,
-/// `&cstr`, `&str` or raw pointer, or a reference to one. A struct or array
-/// prints only once a trait or interface lets its type say how.
-fn printable(types: &Types, mut ty: TypeId) -> bool {
-    // A loop, not recursion: references nest as deep as the source writes.
-    loop {
-        match &types[ty] {
-            Type::Integer(_)
-            | Type::Float(_)
-            | Type::Bool
-            | Type::CString
-            | Type::Str
-            | Type::RawPointer { .. } => return true,
-            Type::Reference { target, .. } => ty = *target,
-            _ => return false,
-        }
     }
 }
 

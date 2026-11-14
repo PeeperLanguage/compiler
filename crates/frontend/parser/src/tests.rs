@@ -17,6 +17,7 @@ pub(crate) enum Bare {}
 impl Language for Bare {
     type Expr = Infallible;
     type Type = Infallible;
+    type Stmt = Infallible;
 
     fn precedence(expr: &Infallible) -> Precedence {
         match *expr {}
@@ -171,17 +172,11 @@ fn recovers_after_a_missing_semicolon() {
 fn underscore_binds_nothing() {
     let text = "fn f(_: i32) {
     for _, v in xs {}
-    match x {
-        A::B with _ => {}
-        _ => {}
-    }
     let .{ b, _ } = s;
 }";
     assert_eq!(messages(text), Vec::<String>::new());
     let dump = dump_of(text);
-    for node in ["wildcard pattern", "rest pattern"] {
-        assert!(dump.contains(node), "no {node} in\n{dump}");
-    }
+    assert!(dump.contains("rest pattern"), "{dump}");
     assert!(!dump.contains("declared name _"), "{dump}");
     for text in [
         "fn f() { let _ = 1; }",
@@ -253,19 +248,12 @@ const BROKEN_INPUTS: &[&str] = &[
     "fn f() { a[; }",
     "fn f() { a[1..=]; }",
     "fn f() { a as ; }",
-    "fn f() { a is b; }",
-    "fn f() { a orelse ; }",
-    "fn f() { a |> b; }",
-    "fn f() { a |> b.c(); }",
     "fn f() { [_]i32{1, 2; }",
     "fn f() { [x]i32{}; }",
-    "fn f() { A::B with ; }",
     "fn f() { Box<T>::; }",
-    "fn f() { print(; }",
     "fn f() { &mut ; }",
     "fn f() { a < b > c; }",
     "fn f() { -; }",
-    "fn f() { a orelse { return; }; }",
     "fn f() { if }",
     "fn f() { if a }",
     "fn f() { if a {} else }",
@@ -275,12 +263,6 @@ const BROKEN_INPUTS: &[&str] = &[
     "fn f() { for i, in x {} }",
     "fn f() { for a.b in x {} }",
     "fn f() { break l; }",
-    "fn f() { match }",
-    "fn f() { match x { }",
-    "fn f() { match x { A::B {} } }",
-    "fn f() { match x { A::B => {}, _ => {} } }",
-    "fn f() { match x { let } }",
-    "fn f() { match x { A::B with => {} } }",
     "fn f() { let .{ a = b, _, c } = v; }",
     "fn f() { let .{ } }",
     "fn f() { a = ; }",
@@ -295,7 +277,6 @@ const BROKEN_INPUTS: &[&str] = &[
     "const",
     "const a",
     "const a: = ;",
-    "enum E { A: }",
     "type",
     "type A =",
     "type A<T",
@@ -465,16 +446,10 @@ fn missing_token_place() {
 }
 
 /// What the parser accepts and repairs between items: extra commas,
-/// trailing commas, empty statements and `??` are style, left to a lint.
+/// trailing commas and empty statements are style, left to a lint.
 #[test]
 fn separators() {
-    for text in [
-        "fn f(a: i32,, b: i32,) { g(1,, 2,); ;; }",
-        "enum E { A,, B, }",
-        "fn f(a: ??i32) {}",
-    ] {
-        assert!(messages(text).is_empty(), "{text:?}");
-    }
+    assert!(messages("fn f(a: i32,, b: i32,) { g(1,, 2,); ;; }").is_empty());
 }
 
 /// Nesting far deeper than the thread's stack would hold still parses:
@@ -487,11 +462,6 @@ fn deep_nesting_does_not_overflow() {
         format!("fn f() {}{}", "{".repeat(n), "}".repeat(n)),
         format!("fn f() {{ if a {{ }}{} }}", " else if a { }".repeat(n)),
         format!("fn f(a: {}i32) {{}}", "& ".repeat(n)),
-        format!(
-            "fn f() {{ match x {{ {}c => {{}} }} }}",
-            "A::B with ".repeat(n)
-        ),
-        format!("fn f() {{ let a = b{}", " orelse { c".repeat(n)),
     ] {
         let (tree, _) = parse_text(&text);
         assert_eq!(tree.top_level.len(), 1);

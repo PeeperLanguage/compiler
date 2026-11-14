@@ -33,6 +33,7 @@ pub(crate) enum Bare {}
 impl Language for Bare {
     type Expr = Infallible;
     type Type = Infallible;
+    type Stmt = Infallible;
 
     fn precedence(expr: &Infallible) -> Precedence {
         match *expr {}
@@ -79,6 +80,14 @@ impl Checked for Bare {
         _: Option<TypeId>,
     ) -> thir::Expr {
         match expr {}
+    }
+
+    fn check_stmt(
+        _: &mut ThirBuilder<'_, '_, Bare>,
+        stmt: Infallible,
+        _: Span,
+    ) -> Option<thir::Stmt> {
+        match stmt {}
     }
 
     fn resolve_type(_: &mut Checker<'_, Bare>, ty: Infallible, _: Span) -> TypeId {

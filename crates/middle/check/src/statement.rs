@@ -26,7 +26,6 @@ use model::thir::Variable;
 use source::Span;
 use syntax::ast;
 use syntax::ast::Ident;
-use syntax::ast::StringKind;
 
 use crate::Checked;
 use crate::Checker;
@@ -350,23 +349,7 @@ impl<'a, 'p, L: Checked> ThirBuilder<'a, 'p, L> {
                     return None;
                 }
                 ast::Stmt::Return(value) => Stmt::Return(self.check_return_value(span, value)),
-                ast::Stmt::Panic(message) => {
-                    let message = tree.unparenthesized(message);
-                    let span = tree.exprs.span(message);
-                    // shortcut: a plain string literal only, as there are no
-                    // run-time strings; take a string value once there are.
-                    let plain = |expr| L::string_kind(&expr) == Some(StringKind::Plain);
-                    if !matches!(tree.exprs[message], ast::Expr::Feature(expr) if plain(expr)) {
-                        let checked = self.add_expr(message, None);
-                        if self.body.exprs[checked].ty != TypeId::INVALID {
-                            let what = "`panic` messages other than string literals";
-                            self.checker.not_supported(span, what);
-                        }
-                        return None;
-                    }
-                    let message = self.string_literal(span, TypeId::STR);
-                    Stmt::Panic(self.body.add(message, span))
-                }
+                ast::Stmt::Feature(stmt) => L::check_stmt(self, stmt, span)?,
                 ast::Stmt::Expression(value) => Stmt::Expression(self.add_expr(value, None)),
                 ast::Stmt::Assign { target, value } => self.assign(target, value)?,
                 ast::Stmt::If {
@@ -470,10 +453,6 @@ impl<'a, 'p, L: Checked> ThirBuilder<'a, 'p, L> {
                 }
                 ast::Stmt::Break => Stmt::Break,
                 ast::Stmt::Continue => Stmt::Continue,
-                ast::Stmt::Match { .. } => {
-                    self.checker.not_supported(span, "`match` statements");
-                    return None;
-                }
             };
             Some(self.body.add(checked, span))
         })

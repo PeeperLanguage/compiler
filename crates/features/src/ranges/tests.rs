@@ -6,6 +6,8 @@ use syntax::ast;
 use syntax::ast::WrittenRange;
 
 use super::*;
+use crate::optionals::Fallback;
+use crate::optionals::OrElse;
 use crate::testing::Tree;
 use crate::testing::bodies;
 use crate::testing::parse_text;
@@ -32,7 +34,10 @@ fn grouped(tree: &Tree, id: Id<ast::Expr<Peeper>>) -> String {
             let (left, right) = (grouped(tree, left), grouped(tree, right));
             format!("({left} {} {right})", op.symbol())
         }
-        ast::Expr::OrElse { value, fallback } => {
+        ast::Expr::Feature(FeatureExpr::OrElse(OrElse {
+            value,
+            fallback: Fallback::Value(fallback),
+        })) => {
             format!(
                 "({} orelse {})",
                 grouped(tree, value),
