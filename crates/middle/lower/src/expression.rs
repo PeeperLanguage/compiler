@@ -65,7 +65,9 @@ impl<L: Language> Lowering<'_, L> {
             let ty = self.types.real(*ty);
             Some(match kind {
                 _ if ty == TypeId::INVALID => return None,
-                thir::ExprKind::Invalid => return None,
+                thir::ExprKind::Invalid => {
+                    unreachable!("a body with an invalid value has errors and is not lowered")
+                }
                 thir::ExprKind::Constant(Constant::Bytes(_)) if ty == TypeId::STR => {
                     self.in_temporary(expression, ty, span)?
                 }
