@@ -44,5 +44,5 @@ fn main() {
     // known only at run time, the program stops: "slice out of bounds".
     // `[3]i32{view...}` stops it too: the literal needs exactly 3 values.
     println("totals:", all, middle, through, front, back, empty, after);
-    println("numbers:", numbers, "last:", last, "copied:", copied);
+    println("numbers:", numbers[2], numbers[5], "last:", last, "copied:", copied[2]);
 }

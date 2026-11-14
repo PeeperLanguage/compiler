@@ -24,7 +24,7 @@ fn bump(values: &mut [3]i32) {      // changes the caller's array
 fn main() {
     let a = [3]i32{1, 2, 3};
     let b = [_]i64{4, 5};           // `_` counts the values
-    println("arrays:", a, b, a.len);
+    println("arrays:", a[0], b[1], a.len);
 
     let mut c = a;                  // a copy: `a` stays as it is
     c[0] = 9;
@@ -33,11 +33,11 @@ fn main() {
 
     let mut grid = [2][3]i32{[3]i32{1, 2, 3}, [3]i32{4, 5, 6}};
     grid[1][0] = 40;
-    println("nested:", grid, grid[1].len);
+    println("nested:", grid[1][0], grid[1].len);
 
-    println("passed:", sum(a), "returned:", tens());
+    println("passed:", sum(a), "returned:", tens()[2]);
     bump(&mut c);
-    println("through &mut:", c);
+    println("through &mut:", c[0], c[1], c[2]);
 
     let mut total = 0;
     for value in a {                // each value, copied
@@ -53,7 +53,8 @@ fn main() {
     }
     println();
 
-    println("spread:", [_]i32{a..., 0, a...});
+    let both = [_]i32{a..., 0, a...};
+    println("spread:", both.len, both[3], both[4]);
     let empty = [0]i32{};
     println("empty:", empty.len);
 }

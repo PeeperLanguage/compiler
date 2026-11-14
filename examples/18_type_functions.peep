@@ -31,5 +31,5 @@ fn main() {
     let view = &p;
     println("through a reference:", view.Sum());
     let q = p.Swapped();                        // `p` moves; it is unset now
-    println("swapped:", q, Point::New(3, 4).Swapped().Sum());
+    println("swapped:", q.x, q.y, Point::New(3, 4).Swapped().Sum());
 }

@@ -39,7 +39,7 @@ fn better(a: &Score, b: &Score) -> &Score {
 fn main() {
     let mut point = Point.{ x = 1, y = 2 };
     shift(&mut point, 10);
-    println("shifted:", point, sum(&point));
+    println("shifted:", point.x, point.y, sum(&point));
 
     let mut n = 5;
     double(&mut n);
@@ -48,7 +48,7 @@ fn main() {
     let lent = &mut point;
     shift(lent, 1);                 // a `&mut` passed to a call is lent again,
     shift(lent, 1);                 // so it is used twice
-    println("through:", lent.x, lent.*);
+    println("through:", lent.x, lent.*.y);
 
     let alice = Score.{ best = 9, last = 4 };
     let bob = Score.{ best = 7, last = 8 };
