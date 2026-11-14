@@ -417,7 +417,7 @@ fn the_entry_module_needs_a_main_to_start() {
         "fn helper() {}",
         "fn main(x: i32) {}",
         "fn main() -> i64 { return 0; }",
-        "#[extern(\"main\")]\nfn main();",
+        "#[extern(\"start\")]\nfn main();",
         "struct App { x: i32 }\nfn App::main() {}",
     ] {
         assert_eq!(entry_point(text), (None, vec!["M0006"]), "{text}");

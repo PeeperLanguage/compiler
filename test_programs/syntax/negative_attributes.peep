@@ -13,6 +13,12 @@ fn Unnamed(code: i32) -> i32;
 #[extern("a\0b")] //~ error[P0005]: write `#[extern("name")]` once, with the C function's name
 fn Cut(code: i32) -> i32;
 
+#[extern("main")] //~ error[P0005]: write `#[extern("name")]` once, with the C function's name
+fn Entry();
+
+#[extern("llvm.trap")] //~ error[P0005]: write `#[extern("name")]` once, with the C function's name
+fn Trap(n: i32) -> i32;
+
 #[extern("limit")] //~ error[P0005]: `extern` names a C function, so only a function has it
 const Limit: i32 = 1;
 

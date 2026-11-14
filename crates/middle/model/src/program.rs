@@ -118,8 +118,8 @@ pub fn extern_symbol<L: Language>(
         let text = tree.file.slice(tree.exprs.span(argument));
         let name = String::from_utf8_lossy(&literal::value(text)).into_owned();
         // No symbol has an empty name or one with a zero byte, which ends a
-        // C name.
-        if name.is_empty() || name.contains('\0') {
+        // C name; `main` is the program's own, and `llvm.` names are LLVM's.
+        if name.is_empty() || name.contains('\0') || name == "main" || name.starts_with("llvm.") {
             return Err(span);
         }
         symbol = Some(name);
