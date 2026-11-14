@@ -70,6 +70,10 @@ interface, allocator and type parameter work below, in PR #182. Order of work
      (worklog, "References in arrays and slices").
    - [ ] The Website, once the feature is complete.
 
+Later improvement (owner, 2026-11-08): diagnostics as one struct per kind
+of error, which owns its words and spans, as rustc's `#[derive(Diagnostic)]`
+does; today each is built in place with `Diagnostic::new(code, message)`.
+
 Later: lifetimes of references held in structs; enums and `match` with
 `?T` (put off by the owner 2026-10-30); generics.
 
@@ -104,7 +108,7 @@ type, functions of types other than structs.
 | F9 | `flow/src/cleanup.rs:43` `skip_empty_blocks` | Follows each jump chain up to the block count from every block. | Quadratic only on long chains of empty blocks | Not measured as a problem; leave. |
 | F11 | `diagnostics` printer | Every diagnostic prints its whole source line, and at most `MOST_WRITTEN` (200) are printed. | At most 200 × the line's length | Trim a long line around the span, as rustc does; changes the visible format, which `docs/architecture.md` fixed. |
 | F12 | `source::grow_stack` in `check`, `lower` | A stack check per expression, statement and type costs 0.84% of a compile. | 0.84% | Check only every N levels of depth (a counter in the builder), if the owner wants the time back. |
-| F13 | `flow/src/loans.rs` `live_at_ends` | Lists at block ends cost more than sets where many holders stay live across many blocks. | 3,000 references across 3,000 branches: 154 MB, 1.9 s; 124 MB, 1.0 s with sets (1.3 s at the base) | Accepted for the gain when few are live (217 MB to 53 MB). |
+| F13 | `flow/src/loans/passes.rs` `live_at_ends` | Lists at block ends cost more than sets where many holders stay live across many blocks. | 3,000 references across 3,000 branches: 154 MB, 1.9 s; 124 MB, 1.0 s with sets (1.3 s at the base) | Accepted for the gain when few are live (217 MB to 53 MB). |
 | F10 | `flow::variable_state` | A function that moves many variables still keeps a set of them at every block. | blocks × moved variables | Liveness of moved variables, as the loan check does; only if a real program needs it. |
 
 ## Rules check for `fix/loans-memory-growth`
