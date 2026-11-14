@@ -7,7 +7,6 @@ use source::Span;
 use syntax::ast;
 
 use super::*;
-use crate::enums::VariantLiteral;
 use crate::testing::Tree;
 use crate::testing::messages;
 use crate::testing::parse_text;
@@ -106,10 +105,10 @@ fn declaration_errors() {
     );
 }
 
-/// A literal with a type, without one, and as a variant's payload.
+/// A literal with a type, without one, and as an argument.
 #[test]
 fn parses_expressions() {
-    let text = "fn f() {\n    Point.{ x = 1, y = -2 };\n    .{ a = &mut v, b = !flag };\n    Shape::Line with .{ end = Box<i32>::new(1) };\n}\n";
+    let text = "fn f() {\n    Point.{ x = 1, y = -2 };\n    .{ a = &mut v, b = !flag };\n    line(.{ end = Box<i32>::new(1) });\n}\n";
     let (tree, errors) = parse_text(text);
     assert!(errors.is_empty(), "{errors:?}");
     let found = statements(&tree);
@@ -121,14 +120,12 @@ fn parses_expressions() {
         literal(&tree, found[1]),
         (None, vec!["a = &mut v".into(), "b = !flag".into()])
     );
-    let ast::Expr::Feature(FeatureExpr::VariantLiteral(VariantLiteral { case, payload })) =
-        tree.exprs[found[2]]
-    else {
-        panic!("not a variant literal")
+    let ast::Expr::Call { arguments, .. } = tree.exprs[found[2]] else {
+        panic!("not a call")
     };
-    assert_eq!(written(&tree, tree.types.span(case)), "Shape::Line");
+    let argument = tree.children.lists.items(arguments).next().unwrap();
     assert_eq!(
-        literal(&tree, payload),
+        literal(&tree, argument),
         (None, vec!["end = Box<i32>::new(1)".into()])
     );
 }

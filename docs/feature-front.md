@@ -2,7 +2,7 @@
 
 Since 2026-11-13 the features are files of one crate, not a crate each:
 `crates/features/src/lib.rs` is the list (`Peeper`, `FeatureExpr`,
-`FeatureType`), and `crates/features/src/<feature>.rs` holds a feature's
+`FeatureType`, `FeatureStmt`), and `crates/features/src/<feature>.rs` holds a feature's
 nodes, parse rows and checking, written for `Peeper`. Where this page says
 "the top crate", "`driver/compile/src/language.rs`" or "a feature crate",
 read that; the phases are generic over `L` as described.

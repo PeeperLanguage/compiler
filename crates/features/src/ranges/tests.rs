@@ -6,8 +6,6 @@ use syntax::ast;
 use syntax::ast::WrittenRange;
 
 use super::*;
-use crate::optionals::Fallback;
-use crate::optionals::OrElse;
 use crate::testing::Tree;
 use crate::testing::bodies;
 use crate::testing::parse_text;
@@ -34,16 +32,6 @@ fn grouped(tree: &Tree, id: Id<ast::Expr<Peeper>>) -> String {
             let (left, right) = (grouped(tree, left), grouped(tree, right));
             format!("({left} {} {right})", op.symbol())
         }
-        ast::Expr::Feature(FeatureExpr::OrElse(OrElse {
-            value,
-            fallback: Fallback::Value(fallback),
-        })) => {
-            format!(
-                "({} orelse {})",
-                grouped(tree, value),
-                grouped(tree, fallback)
-            )
-        }
         ast::Expr::Index { value, index } => {
             format!("{}[{}]", grouped(tree, value), grouped(tree, index))
         }
@@ -51,15 +39,12 @@ fn grouped(tree: &Tree, id: Id<ast::Expr<Peeper>>) -> String {
     }
 }
 
-/// A range binds looser than every binary operator and tighter than
-/// `orelse`, its step is read as an end is, and ranges group to the left.
+/// A range binds looser than every binary operator, its step is read as an end is, and ranges group to the left.
 #[test]
 fn precedence() {
     for (text, want) in [
         ("x.y.z[0][i..j]", "x.y.z[0][(i..j)]"),
         ("a + b..c * d", "((a + b)..(c * d))"),
-        ("a orelse b..c", "(a orelse (b..c))"),
-        ("a..b orelse c", "(a..(b orelse c))"),
         ("a..=b:c + d", "(a..=b:(c + d))"),
         ("a..b..c", "((a..b)..c)"),
         ("a[..b]", "a[(..b)]"),

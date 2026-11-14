@@ -8,7 +8,6 @@ use source::SourceFile;
 use syntax::ast;
 
 use super::*;
-use crate::pipes::Pipe;
 use crate::testing::Tree;
 
 /// The expression `id` with each cast and operation that holds a cast in
@@ -31,21 +30,16 @@ fn grouped(tree: &Tree, id: Id<ast::Expr<Peeper>>) -> String {
                 grouped(tree, right)
             )
         }
-        ast::Expr::Feature(FeatureExpr::Pipe(Pipe { value, call })) => {
-            format!("({} |> {})", grouped(tree, value), grouped(tree, call))
-        }
         _ => text(tree.exprs.span(id)),
     }
 }
 
-/// A cast binds tighter than every binary operator, and looser than a
-/// pipe.
+/// A cast binds tighter than every binary operator.
 #[test]
 fn precedence() {
     for (text, want) in [
         ("a + b as i64", "(a + (b as i64))"),
         ("a as i32 * b", "((a as i32) * b)"),
-        ("a |> len() as i32", "((a |> len()) as i32)"),
     ] {
         let source = Arc::new(SourceFile::new("t.peep", format!("fn f() {{ {text}; }}")));
         let (tree, errors) = parser::parse::<Peeper>(&source);

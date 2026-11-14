@@ -51,8 +51,8 @@ check "feature boundary" bash -c "
     for manifest in crates/{base,core,frontend,middle,backend}/*/Cargo.toml; do
         sed '/^\[dev-dependencies\]/,\$d' \$manifest | grep -H --label=\$manifest '^features\b' && exit 1
     done
-    ! grep -nE '\bcrate::[a-z_]' crates/features/src/*.rs |
-        grep -vE '^crates/features/src/(lib|testing)\.rs:'"
+    ! grep -nE '\bcrate::[a-z_]' crates/features/src/*.rs crates/features/src/*/tests.rs |
+        grep -vE '^crates/features/src/(lib|testing)\.rs:|crate::testing\b'"
 check "tests" cargo test --workspace --no-fail-fast
 check "bundle" bash scripts/build.sh
 check "test programs on the bundle" env PEEPER="$PWD/build/bin/peeper" \

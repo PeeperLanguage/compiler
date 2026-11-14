@@ -24,16 +24,32 @@ fn grouped(tree: &Tree, expr: Id<ast::Expr<Peeper>>) -> String {
     }
 }
 
-/// `orelse` groups to the right and binds looser than `||`; its fallback
-/// may be a block.
+/// `orelse` groups to the right and binds looser than `||` and `..`; its
+/// fallback may be a block.
 #[test]
 fn parses_or_else() {
-    let (tree, errors) = parse_text("fn f() { a orelse b orelse c; a || b orelse { return; }; }");
+    let text =
+        "fn f() { a orelse b orelse c; a || b orelse { return; }; d orelse e..f; g..h orelse i; }";
+    let (tree, errors) = parse_text(text);
     assert!(errors.is_empty(), "{errors:?}");
     let found: Vec<String> = (statements(&tree).into_iter())
         .map(|statement| grouped(&tree, statement))
         .collect();
-    assert_eq!(found, ["(a orelse (b orelse c))", "(a || b orelse {})"]);
+    assert_eq!(
+        found,
+        [
+            "(a orelse (b orelse c))",
+            "(a || b orelse {})",
+            "(d orelse e..f)",
+            "g..h orelse i"
+        ]
+    );
+    // The last one is a range whose end is the `orelse`.
+    let last = (tree.exprs.ids())
+        .filter(|&id| matches!(tree.exprs[id], ast::Expr::Feature(FeatureExpr::OrElse(_))))
+        .last()
+        .unwrap();
+    assert_eq!(tree.file.slice(tree.exprs.span(last)), "h orelse i");
 }
 
 /// Each `?` is one optional type, and `??` is two; a missing fallback is

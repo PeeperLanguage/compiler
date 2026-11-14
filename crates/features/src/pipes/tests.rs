@@ -20,15 +20,22 @@ fn grouped(tree: &Tree, expr: Id<ast::Expr<Peeper>>) -> String {
     }
 }
 
-/// A pipe groups to the left and binds looser than `+`.
+/// A pipe groups to the left and binds looser than `+`; what is written
+/// after its call, as `as`, takes the whole pipe.
 #[test]
 fn parses_pipes() {
-    let (tree, errors) = parse_text("fn f() { a |> f(b) |> g(); a + b |> f(); }");
+    let (tree, errors) =
+        parse_text("fn f() { a |> f(b) |> g(); a + b |> f(); c |> len() as i32; }");
     assert!(errors.is_empty(), "{errors:?}");
     let found: Vec<String> = (statements(&tree).into_iter())
         .map(|statement| grouped(&tree, statement))
         .collect();
-    assert_eq!(found, ["((a |> f(b)) |> g())", "(a + b |> f())"]);
+    assert_eq!(found[..2], ["((a |> f(b)) |> g())", "(a + b |> f())"]);
+    let last = (tree.exprs.ids())
+        .filter(|&id| matches!(tree.exprs[id], ast::Expr::Feature(FeatureExpr::Pipe(_))))
+        .last()
+        .unwrap();
+    assert_eq!(tree.file.slice(tree.exprs.span(last)), "c |> len()");
 }
 
 /// A pipe's target is a call of a free function.
