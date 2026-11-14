@@ -427,7 +427,7 @@ fn answers_definition_and_hover() {
     assert_eq!(
         ask("textDocument/hover", "fn m̲any")["contents"]["value"],
         json!(
-            "```peeper\nfn many(values: ...i32) -> &[]i32 in values\n```\n\n---\n\n*in* `main` *· line 34*\n"
+            "```peeper\nfn many(values: ...i32) -> &[]i32 in values { /* ... */ }\n```\n\n---\n\n*in* `main` *· line 34*\n"
         )
     );
     // A type's name: a declared one answers as its declaration does; a
@@ -527,7 +527,10 @@ fn answers_definition_and_hover() {
     );
     assert_eq!(ask("textDocument/hover", "n * 3;̲"), serde_json::Value::Null);
     // A declaration shows its attributes.
-    starts("fn c̲ap", "```peeper\n#[extern(\"cap\")]\nfn cap() -> u8");
+    starts(
+        "fn c̲ap",
+        "```peeper\n#[extern(\"cap\")]\nfn cap() -> u8;\n```",
+    );
     // `range` is a built-in type, declared nowhere.
     starts(
         "r: ra̲nge",
@@ -603,9 +606,9 @@ fn P::half(&self) -> i32 {
     // A struct lists its functions, a private one too in its own module.
     assert_eq!(
         hover("P", 0),
-        "```peeper\nstruct P { x: i32 }\n\nfn P::Sum(&self) -> i32\nfn P::Grow(mut self) -> P\nfn P::half(&self) -> i32\n```\n\n---\n\n*in* `main` *· line 1*\n"
+        "```peeper\nstruct P { x: i32 }\n\nfn P::Sum(&self) -> i32 { /* ... */ }\nfn P::Grow(mut self) -> P { /* ... */ }\nfn P::half(&self) -> i32 { /* ... */ }\n```\n\n---\n\n*in* `main` *· line 1*\n"
     );
-    let declared = "```peeper\nfn P::Sum(&self) -> i32\n```";
+    let declared = "```peeper\nfn P::Sum(&self) -> i32 { /* ... */ }\n```";
     for nth in [1, 2] {
         assert!(
             hover("Sum", nth).starts_with(declared),
@@ -716,7 +719,9 @@ const NAME: &str = \"Ada\";
     );
     assert_eq!(
         hover(&server, "main", 0),
-        json!("```peeper\nfn main(count: i64)\n```\n\n---\n\n*in* `app:main` *· line 2*\n")
+        json!(
+            "```peeper\nfn main(count: i64) { /* ... */ }\n```\n\n---\n\n*in* `app:main` *· line 2*\n"
+        )
     );
     assert_eq!(
         declared(&server, "main", 0),
@@ -725,7 +730,7 @@ const NAME: &str = \"Ada\";
     assert_eq!(
         hover(&server, "Add", 0),
         json!(
-            "```peeper\nfn Add(a: i32, b: i32) -> i32\n```\n\n---\n\n*in* `app:utils` *· line 1*\n"
+            "```peeper\nfn Add(a: i32, b: i32) -> i32 { /* ... */ }\n```\n\n---\n\n*in* `app:utils` *· line 1*\n"
         )
     );
     assert_eq!(
@@ -739,7 +744,7 @@ const NAME: &str = \"Ada\";
     assert_eq!(
         hover(&server, "Spot", 0),
         json!(
-            "```peeper\nstruct Spot { x: i32 }\n\nfn Spot::Get(&self) -> i32\n```\n\n---\n\n*in* `app:utils` *· line 8*\n"
+            "```peeper\nstruct Spot { x: i32 }\n\nfn Spot::Get(&self) -> i32 { /* ... */ }\n```\n\n---\n\n*in* `app:utils` *· line 8*\n"
         )
     );
     assert_eq!(
@@ -770,7 +775,9 @@ const NAME: &str = \"Ada\";
     // A name in a module constant's value, outside any body.
     assert_eq!(
         hover(&server, "Twice", 0),
-        json!("```peeper\nfn Twice(n: i32) -> i32\n```\n\n---\n\n*in* `app:utils` *· line 5*\n")
+        json!(
+            "```peeper\nfn Twice(n: i32) -> i32 { /* ... */ }\n```\n\n---\n\n*in* `app:utils` *· line 5*\n"
+        )
     );
     let i64_hover = "```peeper\ni64\n```\n\n---\n\nA signed 64-bit integer: from `-9223372036854775808` to `9223372036854775807`.\n";
     assert_eq!(hover(&server, "i64", 0), json!(i64_hover));
