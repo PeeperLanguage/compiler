@@ -1,0 +1,29 @@
+struct Node {
+    value: i32,
+}
+
+fn Bits(const T: type) -> usize {
+    return bits_of(T); //~ error[T0004]: `bits_of` takes an integer or a float type, found `Node`
+}
+
+fn main() {
+    bits_of(bool); //~ error[T0004]: `bits_of` takes an integer or a float type, found `bool`
+    bits_of(Node); //~ error[T0004]: `bits_of` takes an integer or a float type, found `Node`
+    bits_of(*i32); //~ error[T0004]: `bits_of` takes an integer or a float type, found `*i32`
+    bits_of([4]i32); //~ error[T0004]: `bits_of` takes an integer or a float type, found `[4]i32`
+    is_signed(f64); //~ error[T0004]: `is_signed` takes an integer type, found `f64`
+    is_signed(bool); //~ error[T0004]: `is_signed` takes an integer type, found `bool`
+    is_signed(&i32); //~ error[T0004]: `is_signed` takes an integer type, found `&i32`
+    let x: i32 = 1;
+    bits_of(x); //~ error[T0021]: `x` is a value, not a type
+    is_signed(); //~ error[T0006]: `is_signed` takes 1 argument, but 0 were given
+    bits_of(Missing); //~ error[T0002]: unknown type `Missing`
+    Bits(Node);
+}
+
+// Only the `core` library's prelude declares what the compiler answers.
+#[builtin]
+fn sign_of(const T: type) -> bool; //~ error[P0005]: only the `core` library's prelude declares a `#[builtin]` function
+
+#[builtin] //~ error[P0005]: `builtin` marks a function the compiler answers, so only a function has it
+const LIMIT: i32 = 1;

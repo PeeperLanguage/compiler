@@ -13,6 +13,7 @@ use model::constant::Value;
 use model::layout::layout;
 use model::semantic_types::ConstArgument;
 use model::semantic_types::Constant;
+use model::semantic_types::Float;
 use model::semantic_types::Members;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
@@ -26,8 +27,8 @@ use syntax::ast::Ident;
 
 use crate::Checked;
 use crate::builder::ThirBuilder;
-use crate::builtin::LayoutFact;
-use crate::builtin::layout_function;
+use crate::builtin::TypeFact;
+use crate::builtin::type_fact;
 use crate::declaration::const_parameter;
 use crate::declaration::is_self;
 use crate::function::function_declaration;
@@ -65,47 +66,47 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
         Expr::INVALID
     }
 
-    /// `size_of(T)` or `align_of(T)`, written at `span`, which gives `fact` of
-    /// the type `T`: a `usize` constant, for the target being built.
-    fn check_layout_function(
-        &mut self,
-        fact: LayoutFact,
-        text: &str,
-        arguments: &[Id<ast::Expr<L>>],
-        span: Span,
-    ) -> Expr {
-        let tree = &self.checker.module().ast;
-        let mut given = arguments.iter().copied();
-        let (Some(argument), None) = (given.next(), given.next()) else {
-            let message = argument_count_message(text, 1, false, arguments.len());
-            self.checker
-                .error(diagnostics::WRONG_ARGUMENT_COUNT, message, span);
-            return Expr::INVALID;
+    /// The call at `span` of the `#[builtin]` function `function`, a copy
+    /// for the type it is given: the fact of that type its name asks for, a
+    /// constant.
+    fn builtin_fact(&mut self, function: FunctionCopy, span: Span) -> Expr {
+        let checker = &mut *self.checker;
+        let &[ConstArgument::Type(ty)] = checker.types.arguments(function.arguments) else {
+            unreachable!("a `#[builtin]` function takes one type")
         };
-        // A variable is a value; a type of its name is still the type.
-        let written = tree.exprs.span(argument);
-        if let ast::Expr::Name = tree.exprs[argument]
-            && let name = tree.file.slice(written)
-            && let Some(&position) = self.innermost.get(name)
-            && self.checker.resolve_global(name).is_none()
-        {
-            let local = Symbol::Local(self.names[position].local);
-            self.checker.type_named_by(local, written);
-            return Expr::INVALID;
-        }
-        let ty = self.checker.resolve_type_argument(argument);
-        if ty == TypeId::INVALID {
-            return Expr::INVALID;
-        }
-        let (size, align) = layout(&self.checker.types, ty, self.checker.target);
-        let bits = self.checker.target.pointer_bits;
-        let value = match fact {
-            LayoutFact::Size => size,
-            LayoutFact::Align => align,
+        let (name, file) = model::program::declared_name(checker.modules, function.definition);
+        let name = name.text(file);
+        let fact = type_fact(name).expect("a `#[builtin]` function is one the compiler has");
+        let (size, align) = layout(&checker.types, ty, checker.target);
+        let number = match (fact, &checker.types[ty]) {
+            (TypeFact::Size, _) => size,
+            (TypeFact::Align, _) => align,
+            (TypeFact::Bits, Type::Integer(integer)) => u64::from(integer.bits),
+            (TypeFact::Bits, Type::Float(Float::F32)) => 32,
+            (TypeFact::Bits, Type::Float(Float::F64)) => 64,
+            (TypeFact::Signed, &Type::Integer(integer)) => {
+                return Expr {
+                    ty: TypeId::BOOL,
+                    kind: ExprKind::Constant(Value::Bool(integer.signed)),
+                };
+            }
+            (TypeFact::Bits | TypeFact::Signed, _) => {
+                let kinds = match fact {
+                    TypeFact::Bits => "an integer or a float",
+                    _ => "an integer",
+                };
+                let found = checker.type_text(ty);
+                let message = format!("`{name}` takes {kinds} type, found `{found}`");
+                checker.error(diagnostics::INVALID_OPERATION, message, span);
+                return Expr::INVALID;
+            }
         };
         Expr {
-            ty: self.checker.types.usize,
-            kind: ExprKind::Constant(Value::Integer(Limbs::new(bits, &[value]))),
+            ty: checker.types.usize,
+            kind: ExprKind::Constant(Value::Integer(Limbs::new(
+                checker.target.pointer_bits,
+                &[number],
+            ))),
         }
     }
 
@@ -128,10 +129,6 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
         let text = tree.file.slice(callee_span);
         let mut receiver = None;
         let found = match tree.exprs[callee] {
-            // A built-in function, which no declaration hides.
-            ast::Expr::Name if let Some(fact) = layout_function(text) => {
-                return self.check_layout_function(fact, text, arguments, span);
-            }
             ast::Expr::Name => {
                 let symbol = match self.resolve(callee_span) {
                     // Their errors were reported.
@@ -249,6 +246,11 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
         }
         if !arity_matches {
             return Expr::INVALID;
+        }
+        if let Callee::Function(function) = callee
+            && model::program::is_builtin(self.checker.modules, function.definition)
+        {
+            return self.builtin_fact(function, span);
         }
         let arguments = self.body.children.lists.add(&checked);
         // In a constant's value, a call on constants runs now.
@@ -401,6 +403,19 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
         for (place, parameter) in const_parameters {
             let argument = arguments[place];
             if let ast::Type::Type = tree.types[parameter.ty] {
+                // A variable is a value; a type of its name is still the type.
+                let calling = &self.checker.module().ast;
+                let written = calling.exprs.span(argument);
+                if let ast::Expr::Name = calling.exprs[argument]
+                    && let name = calling.file.slice(written)
+                    && let Some(&position) = self.innermost.get(name)
+                    && self.checker.resolve_global(name).is_none()
+                {
+                    let local = Symbol::Local(self.names[position].local);
+                    self.checker.type_named_by(local, written);
+                    failed = true;
+                    continue;
+                }
                 let ty = self.checker.resolve_type_argument(argument);
                 failed |= ty == TypeId::INVALID;
                 given.push(ConstArgument::Type(self.checker.types.real(ty)));

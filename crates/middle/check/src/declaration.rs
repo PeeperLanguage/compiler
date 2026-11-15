@@ -7,6 +7,7 @@ use diagnostics::Diagnostic;
 use model::ConstArguments;
 use model::DefId;
 use model::layout::layout;
+use model::program::BUILTIN_ATTRIBUTE;
 use model::program::EXTERN_ATTRIBUTE;
 use model::semantic_types;
 use model::semantic_types::ConstArgument;
@@ -28,6 +29,8 @@ use crate::Checked;
 use crate::Checker;
 use crate::Checking;
 use crate::builder::ThirBuilder;
+use crate::builtin::TypeFact;
+use crate::builtin::type_fact;
 use crate::builtin::unsupported_type;
 use crate::function::function_declaration;
 use crate::scope;
@@ -64,8 +67,8 @@ impl<L: Checked> Checker<'_, L> {
     }
 
     /// Reports each attribute of the declaration `definition` but an
-    /// `extern` on a function, the one attribute there is; `check_function`
-    /// checks the `extern`'s shape.
+    /// `extern` or a `builtin` on a function, the attributes there are;
+    /// `check_function` checks their shape.
     pub(crate) fn check_attributes(&mut self, definition: DefId) {
         let tree = &self.module().ast;
         let declaration = &tree.decls[tree.declaration(definition.index)];
@@ -73,9 +76,13 @@ impl<L: Checked> Checker<'_, L> {
         for attribute in tree.children.lists.items(declaration.metadata().attributes) {
             let name = tree.children.attributes[attribute].name.text(&tree.file);
             let message = match name {
-                EXTERN_ATTRIBUTE if function => continue,
+                EXTERN_ATTRIBUTE | BUILTIN_ATTRIBUTE if function => continue,
                 EXTERN_ATTRIBUTE => {
                     "`extern` names a C function, so only a function has it".to_owned()
+                }
+                BUILTIN_ATTRIBUTE => {
+                    "`builtin` marks a function the compiler answers, so only a function has it"
+                        .to_owned()
                 }
                 _ => format!("unknown attribute `{name}`"),
             };
@@ -171,9 +178,15 @@ impl<L: Checked> Checker<'_, L> {
         if ty == TypeId::INVALID || first_const.is_some() && failed() {
             return TypeId::INVALID;
         }
-        if external == body.is_some() {
+        let builtin = model::program::is_builtin(self.modules, definition);
+        if builtin && !self.is_builtin_declared(definition, ty) {
+            return TypeId::INVALID; // reported
+        }
+        if (external || builtin) == body.is_some() {
             let message = if external {
                 "an `extern` function is defined in C, so it has no body"
+            } else if builtin {
+                "the compiler answers a `#[builtin]` function, so it has no body"
             } else {
                 "a function needs a body, or `#[extern(\"name\")]` when C defines it"
             };
@@ -184,6 +197,50 @@ impl<L: Checked> Checker<'_, L> {
             return TypeId::INVALID;
         }
         ty
+    }
+
+    /// Whether the `#[builtin]` function `definition`, of the type `ty`, is
+    /// one the compiler has, declared as the compiler answers it: in the
+    /// prelude, taking one type and giving the fact's type. Reports it when
+    /// not.
+    fn is_builtin_declared(&mut self, definition: DefId, ty: TypeId) -> bool {
+        let tree = &self.module().ast;
+        let &ast::Function {
+            name, signature, ..
+        } = function_declaration(self.modules, definition);
+        let text = name.text(&tree.file);
+        let message = match type_fact(text) {
+            // A module with no prelude is one, as a test's is.
+            _ if self.prelude().is_some() => {
+                "only the `core` library's prelude declares a `#[builtin]` function".to_owned()
+            }
+            None => format!("the compiler has no built-in function `{text}`"),
+            Some(fact) => {
+                let (gives, written) = match fact {
+                    TypeFact::Signed => (TypeId::BOOL, "bool"),
+                    TypeFact::Size | TypeFact::Align | TypeFact::Bits => {
+                        (self.types.usize, "usize")
+                    }
+                };
+                let mut parameters = (tree.children.lists.items(signature.parameters))
+                    .map(|parameter| tree.children.params[parameter]);
+                let takes_a_type = matches!(
+                    (parameters.next(), parameters.next()),
+                    (Some(parameter), None)
+                        if parameter.constant && matches!(tree.types[parameter.ty], ast::Type::Type)
+                );
+                let result = match &self.types[ty] {
+                    Type::Function { result, .. } => *result,
+                    _ => unreachable!("a function's type is a function type"),
+                };
+                if takes_a_type && result == gives {
+                    return true;
+                }
+                format!("the compiler's `{text}` is `fn {text}(const T: type) -> {written}`")
+            }
+        };
+        self.error(diagnostics::INVALID_DECLARATION, message, name.span);
+        false
     }
 
     /// The function type `signature` of the module's tree declares, of a

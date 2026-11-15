@@ -1,4 +1,4 @@
-//! The built-in functions the checker works out itself, and the built-in
+//! The `#[builtin]` functions the checker works out itself, and the built-in
 //! types it does not handle yet. The types it does handle are named in
 //! `model::semantic_types` (`Types::builtin`).
 
@@ -12,22 +12,28 @@ pub(crate) fn unsupported_type(name: &str) -> Option<&'static str> {
     }
 }
 
-/// What a built-in function that takes a type gives of its layout
-/// (`model::layout::layout`) on the target being built.
+/// What a `#[builtin]` function gives of the type it takes, on the target
+/// being built.
 #[derive(Clone, Copy)]
-pub(crate) enum LayoutFact {
+pub(crate) enum TypeFact {
+    /// How many bytes a value of the type takes, its padding included.
     Size,
+    /// The multiple of bytes a value of the type starts at in memory.
     Align,
+    /// How many bits an integer or a float type has.
+    Bits,
+    /// Whether an integer type has negative values.
+    Signed,
 }
 
-/// The built-in function that takes a type named `name`, if it is one. Each
-/// gives a `usize` the checker works out, so it is a constant.
-pub(crate) fn layout_function(name: &str) -> Option<LayoutFact> {
+/// What the `#[builtin]` function named `name` gives, if the compiler has
+/// one of that name.
+pub(crate) fn type_fact(name: &str) -> Option<TypeFact> {
     match name {
-        // How many bytes a value of the type takes, its padding included.
-        "size_of" => Some(LayoutFact::Size),
-        // The multiple of bytes a value of the type starts at in memory.
-        "align_of" => Some(LayoutFact::Align),
+        "size_of" => Some(TypeFact::Size),
+        "align_of" => Some(TypeFact::Align),
+        "bits_of" => Some(TypeFact::Bits),
+        "is_signed" => Some(TypeFact::Signed),
         _ => None,
     }
 }

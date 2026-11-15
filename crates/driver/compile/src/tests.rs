@@ -260,6 +260,64 @@ fn print_needs_what_the_prelude_declares() {
     }
 }
 
+/// A `#[builtin]` function is one the compiler has, declared as the
+/// compiler answers it and with no body; each other one is an error where it
+/// is declared. Every module sees the prelude's, and a module's own function
+/// of the name hides it.
+#[test]
+fn builtin_functions_are_declared_as_the_compiler_answers_them() {
+    let declared = "#[builtin] fn bits_of(const T: type) -> usize;
+#[builtin] fn is_signed(const T: type) -> bool;";
+    let uses = "const BITS: usize = bits_of(u7);\nfn main() { let signed: bool = is_signed(i8); }";
+    assert_eq!(
+        diagnostics(&[("core:global", declared), ("app:main", uses)]),
+        []
+    );
+    let own = "fn bits_of(value: i32) -> i32 { return value; }\nfn main() { let bits: i32 = bits_of(7); }";
+    assert_eq!(
+        diagnostics(&[("core:global", declared), ("app:main", own)]),
+        []
+    );
+    for (prelude, message, label) in [
+        (
+            "#[builtin] fn kind_of(const T: type) -> usize;",
+            "the compiler has no built-in function `kind_of`",
+            "kind_of",
+        ),
+        (
+            "#[builtin] fn bits_of(const T: type) -> bool;",
+            "the compiler's `bits_of` is `fn bits_of(const T: type) -> usize`",
+            "bits_of",
+        ),
+        (
+            "#[builtin] fn is_signed(const T: type) -> usize;",
+            "the compiler's `is_signed` is `fn is_signed(const T: type) -> bool`",
+            "is_signed",
+        ),
+        (
+            "#[builtin] fn size_of(value: i32) -> usize;",
+            "the compiler's `size_of` is `fn size_of(const T: type) -> usize`",
+            "size_of",
+        ),
+        (
+            "#[builtin] fn size_of(const T: type, const U: type) -> usize;",
+            "the compiler's `size_of` is `fn size_of(const T: type) -> usize`",
+            "size_of",
+        ),
+        (
+            "#[builtin] fn align_of(const T: type) -> usize { return 1; }",
+            "the compiler answers a `#[builtin]` function, so it has no body",
+            "align_of",
+        ),
+    ] {
+        assert_eq!(
+            diagnostics(&[("core:global", prelude), ("app:main", "fn main() {}")]),
+            expected(&[("P0005", message, label)]),
+            "{prelude}"
+        );
+    }
+}
+
 #[test]
 fn checks_a_long_chain_of_constants() {
     const DEPTH: usize = 5000;

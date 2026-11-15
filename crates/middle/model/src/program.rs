@@ -127,6 +127,22 @@ pub fn extern_symbol<L: Language>(
     Ok(symbol)
 }
 
+/// The name of the attribute on a function the compiler answers itself.
+pub const BUILTIN_ATTRIBUTE: &str = "builtin";
+
+/// Whether the declaration `definition` of `modules` is a function with a
+/// `#[builtin]`: it has no body, and a call of it is a constant the checker
+/// works out from the type it is given.
+pub fn is_builtin<L: Language>(modules: &[Module<L>], definition: DefId) -> bool {
+    let tree = &modules[definition.module.index()].ast;
+    let ast::Decl::Function(function) = declaration(modules, definition) else {
+        return false;
+    };
+    (tree.children.lists.items(function.metadata.attributes)).any(|attribute| {
+        tree.children.attributes[attribute].name.text(&tree.file) == BUILTIN_ATTRIBUTE
+    })
+}
+
 /// Whether the function `definition` of `modules` is a C function: it has
 /// an `extern`, well formed or not, so the checker gives it C's rules.
 pub fn is_extern<L: Language>(modules: &[Module<L>], definition: DefId) -> bool {

@@ -1,0 +1,40 @@
+//@ run
+//@ target: i686-linux
+
+// `bits_of` and `is_signed` take a type and give a constant: how many bits
+// an integer or a float type has, and whether an integer type has negative
+// values.
+
+type Count = u16;
+
+const WORD_BITS: usize = bits_of(usize);
+const SIGNED: bool = is_signed(i8);
+
+// The facts of the type each copy is made for.
+fn Facts(const T: type) {
+    println(bits_of(T), is_signed(T), size_of(T), align_of(T));
+}
+
+// A copy picks its work by a fact of its type.
+fn Lowest(const T: type) -> i64 {
+    if is_signed(T) {
+        return -1;
+    }
+    return 0;
+}
+
+fn main() {
+    // Integers of the usual widths, and of widths that fill no whole byte.
+    println(bits_of(i8), bits_of(u16), bits_of(i32), bits_of(u64), bits_of(i128));
+    println(bits_of(u1), bits_of(u7), bits_of(i24), bits_of(u129));
+    println(is_signed(i8), is_signed(u8), is_signed(i128), is_signed(u1));
+    // Floats have bits; an alias has its type's facts.
+    println(bits_of(f32), bits_of(f64), bits_of(Count), is_signed(Count));
+    // The target's own integers.
+    println(WORD_BITS, is_signed(usize), bits_of(isize), is_signed(isize));
+    println(SIGNED, bits_of((i32)));
+    Facts(i32);
+    Facts(u7);
+    Facts(i128);
+    println(Lowest(i16), Lowest(u16));
+}

@@ -561,7 +561,7 @@ impl<'p, L: Checked> Checker<'p, L> {
         let in_prelude = || {
             self.prelude()?
                 .get(None, name)
-                .filter(|_| model::program::is_exported(name))
+                .filter(|&symbol| self.prelude_shares(name, symbol))
         };
         self.scope().get(None, name).or_else(in_prelude)
     }
@@ -696,8 +696,17 @@ impl<'p, L: Checked> Checker<'p, L> {
             .prelude()
             .into_iter()
             .flat_map(|scope| scope.symbols(None));
-        let exported = prelude.filter(|&(name, _)| model::program::is_exported(name));
+        let exported = prelude.filter(|&(name, symbol)| self.prelude_shares(name, symbol));
         self.scope().symbols(None).chain(exported)
+    }
+
+    /// Whether every module sees the prelude's `name`, which stands for
+    /// `symbol`: it is exported, or a `#[builtin]` function, which is part
+    /// of the language.
+    fn prelude_shares(&self, name: &str, symbol: Symbol) -> bool {
+        let builtin = |definition| model::program::is_builtin(self.modules, definition);
+        model::program::is_exported(name)
+            || matches!(symbol, Symbol::Function(definition) if builtin(definition))
     }
 
     /// The prelude's scope; `None` while checking the prelude itself.
