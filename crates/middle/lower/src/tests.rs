@@ -14,7 +14,6 @@ use model::mir;
 use model::mir::DebugType;
 use model::mir::DebugTypes;
 use model::thir;
-use runtime_abi::symbols::Runtime;
 use source::SourceFile;
 use syntax::ast;
 
@@ -313,24 +312,30 @@ fn a_range_loop_keeps_its_state_in_hidden_slots() {
 
 #[test]
 fn print_writes_text_once_and_each_value_by_its_kind() {
-    let text = lowered("fn main() { let a = 5; println(\"a is\", a, true); }");
+    // With no prelude, the program declares what `print` calls.
+    let text = lowered(
+        "#[extern(\"print_text\")] fn PrintText(text: &cstr);
+#[extern(\"print_bytes\")] fn PrintBytes(bytes: rawptr, length: usize);
+#[extern(\"print_int\")] fn PrintInt(signed: i32, limbs: i32, number: rawptr);
+#[extern(\"print_float\")] fn PrintFloat(value: f64, bits: i32);
+#[extern(\"print_pointer\")] fn PrintPointer(pointer: rawptr);
+#[extern(\"flush\")] fn Flush();
+fn main() { let a = 5; println(\"a is\", a, true); }",
+    );
     // The `&str` is its two words; each space is one call; `true` and
     // `false` are printed by the branch taken; the newline ends it.
     assert!(
-        text.contains("    store ptr .1, global 0\n    store i64 .1[+8], 4\n"),
+        text.contains("    store ptr .2, global 0\n    store i64 .2[+8], 4\n"),
         "{text}"
     );
-    let bytes = Runtime::PrintBytes.signature().symbol;
-    let int = Runtime::PrintInt.signature().symbol;
-    let flush = Runtime::Flush.signature().symbol;
     for line in [
-        format!("call {bytes}(%4, %5)\n"),
-        format!("call {int}(1, 1, %9)\n"),
-        format!("  bb1:\n    call {bytes}(global 3, 4)\n"),
-        format!("  bb2:\n    call {bytes}(global 4, 5)\n"),
-        format!("call {bytes}(global 5, 1)\n    call {flush}()\n"),
+        "call PrintBytes(%6, %7) in C",
+        "call PrintInt(1, 1, %10) in C",
+        "  bb1:\n    call PrintText(global 3) in C",
+        "  bb2:\n    call PrintText(global 4) in C",
+        "call PrintText(global 5) in C (register)\n    call Flush() in C",
     ] {
-        assert!(text.contains(&line), "{line}not in\n{text}");
+        assert!(text.contains(line), "{line}not in\n{text}");
     }
 }
 

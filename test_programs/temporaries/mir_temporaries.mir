@@ -33,29 +33,29 @@ fn main:
   bb1:
     %14 = load i32 kept.2[*]
     %15 = sext i32 %14 to i64
-    store i64 .10, %15
-    %17 = address 8 .10
-    call peeper_rt_v2_print_int(1, 1, %17)
-    call peeper_rt_v1_print_bytes(global 0, 1)
-    call peeper_rt_v1_flush()
-    dead .10
+    store i64 .4, %15
+    %17 = address 8 .4
+    call PrintInt(1, 1, %17) in C (register, register, register)
+    call PrintText(global 0) in C (register)
+    call Flush() in C ()
+    dead .4
     jump bb2
   bb2:
     jump bb3
   bb3:
     %22 = call make()
-    store i32 .4, %22
-    %24 = borrow 4 .4 as reference
+    store i32 .5, %22
+    %24 = borrow 4 .5 as reference
     %25 = call look(%24)
-    dead .4
+    dead .5
     branch %25, bb5, bb4
   bb4:
     %27 = call make()
-    store i32 .5, %27
-    %29 = borrow 4 .5 as reference
+    store i32 .6, %27
+    %29 = borrow 4 .6 as reference
     %30 = call look(%29)
-    dead .5
-    store i8 .11, 0
+    dead .6
+    store i8 .12, 0
     branch %30, bb7, bb8
   bb5:
     jump bb4
@@ -63,48 +63,47 @@ fn main:
     jump bb3
   bb7:
     %33 = call make()
-    store i32 .6, %33
-    %35 = borrow 4 .6 as reference
+    store i32 .7, %33
+    %35 = borrow 4 .7 as reference
     %36 = call look(%35)
-    store i8 .11, %36
-    dead .6
+    store i8 .12, %36
+    dead .7
     jump bb8
   bb8:
-    %39 = load i8 .11
-    dead .11
+    %39 = load i8 .12
+    dead .12
     branch %39, bb9, bb10
   bb9:
-    %41 = sext i32 2 to i64
-    store i64 .12, %41
-    %43 = address 8 .12
-    call peeper_rt_v2_print_int(1, 1, %43)
-    call peeper_rt_v1_print_bytes(global 1, 1)
-    call peeper_rt_v1_flush()
-    dead .12
+    store i64 .8, 2
+    %42 = address 8 .8
+    call PrintInt(1, 1, %42) in C (register, register, register)
+    dead .8
+    call PrintText(global 1) in C (register)
+    call Flush() in C ()
     jump bb10
   bb10:
-    %48 = call make()
-    store i32 .7, %48
-    %50 = borrow 4 .7 as reference
-    %51 = call look(%50)
+    %47 = call make()
+    store i32 .9, %47
+    %49 = borrow 4 .9 as reference
+    %50 = call look(%49)
     store i8 .13, 0
-    branch %51, bb11, bb12
+    branch %50, bb11, bb12
   bb11:
-    %53 = call make()
-    store i32 .8, %53
-    %55 = borrow 4 .8 as reference
-    %56 = call look(%55)
-    store i8 .13, %56
+    %52 = call make()
+    store i32 .10, %52
+    %54 = borrow 4 .10 as reference
+    %55 = call look(%54)
+    store i8 .13, %55
     jump bb12
   bb12:
-    %58 = load i8 .13
-    store i8 both.9, %58
+    %57 = load i8 .13
+    store i8 both.11, %57
     dead .13
-    dead both.9
-    dead .8
-    dead .7
+    dead both.11
+    dead .10
+    dead .9
     dead kept.2
     dead .1
     fall off at `}`
-  global 0 = "\n"
-  global 1 = "\n"
+  global 0 = "\n\x00"
+  global 1 = "\n\x00"

@@ -54,6 +54,17 @@ fn load(modules: &[(&str, &str)]) -> model::program::Program<Peeper> {
     program
 }
 
+/// A prelude with what `print` calls, for a program that prints.
+const PRINTING: (&str, &str) = (
+    "core:global",
+    "#[extern(\"print_text\")] fn PrintText(text: &cstr);
+#[extern(\"print_bytes\")] fn PrintBytes(bytes: rawptr, length: usize);
+#[extern(\"print_int\")] fn PrintInt(signed: i32, limbs: i32, number: rawptr);
+#[extern(\"print_float\")] fn PrintFloat(value: f64, bits: i32);
+#[extern(\"print_pointer\")] fn PrintPointer(pointer: rawptr);
+#[extern(\"flush\")] fn Flush();",
+);
+
 /// Checks the program of `modules` (see `load`) and gives each
 /// diagnostic as its code, message and the text of its first label.
 fn diagnostics(modules: &[(&str, &str)]) -> Vec<(&'static str, String, String)> {
@@ -226,6 +237,29 @@ fn constants_short_circuit() {
 
 /// A long chain of constants, each naming the next, is checked, not a
 /// stack overflow.
+/// `print` is calls of the prelude's functions: one that lacks a function,
+/// or declares it another way, is one error for the print, and the
+/// program's own function of the name is not taken.
+#[test]
+fn print_needs_what_the_prelude_declares() {
+    let text = "fn Flush() {}\nfn main() { println(1, true); }";
+    assert_eq!(diagnostics(&[PRINTING, ("app:main", text)]), []);
+    let lacking = PRINTING.1.rsplit_once('\n').unwrap().0;
+    let differing = PRINTING
+        .1
+        .replace("fn PrintText(text: &cstr)", "fn PrintText(text: i32)");
+    for (prelude, name) in [(lacking, "Flush"), (&*differing, "PrintText")] {
+        assert_eq!(
+            diagnostics(&[("core:global", prelude), ("app:main", text)]),
+            expected(&[(
+                "T0002",
+                &format!("the `core` library does not declare `{name}` as `print` calls it"),
+                "println(1, true)"
+            )])
+        );
+    }
+}
+
 #[test]
 fn checks_a_long_chain_of_constants() {
     const DEPTH: usize = 5000;
@@ -295,7 +329,7 @@ fn checks_deeply_nested_statements() {
         "[1]".repeat(DEPTH),
         "[0]".repeat(DEPTH)
     );
-    assert_eq!(diagnostics(&[("app:main", &arrays)]), []);
+    assert_eq!(diagnostics(&[PRINTING, ("app:main", &arrays)]), []);
     // A pointer breaks a flat array, so an error's type text recurses.
     let pointers = format!(
         "fn f(a: {}i32) {{ let b: bool = a; }}\nfn main() {{}}",
@@ -333,7 +367,7 @@ fn checks_structs_holding_structs_twice() {
         fn replace(to: &mut S39, s: S39) {{ to.* = s; }}
         fn borrowing(s: S39) -> S39 {{ let n = 1; let r = &n; println(r); return s; }}"
     );
-    assert_eq!(diagnostics(&[("app:main", &text)]), []);
+    assert_eq!(diagnostics(&[PRINTING, ("app:main", &text)]), []);
 }
 
 /// Each struct holds the last twice, and the first a reference, so the loan
@@ -852,10 +886,14 @@ fn a_struct_field_edit_reaches_importers_through_a_pointer() {
         "import \"app:other\";
         fn main() { println(other::First().*.x); }",
     );
-    let (first, _) = recompile(&[("app:utils", &start), other, main], Results::default());
-    let (second, checked) = recompile(&[("app:utils", &retyped), other, main], first);
+    let (first, _) = recompile(
+        &[PRINTING, ("app:utils", &start), other, main],
+        Results::default(),
+    );
+    assert_eq!(messages(&first), [] as [&str; 0]);
+    let (second, checked) = recompile(&[PRINTING, ("app:utils", &retyped), other, main], first);
     assert_eq!(checked, ["app:utils", "app:other", "app:main"]);
-    let (third, checked) = recompile(&[("app:utils", &renamed), other, main], second);
+    let (third, checked) = recompile(&[PRINTING, ("app:utils", &renamed), other, main], second);
     assert_eq!(checked, ["app:utils", "app:other", "app:main"]);
     assert_eq!(messages(&third), ["`Item` has no field `x`"]);
 }
@@ -1235,7 +1273,7 @@ fn array_elements_keep_their_own_loans() {
     let check = |function: &str| -> Vec<(&'static str, String)> {
         let text =
             format!("struct Pair {{ first: &i32, second: &i32 }}\n{function}\nfn main() {{}}");
-        let found = diagnostics(&[("app:main", &text)]);
+        let found = diagnostics(&[PRINTING, ("app:main", &text)]);
         found
             .into_iter()
             .map(|(code, message, _)| (code, message))

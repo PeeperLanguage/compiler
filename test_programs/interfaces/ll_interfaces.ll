@@ -1,7 +1,7 @@
 source_filename = "<fixture>/src/main.peep"
 
 @.table.0 = private unnamed_addr constant [2 x ptr] [ptr @"ll_interfaces:main.Square::area", ptr @"ll_interfaces:main.Square::grow"]
-@.str.0 = private unnamed_addr constant [1 x i8] c"\0A"
+@.str.0 = private unnamed_addr constant [2 x i8] c"\0A\00"
 
 define i32 @"ll_interfaces:main.Square::area"(ptr %a0) {
 entry:
@@ -69,26 +69,26 @@ bb0:
 define void @"ll_interfaces:main.main"() {
 entry:
   %s0 = alloca [4 x i8], align 4
-  %s1 = alloca [16 x i8], align 8
-  %s2 = alloca [8 x i8], align 8
+  %s1 = alloca [8 x i8], align 8
+  %s2 = alloca [16 x i8], align 8
   br label %bb0
 bb0:
   store i32 2, ptr %s0
-  store ptr %s0, ptr %s1
-  %i3 = getelementptr inbounds i8, ptr %s1, i64 8
+  store ptr %s0, ptr %s2
+  %i3 = getelementptr inbounds i8, ptr %s2, i64 8
   store ptr @.table.0, ptr %i3
-  %i5 = call i32 @"ll_interfaces:main.grown"(ptr %s1)
+  %i5 = call i32 @"ll_interfaces:main.grown"(ptr %s2)
   %i6 = sext i32 %i5 to i64
-  store i64 %i6, ptr %s2
-  call void @"peeper_rt_v2_print_int"(i32 1, i32 1, ptr %s2)
-  call void @"peeper_rt_v1_print_bytes"(ptr @.str.0, i64 1)
+  store i64 %i6, ptr %s1
+  call void @"peeper_rt_v2_print_int"(i32 1, i32 1, ptr %s1)
+  call void @"peeper_rt_v1_print_text"(ptr @.str.0)
   call void @"peeper_rt_v1_flush"()
   ret void
 }
 
 declare void @"peeper_rt_v1_flush"()
 
-declare void @"peeper_rt_v1_print_bytes"(ptr, i64)
+declare void @"peeper_rt_v1_print_text"(ptr)
 
 declare void @"peeper_rt_v2_print_int"(i32, i32, ptr)
 

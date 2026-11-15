@@ -10,3 +10,25 @@ fn Read(fd: i32, buf: *u8, n: i32) -> i32;
 
 #[extern("peeper_rt_v1_exit")]
 fn Exit(code: i32);
+
+// What `print` and `println` call. They keep their text back until `Flush`.
+
+#[extern("peeper_rt_v1_print_text")]
+fn PrintText(text: &cstr);
+
+#[extern("peeper_rt_v1_print_bytes")]
+fn PrintBytes(bytes: rawptr, length: usize);
+
+// `limbs` 64-bit pieces at `number`, least significant first.
+#[extern("peeper_rt_v2_print_int")]
+fn PrintInt(signed: i32, limbs: i32, number: rawptr);
+
+// `bits` is 32 for a value that was an `f32`.
+#[extern("peeper_rt_v1_print_float")]
+fn PrintFloat(value: f64, bits: i32);
+
+#[extern("peeper_rt_v1_print_pointer")]
+fn PrintPointer(pointer: rawptr);
+
+#[extern("peeper_rt_v1_flush")]
+fn Flush();

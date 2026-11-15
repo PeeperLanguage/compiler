@@ -17,7 +17,7 @@ fn forever() -> i32 {
 }
 
 fn noisy() -> i32 {
-    println(1); //~ label: `print` calls cannot run at compile time yet
+    println(1); //~ label: an `extern` function cannot run at compile time
     return 1;
 }
 

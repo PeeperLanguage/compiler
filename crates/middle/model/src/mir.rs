@@ -742,8 +742,6 @@ pub enum Callee {
     /// A function of the program, or a copy of one; an `extern` function
     /// has no body.
     Function(FunctionCopy),
-    /// A function of the runtime library.
-    Runtime(Runtime),
     /// The function whose address the operand gives.
     Pointer(Operand),
 }
@@ -1191,9 +1189,6 @@ impl Printer<'_> {
                 match callee {
                     Callee::Function(function) => {
                         _ = write!(self.out, "call {}(", (self.name_of)(*function));
-                    }
-                    Callee::Runtime(runtime) => {
-                        _ = write!(self.out, "call {}(", runtime.signature().symbol);
                     }
                     Callee::Pointer(pointer) => {
                         self.out.push_str("call through ");

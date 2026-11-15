@@ -487,7 +487,7 @@ impl<'p, L: Checked> Checker<'p, L> {
     }
 
     /// The names the module being checked declares and imports.
-    pub(crate) fn scope(&self) -> &Scope<'p> {
+    pub fn scope(&self) -> &Scope<'p> {
         &self.module_checks[self.current_module().index()].scope
     }
 
@@ -701,7 +701,7 @@ impl<'p, L: Checked> Checker<'p, L> {
     }
 
     /// The prelude's scope; `None` while checking the prelude itself.
-    fn prelude(&self) -> Option<&Scope<'p>> {
+    pub fn prelude(&self) -> Option<&Scope<'p>> {
         Some(&self.module_checks[self.scope().parent?.index()].scope)
     }
 

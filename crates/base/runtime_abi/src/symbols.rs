@@ -7,6 +7,12 @@ pub const FREE: &str = "peeper_rt_v1_free";
 pub const WRITE: &str = "peeper_rt_v1_write";
 pub const READ: &str = "peeper_rt_v1_read";
 pub const EXIT: &str = "peeper_rt_v1_exit";
+pub const PRINT_TEXT: &str = "peeper_rt_v1_print_text";
+pub const PRINT_BYTES: &str = "peeper_rt_v1_print_bytes";
+pub const PRINT_INT: &str = "peeper_rt_v2_print_int";
+pub const PRINT_FLOAT: &str = "peeper_rt_v1_print_float";
+pub const PRINT_POINTER: &str = "peeper_rt_v1_print_pointer";
+pub const FLUSH: &str = "peeper_rt_v1_flush";
 
 /// How C passes a value to or from a runtime function.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -33,18 +39,6 @@ pub enum Runtime {
     PanicWrite,
     /// Ends a panicking program, as `core`'s `Exit` does.
     PanicExit,
-    /// `print` of a `&cstr`, null or not.
-    PrintText,
-    /// `print` of a `&str`: its bytes and its length.
-    PrintBytes,
-    /// `print` of an integer: whether it is signed, its count of 64-bit
-    /// limbs, and the limbs, least significant first.
-    PrintInt,
-    /// `print` of a float: its value and its width in bits.
-    PrintFloat,
-    PrintPointer,
-    /// Writes out what `print` has kept back.
-    Flush,
 }
 
 impl Runtime {
@@ -58,36 +52,6 @@ impl Runtime {
             Runtime::PanicExit => &Signature {
                 symbol: EXIT,
                 parameters: &[Carrier::I32],
-                result: None,
-            },
-            Runtime::PrintText => &Signature {
-                symbol: "peeper_rt_v1_print_text",
-                parameters: &[Carrier::Pointer],
-                result: None,
-            },
-            Runtime::PrintBytes => &Signature {
-                symbol: "peeper_rt_v1_print_bytes",
-                parameters: &[Carrier::Pointer, Carrier::Usize],
-                result: None,
-            },
-            Runtime::PrintInt => &Signature {
-                symbol: "peeper_rt_v2_print_int",
-                parameters: &[Carrier::I32, Carrier::I32, Carrier::Pointer],
-                result: None,
-            },
-            Runtime::PrintFloat => &Signature {
-                symbol: "peeper_rt_v1_print_float",
-                parameters: &[Carrier::F64, Carrier::I32],
-                result: None,
-            },
-            Runtime::PrintPointer => &Signature {
-                symbol: "peeper_rt_v1_print_pointer",
-                parameters: &[Carrier::Pointer],
-                result: None,
-            },
-            Runtime::Flush => &Signature {
-                symbol: "peeper_rt_v1_flush",
-                parameters: &[],
                 result: None,
             },
         }

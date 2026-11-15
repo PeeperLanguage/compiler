@@ -2,6 +2,25 @@
 // with it.
 struct Point { x: i32 }
 
+fn inner(point: &mut Point) -> &mut i32 in point {
+    return &mut point.x;
+}
+
+// Every value is worked out before any is printed, so the reference is still
+// in use when `point.x` is read.
+fn values_before_printing() {
+    let mut point = Point.{ x = 1 };
+    println(inner(&mut point), point.x); //~ error[T0037]: `point` is read while a `&mut` reference to it is still in use
+}
+
+// A 64-bit integer is printed from memory, and the read is still seen.
+fn whole_limbs() {
+    let mut wide: i64 = 1;
+    let changed = &mut wide;
+    println(wide); //~ error[T0037]: `wide` is read while a `&mut` reference to it is still in use
+    changed.* = 2; //~ label: reference used later here
+}
+
 fn main() {
     let mut point = Point.{ x = 1 };
     let changed = &mut point;

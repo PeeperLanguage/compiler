@@ -180,7 +180,8 @@ pub enum ExprKind {
     /// a range of them, giving each element or value, as `Stmt::ForRange`
     /// counts a range's.
     ArrayLiteral(List<Expr>),
-    /// The field at `index`, in declaration order, of a struct value.
+    /// The field at `index`, in declaration order, of a struct value; of a
+    /// `&str`, its bytes' address (0) or its length (1).
     Field {
         value: Id<Expr>,
         index: u32,
@@ -251,13 +252,9 @@ pub enum ExprKind {
         step: Id<Expr>,
         inclusive: bool,
     },
-    /// `print(values)`, or `println(values)` when `newline`: each value a
-    /// number, `bool`, `&cstr`, raw pointer, a struct or array of such values,
-    /// or a reference to one; a value that moves, in a place, is lent as `&`.
-    Print {
-        newline: bool,
-        values: List<Expr>,
-    },
+    /// The statements of the block, run where the expression is computed;
+    /// it gives no value (`ty` is `void`).
+    Block(Id<Block>),
     Invalid,
 }
 
@@ -353,8 +350,9 @@ impl Body {
         T::arena(self).push(node, span)
     }
 
-    /// Whether computing `expression` calls a function, `print` too, which
-    /// could change a value read before it.
+    /// Whether computing `expression` calls a function, which could change
+    /// a value read before it; a block's statements are not looked into,
+    /// so it counts as one that does.
     pub fn has_call(&self, expression: Id<Expr>) -> bool {
         // A list, not recursion: `a[0][0]...` nests as deep as it is written.
         // `pending` stays empty, so unallocated, for one with no parts.
@@ -362,7 +360,7 @@ impl Body {
         let mut pending = Vec::new();
         loop {
             let kind = &self.exprs[part].kind;
-            if matches!(kind, ExprKind::Call { .. } | ExprKind::Print { .. }) {
+            if matches!(kind, ExprKind::Call { .. } | ExprKind::Block(_)) {
                 return true;
             }
             self.any_part(kind, |inner| {
@@ -414,7 +412,11 @@ impl Body {
     /// in the order they are computed.
     fn any_part(&self, kind: &ExprKind, mut test: impl FnMut(Id<Expr>) -> bool) -> bool {
         match *kind {
-            ExprKind::Constant(_) | ExprKind::Variable(_) | ExprKind::Invalid => false,
+            // A block's statements are not directly inside it.
+            ExprKind::Constant(_)
+            | ExprKind::Variable(_)
+            | ExprKind::Block(_)
+            | ExprKind::Invalid => false,
             ExprKind::Binary { left, right, .. }
             | ExprKind::Index {
                 array: left,
@@ -442,8 +444,7 @@ impl Body {
             ExprKind::Call {
                 arguments: parts, ..
             }
-            | ExprKind::ArrayLiteral(parts)
-            | ExprKind::Print { values: parts, .. } => (self.children.lists.items(parts)).any(test),
+            | ExprKind::ArrayLiteral(parts) => (self.children.lists.items(parts)).any(test),
         }
     }
 
@@ -517,7 +518,13 @@ impl<N: Display, F: Fn(DefId) -> N + Copy> Printer<'_, F> {
                 self.out.push_str(" = ");
                 self.write_expr(value);
             }
-            Stmt::Expression(value) => self.write_expr(value),
+            Stmt::Expression(value) => match self.body.exprs[value].kind {
+                // Its lines are indented as a block statement's.
+                ExprKind::Block(block) => {
+                    self.write_block(self.body.blocks[block].statements, depth);
+                }
+                _ => self.write_expr(value),
+            },
             Stmt::Return(value) => {
                 self.out.push_str("return");
                 if let Some(value) = value {
@@ -754,11 +761,8 @@ impl<N: Display, F: Fn(DefId) -> N + Copy> Printer<'_, F> {
                 self.out.push_str(" by ");
                 self.write_expr(*step);
             }
-            ExprKind::Print { newline, values } => {
-                self.out
-                    .push_str(if *newline { "println(" } else { "print(" });
-                self.write_exprs(*values);
-                self.out.push(')');
+            ExprKind::Block(_) => {
+                unreachable!("a block gives no value, so only a statement holds it")
             }
             ExprKind::Invalid => self.out.push_str("invalid"),
         }

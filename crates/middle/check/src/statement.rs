@@ -195,6 +195,27 @@ impl<'a, 'p, L: Checked> ThirBuilder<'a, 'p, L> {
         self.close_block(block, enclosing, None)
     }
 
+    /// A block inside the current one, made for the code at `span`, of the
+    /// statements `build` gives, which declare no name; the hidden
+    /// variables `build` makes end with it. It is added before the blocks
+    /// `build` adds.
+    pub fn add_block(
+        &mut self,
+        span: Span,
+        build: impl FnOnce(&mut Self) -> Vec<Id<Stmt>>,
+    ) -> Id<Block> {
+        let block = Block {
+            parent: Some(self.block),
+            statements: List::EMPTY,
+        };
+        let block = self.body.add(block, span);
+        let enclosing = std::mem::replace(&mut self.block, block);
+        let statements: Vec<NonZeroU32> = build(self).into_iter().map(Id::into).collect();
+        self.block = enclosing;
+        self.body.blocks[block].statements = self.body.children.lists.add(&statements);
+        block
+    }
+
     /// Makes `block` the current block, for names declared before its
     /// statements; gives the enclosing block and where its names start, for
     /// `close_block`.
@@ -235,12 +256,7 @@ impl<'a, 'p, L: Checked> ThirBuilder<'a, 'p, L> {
 
     /// A variable of the current block with no name, made for the code at
     /// `span`.
-    pub(crate) fn add_hidden_variable(
-        &mut self,
-        ty: TypeId,
-        mutable: bool,
-        span: Span,
-    ) -> Id<Variable> {
+    pub fn add_hidden_variable(&mut self, ty: TypeId, mutable: bool, span: Span) -> Id<Variable> {
         let variable = Variable {
             ty,
             mutable,
