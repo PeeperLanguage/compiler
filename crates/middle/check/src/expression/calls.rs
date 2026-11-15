@@ -78,18 +78,19 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
         let name = name.text(file);
         let fact = type_fact(name).expect("a `#[builtin]` function is one the compiler has");
         let (size, align) = layout(&checker.types, ty, checker.target);
-        let number = match (fact, &checker.types[ty]) {
-            (TypeFact::Size, _) => size,
-            (TypeFact::Align, _) => align,
-            (TypeFact::Bits, Type::Integer(integer)) => u64::from(integer.bits),
-            (TypeFact::Bits, Type::Float(Float::F32)) => 32,
-            (TypeFact::Bits, Type::Float(Float::F64)) => 64,
-            (TypeFact::Signed, &Type::Integer(integer)) => {
-                return Expr {
-                    ty: TypeId::BOOL,
-                    kind: ExprKind::Constant(Value::Bool(integer.signed)),
-                };
-            }
+        let number = |value: u64| Value::Integer(Limbs::new(checker.target.pointer_bits, &[value]));
+        let value = match (fact, &checker.types[ty]) {
+            (TypeFact::Size, _) => number(size),
+            (TypeFact::Align, _) => number(align),
+            (TypeFact::Bits, Type::Integer(integer)) => number(u64::from(integer.bits)),
+            (TypeFact::Bits, Type::Float(Float::F32)) => number(32),
+            (TypeFact::Bits, Type::Float(Float::F64)) => number(64),
+            (TypeFact::Signed, Type::Integer(integer)) => Value::Bool(integer.signed),
+            (TypeFact::IsInteger, kind) => Value::Bool(matches!(kind, Type::Integer(_))),
+            (TypeFact::IsFloat, kind) => Value::Bool(matches!(kind, Type::Float(_))),
+            (TypeFact::IsText, kind) => Value::Bool(matches!(kind, Type::Str)),
+            (TypeFact::IsBool, kind) => Value::Bool(matches!(kind, Type::Bool)),
+            (TypeFact::IsPointer, kind) => Value::Bool(matches!(kind, Type::RawPointer { .. })),
             (TypeFact::Bits | TypeFact::Signed, _) => {
                 let kinds = match fact {
                     TypeFact::Bits => "an integer or a float",
@@ -102,11 +103,11 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
             }
         };
         Expr {
-            ty: checker.types.usize,
-            kind: ExprKind::Constant(Value::Integer(Limbs::new(
-                checker.target.pointer_bits,
-                &[number],
-            ))),
+            ty: match value {
+                Value::Bool(_) => TypeId::BOOL,
+                _ => checker.types.usize,
+            },
+            kind: ExprKind::Constant(value),
         }
     }
 

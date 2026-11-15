@@ -295,6 +295,11 @@ fn builtin_functions_are_declared_as_the_compiler_answers_them() {
             "is_signed",
         ),
         (
+            "#[builtin] fn is_int(const T: type) -> usize;",
+            "the compiler's `is_int` is `fn is_int(const T: type) -> bool`",
+            "is_int",
+        ),
+        (
             "#[builtin] fn size_of(value: i32) -> usize;",
             "the compiler's `size_of` is `fn size_of(const T: type) -> usize`",
             "size_of",

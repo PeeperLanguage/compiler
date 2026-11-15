@@ -217,7 +217,12 @@ impl<L: Checked> Checker<'_, L> {
             None => format!("the compiler has no built-in function `{text}`"),
             Some(fact) => {
                 let (gives, written) = match fact {
-                    TypeFact::Signed => (TypeId::BOOL, "bool"),
+                    TypeFact::Signed
+                    | TypeFact::IsInteger
+                    | TypeFact::IsFloat
+                    | TypeFact::IsText
+                    | TypeFact::IsBool
+                    | TypeFact::IsPointer => (TypeId::BOOL, "bool"),
                     TypeFact::Size | TypeFact::Align | TypeFact::Bits => {
                         (self.types.usize, "usize")
                     }

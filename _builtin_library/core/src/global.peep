@@ -17,6 +17,26 @@ fn bits_of(const T: type) -> usize;
 #[builtin]
 fn is_signed(const T: type) -> bool;
 
+// Whether `T` is an integer type, of any width.
+#[builtin]
+fn is_int(const T: type) -> bool;
+
+// Whether `T` is a float type.
+#[builtin]
+fn is_float(const T: type) -> bool;
+
+// Whether `T` is `&str`, text.
+#[builtin]
+fn is_text(const T: type) -> bool;
+
+// Whether `T` is `bool`.
+#[builtin]
+fn is_bool(const T: type) -> bool;
+
+// Whether `T` is a raw pointer: `*T` or `rawptr`.
+#[builtin]
+fn is_pointer(const T: type) -> bool;
+
 const Stdin:  i32 = 0;
 const Stdout: i32 = 1;
 const Stderr: i32 = 2;
