@@ -1327,6 +1327,41 @@ fn a_function_with_const_parameters_records_its_signature_once() {
     assert_eq!(found.iter().filter(|&&text| text == "i64").count(), 1);
 }
 
+/// An editor's compile checks the own body of a function with `const`
+/// parameters for its facts, and reports what a build reports: nothing of
+/// that body, which has no type for its `T`, and nothing of a copy only
+/// that body would make, here one whose error is in the copy alone.
+#[test]
+fn an_own_body_reports_nothing_and_makes_no_copy() {
+    let utils = "fn Half(const T: type) -> T { return 1.5; }
+fn Unused(const T: type, given: T) -> i32 { return Half(i32) + missing + given; }";
+    let main = "import \"app:utils\";\nfn main() {}";
+    let program = load(&[("app:utils", utils), ("app:main", main)]);
+    let mut built = Vec::new();
+    let found = run(
+        &program,
+        x86_64(),
+        Results::default(),
+        Options {
+            record_facts: true,
+            ..Options::default()
+        },
+        &mut |output| {
+            if let Output::Function(CheckedFunction { function, mir, .. }) = output {
+                let name = model::program::declared_path(&program.modules, function.definition);
+                built.push((name, mir.is_some()));
+            }
+        },
+    );
+    assert_eq!(found.diagnostics().count(), 0);
+    // The own bodies, with no MIR, then `main`.
+    let expected = [("Half", false), ("Unused", false), ("main", true)];
+    assert_eq!(
+        built,
+        expected.map(|(name, has_mir)| (name.to_string(), has_mir))
+    );
+}
+
 /// Each element of an array keeps its own loans: a constant index reads,
 /// replaces and borrows only its element, nested and inside structs, and ends
 /// what was borrowed through it; an index known only when the program runs

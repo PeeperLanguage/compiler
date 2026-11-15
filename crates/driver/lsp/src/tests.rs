@@ -850,6 +850,122 @@ const NAME: &str = \"Ada\";
     assert_eq!(hover(&server, "BIG", 0), json!(big("63")));
 }
 
+/// A function with a `const` parameter is built only as its copies, and an
+/// editor asks about its text all the same: the names in its body are
+/// found in its own module, in every branch, called or not, and stay when
+/// that module alone is checked again. A variable of a type its `const T:
+/// type` gives has no one type, so it shows its name.
+#[test]
+fn names_in_a_function_with_const_parameters() {
+    let folder = std::env::temp_dir().join(format!("peeper-lsp-copies-{}", std::process::id()));
+    _ = std::fs::remove_dir_all(&folder);
+    std::fs::create_dir_all(folder.join("src")).unwrap();
+    std::fs::write(
+        folder.join("peeper.toml"),
+        "name = \"app\"\nbuild = \"program\"\n",
+    )
+    .unwrap();
+    let utils = "fn Small() -> i32 { return 1; }
+fn Large() -> i32 { return 2; }
+const Limit: i32 = 3;
+fn Pick(const N: usize, value: i32) -> i32 {
+    let kept = value;
+    if N == 0 { return Small() + kept; } else { return Large() + Limit; }
+}
+fn Unused(const T: type, given: T) -> T {
+    let mut held = given;
+    return Pick(0, Small()) as T;
+}
+";
+    let main = "import \"app:utils\";
+fn main() {
+    let total = utils::Pick(0, 1) + utils::Pick(1, 1) + utils::Pick(2, 1);
+}
+";
+    let (main_file, utils_file) = (folder.join("src/main.peep"), folder.join("src/utils.peep"));
+    std::fs::write(&main_file, main).unwrap();
+    std::fs::write(&utils_file, utils).unwrap();
+    let (connection, _client) = Connection::memory();
+    let mut server = Server::new(&connection, Path::new("no-libraries"), true);
+    let notify = |server: &mut Server, method: &str, file: &Path, text: &str| {
+        let uri = Url::from_file_path(file).unwrap();
+        let document = json!({ "uri": uri, "languageId": "peeper", "version": 1, "text": text });
+        let params = match method {
+            "textDocument/didOpen" => json!({ "textDocument": document }),
+            _ => json!({ "textDocument": document, "contentChanges": [{ "text": text }] }),
+        };
+        let notification = Notification::new(method.to_string(), params);
+        server.apply_notification(notification).unwrap();
+        server.check_pending().unwrap();
+    };
+    let hover = |server: &Server, text: &str, needle: &str, nth: usize| {
+        let params = place(
+            &Url::from_file_path(&utils_file).unwrap(),
+            text,
+            needle,
+            nth,
+        );
+        let request = Request::new(RequestId::from(1), "textDocument/hover".to_string(), params);
+        let Response { result, error, .. } = server.answer_request(request);
+        assert!(error.is_none(), "{error:?}");
+        result.unwrap()["contents"]["value"].clone()
+    };
+    let shown = |facts: &str, line: u32| {
+        json!(format!(
+            "```peeper\n{facts}\n```\n\n---\n\n*in* `app:utils` *· line {line}*\n"
+        ))
+    };
+    notify(&mut server, "textDocument/didOpen", &main_file, main);
+    // Checked again alone, as `main`, which makes the copies, is reused.
+    let edited = utils.replace("return 1;", "return 10;");
+    let steps = [
+        ("textDocument/didOpen", &utils_file, utils, utils),
+        (
+            "textDocument/didChange",
+            &main_file,
+            "fn main() {}\n",
+            utils,
+        ),
+        ("textDocument/didChange", &utils_file, &*edited, &*edited),
+    ];
+    for (method, file, text, utils) in steps {
+        notify(&mut server, method, file, text);
+        // A name of each branch, and a module constant.
+        let small = shown("fn Small() -> i32 { /* ... */ }", 1);
+        assert_eq!(hover(&server, utils, "Small", 1), small);
+        assert_eq!(
+            hover(&server, utils, "Large", 1),
+            shown("fn Large() -> i32 { /* ... */ }", 2)
+        );
+        assert_eq!(
+            hover(&server, utils, "Limit", 1),
+            shown("const Limit: i32 = 3", 3)
+        );
+        // Its variables: one of a type every copy has, at a use.
+        assert_eq!(hover(&server, utils, "kept", 1), shown("kept: i32", 5));
+        // No call copies `Unused`. What it calls is found, a call that
+        // would make a copy too; a `T` it is given is no one type.
+        assert_eq!(hover(&server, utils, "Small", 2), small);
+        assert_eq!(
+            hover(&server, utils, "Pick", 1),
+            shown(
+                "fn Pick(const N: usize, value: i32) -> i32 { /* ... */ }",
+                4
+            )
+        );
+        assert_eq!(hover(&server, utils, "given", 1), shown("given", 8));
+        assert_eq!(hover(&server, utils, "held", 0), shown("mut held", 9));
+        // Each name once: the copies of `Pick` add none.
+        let facts = &server.checked[&folder].facts[&utils_file];
+        let declarations = facts
+            .iter()
+            .filter(|fact| matches!(fact.kind, CachedKind::Declaration { .. }));
+        assert_eq!(declarations.count(), 5);
+    }
+    // What a body with no type for its `T` reports is not shown.
+    assert_eq!(server.checked[&folder].results.diagnostics().count(), 0);
+}
+
 /// A file the project's entry does not import is checked while it is open.
 #[test]
 fn checks_an_open_file_nothing_imports() {

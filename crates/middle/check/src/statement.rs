@@ -10,6 +10,7 @@ use std::num::NonZeroU32;
 use arena::Id;
 use arena::List;
 use diagnostics::Diagnostic;
+use model::ConstArguments;
 use model::FunctionCopy;
 use model::constant::Value;
 use model::semantic_types::ConstArgument;
@@ -32,6 +33,7 @@ use crate::Checker;
 use crate::Checking;
 use crate::builder::Declared;
 use crate::builder::ThirBuilder;
+use crate::declaration::const_parameter;
 use crate::function::function_declaration;
 use crate::scope::report_redeclared;
 
@@ -41,7 +43,10 @@ impl<L: Checked> Checker<'_, L> {
     /// (`Checking`), with `has_errors` set when it has an error (`Body`);
     /// what `body` held is dropped, its memory kept. False, with `body`
     /// untouched, for a function without a body or whose signature had
-    /// an error.
+    /// an error. A function with `const` parameters given none is checked
+    /// as its signature is, with no type for a `const T: type`
+    /// (`own_arguments`): what its body names is found, and what it
+    /// reports means nothing.
     pub fn check_body(
         &mut self,
         copy: FunctionCopy,
@@ -68,6 +73,12 @@ impl<L: Checked> Checker<'_, L> {
         };
         let (parameters, result) = (parameters.clone(), *result);
         let tree = &self.modules[module].ast;
+        let arguments = match const_parameter(tree, function.signature) {
+            Some(_) if arguments == ConstArguments::NONE => {
+                self.own_arguments(tree, function.signature)
+            }
+            _ => arguments,
+        };
         let checking = Checking {
             definition,
             arguments,

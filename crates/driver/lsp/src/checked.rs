@@ -10,6 +10,7 @@ use std::path::PathBuf;
 use lsp_types::CodeAction;
 use model::ModuleId;
 use model::semantic_types::Constant;
+use model::semantic_types::TypeId;
 use model::semantic_types::Types;
 use model::semantic_types::value_text;
 use model::thir;
@@ -117,8 +118,10 @@ pub(crate) struct CachedFact {
 #[derive(Clone)]
 pub(crate) enum CachedKind {
     /// A variable of a body, this name being its declaration: whether it is
-    /// `mut`, and its type's text.
-    Variable { mutable: bool, ty: String },
+    /// `mut`, and its type's text; `None` for a type the check did not
+    /// find, as after an error, or in a function's own body for a type of
+    /// its `const T: type`, which only a copy knows.
+    Variable { mutable: bool, ty: Option<String> },
     /// A `const` of a body or of the module, this name being its
     /// declaration, with its checked type and value; `None` when it had an
     /// error.
@@ -162,7 +165,9 @@ impl CachedFact {
                         let variable = body.variables[variable];
                         CachedKind::Variable {
                             mutable: variable.mutable,
-                            ty: model::program::type_text(&program.modules, types, variable.ty),
+                            ty: (variable.ty != TypeId::INVALID).then(|| {
+                                model::program::type_text(&program.modules, types, variable.ty)
+                            }),
                         }
                     }
                     Local::Constant(constant) => CachedKind::Constant {

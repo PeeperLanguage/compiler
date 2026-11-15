@@ -127,7 +127,9 @@ impl Server<'_> {
         };
         let shown = match declared {
             Some(CachedKind::Literal { ty }) => ty.clone(),
-            Some(CachedKind::Variable { mutable, ty }) => binding(*mutable, token.kind.text(), ty),
+            Some(CachedKind::Variable { mutable, ty }) => {
+                binding(*mutable, token.kind.text(), ty.as_deref())
+            }
             _ => token.kind.text().to_string(),
         };
         Some(doc_hover(&shown, doc))
@@ -257,7 +259,7 @@ fn declaration_of<'a>(
     match kind {
         CachedKind::Variable { mutable, ty } => {
             let (file, declared) = (&module.ast.file, span);
-            let binding = binding(mutable, file.slice(declared), &ty);
+            let binding = binding(mutable, file.slice(declared), ty.as_deref());
             let hover = hover_text(file, &module.path, declared, &binding, None, None);
             Some((file, declared, hover))
         }
@@ -299,13 +301,19 @@ fn declaration_of<'a>(
     }
 }
 
-/// A variable as hover shows it: `name: ty`, or `mut name: ty`.
-fn binding(mutable: bool, name: &str, ty: &str) -> String {
+/// A variable as hover shows it: `name: ty`, or `mut name: ty`; its name
+/// alone when its type is not known.
+fn binding(mutable: bool, name: &str, ty: Option<&str>) -> String {
+    let mut binding = String::new();
     if mutable {
-        format!("mut {name}: {ty}")
-    } else {
-        format!("{name}: {ty}")
+        binding.push_str("mut ");
     }
+    binding.push_str(name);
+    if let Some(ty) = ty {
+        binding.push_str(": ");
+        binding.push_str(ty);
+    }
+    binding
 }
 
 /// The answer to the request `id` whose parameters are not what it takes.

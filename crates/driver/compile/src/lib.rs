@@ -140,7 +140,9 @@ pub struct CheckedFunction<'c> {
     /// the compile records facts (as for an editor); otherwise none. Only
     /// this function's locals are among their names, explained by `thir`.
     pub facts: &'c [thir::Fact],
-    /// Its path-checked MIR, `None` when checking it found an error.
+    /// Its path-checked MIR, `None` when checking it found an error, and
+    /// for the own body of a function with `const` parameters, which an
+    /// editor's compile checks for its facts and never builds.
     pub mir: Option<mir::Body>,
     pub types: &'c Types, // the program's types so far, which the bodies name
     pub debug_types: &'c DebugTypes, // the program's so far, which `mir` names
@@ -317,7 +319,13 @@ pub fn run(
             };
             continue;
         }
-        compile_module(&mut checker, id, &mut thir, use_output);
+        compile_module(
+            &mut checker,
+            id,
+            &mut thir,
+            options.record_facts,
+            use_output,
+        );
         let interface = interface(&checker, id, &results);
         let found = &mut results[index];
         found.interface = interface;
@@ -410,9 +418,12 @@ fn compile_module(
     checker: &mut Checker<Peeper>,
     module: ModuleId,
     thir: &mut thir::Body,
+    record_facts: bool,
     use_output: &mut dyn FnMut(Output),
 ) {
     let tree = &checker.modules[module.index()].ast;
+    // The functions with `const` parameters, built only as their copies.
+    let mut copied = Vec::new();
     for (index, declaration) in tree.declarations().enumerate() {
         let definition = DefId {
             module,
@@ -424,6 +435,7 @@ fn compile_module(
                 if check::declaration::const_parameter(tree, function.signature).is_some() =>
             {
                 checker.function_type(definition, function.name.span);
+                copied.push((definition, function.name.span));
             }
             ast::Decl::Function(_) => {
                 let function = FunctionCopy {
@@ -446,6 +458,32 @@ fn compile_module(
     // The copies the module's bodies made, and those their bodies made.
     while let Some(copy) = checker.next_copy() {
         build_function(checker, module, copy, thir, use_output);
+    }
+    // An editor asks about the text of such a function whether or not a
+    // call copies it, so its own body is checked for its facts. Last, when
+    // nothing else is left to report here: with no type for a `const T:
+    // type`, what the body reports means nothing and is dropped.
+    for (definition, name) in copied.into_iter().filter(|_| record_facts) {
+        let function = FunctionCopy {
+            definition,
+            arguments: ConstArguments::NONE,
+        };
+        let reported = checker.module_checks[module.index()].diagnostics.len();
+        if !checker.check_body(function, name, thir, true) {
+            continue;
+        }
+        let checks = &mut checker.module_checks[module.index()];
+        checks.diagnostics.truncate(reported);
+        let facts = std::mem::take(&mut checks.facts);
+        use_output(Output::Function(CheckedFunction {
+            function,
+            module,
+            thir,
+            facts: &facts,
+            mir: None,
+            types: &checker.types,
+            debug_types: &checker.debug_types.table,
+        }));
     }
     let facts = std::mem::take(&mut checker.module_checks[module.index()].facts);
     use_output(Output::Facts {

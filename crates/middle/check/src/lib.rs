@@ -355,9 +355,9 @@ impl<'p, L: Checked> Checker<'p, L> {
     }
 
     /// Whether the declaration being checked is a copy of a function with
-    /// `const T: type` parameters (`copy_type`). A function's own signature,
-    /// checked with invalid types (`own_arguments`), is none; its own body is
-    /// never built.
+    /// `const T: type` parameters (`copy_type`). A function's own signature
+    /// and its own body, checked with invalid types (`own_arguments`), are
+    /// none.
     pub(crate) fn in_copy(&self) -> bool {
         let checking = self
             .internals

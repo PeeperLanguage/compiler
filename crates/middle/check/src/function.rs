@@ -96,6 +96,13 @@ impl<L: Checked> Checker<'_, L> {
             .last()
             .expect("a call is being checked")
             .copy();
+        // A function's own body (`check_body`) is checked for its names
+        // only, so it makes no copy.
+        if made_inside.arguments != ConstArguments::NONE
+            && !self.internals.function_copies.contains_key(&made_inside)
+        {
+            return TypeId::INVALID;
+        }
         let (depth, reported_in) = match self.internals.function_copies.get(&made_inside) {
             Some(inside) => (inside.depth + 1, inside.reported_in),
             None => (1, self.current_module()),

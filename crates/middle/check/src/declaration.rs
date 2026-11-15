@@ -95,7 +95,7 @@ impl<L: Checked> Checker<'_, L> {
     /// any copy: an invalid type for each `const` parameter. Only a type one
     /// is read as one (`resolve_global`), and an invalid type reports
     /// nothing.
-    fn own_arguments(
+    pub(crate) fn own_arguments(
         &mut self,
         tree: &ast::Tree<L>,
         signature: ast::Signature<L>,
