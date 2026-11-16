@@ -22,7 +22,11 @@ pub type TypeStartRule<L> = fn(&mut Parser<L>, u32) -> Id<Type<L>>;
 pub(crate) const fn starts_core_type(kind: TokenKind) -> bool {
     matches!(
         kind,
-        TokenKind::Ident | TokenKind::Ampersand | TokenKind::AndAnd | TokenKind::Fn
+        TokenKind::Ident
+            | TokenKind::Ampersand
+            | TokenKind::AndAnd
+            | TokenKind::Fn
+            | TokenKind::Type
     )
 }
 
@@ -57,6 +61,12 @@ impl<L: Grammar> Parser<L> {
                     self.add(t.span.start, Type::Reference { mutable, target })
                 }
                 TokenKind::Fn => self.function_type(),
+                // Read wherever a type is written: the checker says where
+                // `type` belongs, once, for every place.
+                TokenKind::Type => {
+                    self.next();
+                    self.add(t.span.start, Type::Type)
+                }
                 _ => {
                     if let Some(read) = L::rules().type_starts[t.kind as usize] {
                         self.next();

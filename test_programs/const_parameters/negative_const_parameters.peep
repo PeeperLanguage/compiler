@@ -5,6 +5,13 @@ fn Size(const T: type) -> usize {
 
 // `type` is only for a `const` parameter, which is one value.
 fn Plain(t: type) {} //~ error[P0011]: `type` is the type of a `const` parameter only: `const T: type`
+
+// Nor is it the type of anything else, wherever a type is written.
+struct Kinds { kind: type } //~ error[P0011]: `type` is the type of a `const` parameter only: `const T: type`
+fn Kind() -> type { } //~ error[P0011]: `type` is the type of a `const` parameter only: `const T: type`
+fn Nested(kinds: &[2]type) { //~ error[P0011]: `type` is the type of a `const` parameter only: `const T: type`
+    let kind: type; //~ error[P0011]: `type` is the type of a `const` parameter only: `const T: type`
+}
 fn Changed(const mut n: i32) {} //~ error[P0005]: a `const` parameter is one value known when compiling, so it takes no `mut` or `...`
 fn Many(const n: ...i32) {} //~ error[P0005]: a `const` parameter is one value known when compiling, so it takes no `mut` or `...`
 fn Typed(const T: type, const value: T) {} //~ error[T0043]: `const` values whose type names a type parameter are not supported yet

@@ -349,9 +349,6 @@ impl<L: Grammar> Parser<L> {
             }
             let element = self.type_expr();
             self.add(start, Type::Variadic { mutable, element })
-        } else if self.at(TokenKind::Type) {
-            let start = self.next().span.start;
-            self.add(start, Type::Type)
         } else {
             self.type_expr()
         };
