@@ -8,6 +8,7 @@ use std::fmt::Write;
 
 use crate::Callee;
 use crate::DefId;
+use crate::FunctionCopy;
 use crate::ModuleId;
 use crate::constant::Value;
 use crate::semantic_types::Constant;
@@ -113,6 +114,9 @@ pub enum FactKind {
     Name(Symbol),
     /// A number or string literal: the type it got.
     Literal(TypeId),
+    /// The name of a function with type or `const` parameters, where it is
+    /// called: the copy the call made, and that copy's function type.
+    Copy { function: FunctionCopy, ty: TypeId },
 }
 
 /// A parameter or a `let` binding, or one the checker makes.

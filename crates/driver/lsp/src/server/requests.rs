@@ -196,6 +196,7 @@ impl Server<'_> {
                 let kind = CachedKind::Declaration {
                     file: file.clone(),
                     position: position as u32,
+                    copy: None,
                 };
                 Some((checked, module, CachedFact { span, kind }))
             })
@@ -268,10 +269,15 @@ fn declaration_of<'a>(
             let mut declarations = tree.decls.ids();
             let declaration = declarations
                 .find(|&declaration| tree.decls[declaration].name().span == declared)?;
-            let hover = declaration_hover(tree, declaration, &module.path, text.as_ref(), false);
+            let hover =
+                declaration_hover(tree, declaration, &module.path, text.as_ref(), None, false);
             Some((&tree.file, declared, hover))
         }
-        CachedKind::Declaration { file, position } => {
+        CachedKind::Declaration {
+            file,
+            position,
+            copy,
+        } => {
             let declared_in = program.module_of(&file)?;
             let tree = &declared_in.ast;
             // In range: a module whose declarations changed changes
@@ -285,8 +291,9 @@ fn declaration_of<'a>(
                 _ => None,
             });
             let elsewhere = declared_in.path != module.path;
-            let hover =
-                declaration_hover(tree, declaration, &declared_in.path, constant, elsewhere);
+            let path = &declared_in.path;
+            let copy = copy.as_deref();
+            let hover = declaration_hover(tree, declaration, path, constant, copy, elsewhere);
             Some((&tree.file, declared, hover))
         }
         CachedKind::Local { .. } => unreachable!("`name_at` gives a local's declaration"),

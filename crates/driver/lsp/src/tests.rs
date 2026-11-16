@@ -876,6 +876,8 @@ fn Unused(const T: type, given: T) -> T {
     let mut held = given;
     return Pick(0, Small()) as T;
 }
+fn Keep<T>(kept: &T, rest: ...i32) -> &T in kept { return kept; }
+fn Caller() -> i32 { let one = Pick(0, 1); return Keep(&one, 2).*; }
 ";
     let main = "import \"app:utils\";
 fn main() {
@@ -953,6 +955,29 @@ fn main() {
                 4
             )
         );
+        // A call shows the copy it made, then the function as written.
+        assert_eq!(
+            hover(&server, utils, "Pick", 2),
+            shown(
+                "fn Pick(const N: usize = 0, value: i32) -> i32\n\n// from\nfn Pick(const N: usize, value: i32) -> i32 { /* ... */ }",
+                4
+            )
+        );
+        assert_eq!(
+            hover(&server, utils, "Keep", 1),
+            shown(
+                "fn Keep(kept: &i32, rest: ...i32) -> &i32 in kept\n\n// from\nfn Keep<T>(kept: &T, rest: ...i32) -> &T in kept { /* ... */ }",
+                12
+            )
+        );
+        // Its declaration is no call.
+        assert_eq!(
+            hover(&server, utils, "Keep", 0),
+            shown(
+                "fn Keep<T>(kept: &T, rest: ...i32) -> &T in kept { /* ... */ }",
+                12
+            )
+        );
         assert_eq!(hover(&server, utils, "given", 1), shown("given", 8));
         assert_eq!(hover(&server, utils, "held", 0), shown("mut held", 9));
         // Each name once: the copies of `Pick` add none.
@@ -960,7 +985,7 @@ fn main() {
         let declarations = facts
             .iter()
             .filter(|fact| matches!(fact.kind, CachedKind::Declaration { .. }));
-        assert_eq!(declarations.count(), 5);
+        assert_eq!(declarations.count(), 7); // `Caller` calls two
     }
     // What a body with no type for its `T` reports is not shown.
     assert_eq!(server.checked[&folder].results.diagnostics().count(), 0);

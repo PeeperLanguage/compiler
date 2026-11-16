@@ -1,8 +1,6 @@
 //! A function's body built to checked MIR (THIR, lowering, the path checks),
 //! and calls run at compile time on it (`evaluate_call`).
 
-use std::sync::Arc;
-
 use diagnostics::Diagnostic;
 use eval::interpreter::ADDRESS_NOT_KNOWN;
 use eval::interpreter::ConstantShape;
@@ -184,16 +182,7 @@ impl<L: Checked> Checker<'_, L> {
         let file = &modules[called_in.index()].ast.file;
         let into = &mut self.module_checks[into.index()].diagnostics;
         for diagnostic in found {
-            let place = |diagnostic: &Diagnostic| {
-                let label = diagnostic.labels.first();
-                label.map(|label| (Arc::as_ptr(&label.file), label.span))
-            };
-            let same = |earlier: &Diagnostic| {
-                earlier.code == diagnostic.code
-                    && earlier.message == diagnostic.message
-                    && place(earlier) == place(&diagnostic)
-            };
-            if !into.iter().any(same) {
+            if !into.iter().any(|earlier| earlier.reports_same(&diagnostic)) {
                 let message = format!("in `{name}`, the copy made for this call");
                 into.push(diagnostic.label(file, called_at, message));
             }

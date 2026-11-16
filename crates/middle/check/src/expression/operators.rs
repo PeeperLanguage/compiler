@@ -208,7 +208,10 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
         // Matching the right operand to a left one the operator rejects would
         // blame the right one.
         let right = if shift || !left_fits {
-            self.check_expr(right_operand, None)
+            // Beside a left operand of no known type, the right one's is
+            // not known either: a `none` there needs none.
+            let unknown = (left.ty == TypeId::INVALID).then_some(TypeId::INVALID);
+            self.check_expr(right_operand, unknown)
         } else {
             let right_type = if pointer_offset {
                 self.checker.types.usize

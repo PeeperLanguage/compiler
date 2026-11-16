@@ -127,6 +127,26 @@ pub fn extern_symbol<L: Language>(
     Ok(symbol)
 }
 
+/// What a copy of the function with `signature`, in `tree`, is made for, in
+/// the order its `ConstArguments` hold them: each type parameter, `<T>`,
+/// then each `const` parameter. `Some` is where one that stands for a type
+/// is named, `<T>` or `const T: type`; `None` is a `const` value.
+pub fn copy_parameters<L: Language>(
+    tree: &ast::Tree<L>,
+    signature: ast::Signature<L>,
+) -> impl Iterator<Item = Option<Span>> {
+    let type_parameters = (tree.children.lists.items(signature.type_parameters))
+        .map(|parameter| Some(tree.children.names.span(parameter)));
+    let const_parameters = (tree.children.lists.items(signature.parameters))
+        .map(|parameter| tree.children.params[parameter])
+        .filter(|parameter| parameter.constant)
+        .map(|parameter| {
+            let is_type = matches!(tree.types[parameter.ty], ast::Type::Type);
+            is_type.then_some(parameter.name.unwrap_or_default().span)
+        });
+    type_parameters.chain(const_parameters)
+}
+
 /// The name of the attribute on a function the compiler answers itself.
 pub const BUILTIN_ATTRIBUTE: &str = "builtin";
 

@@ -6,8 +6,7 @@
 use arena::Id;
 use arena::List;
 use check::Checker;
-use check::declaration::const_parameter;
-use check::declaration::is_self;
+use check::declaration::first_copy_parameter;
 use check::scope::report_redeclared;
 use diagnostics::Diagnostic;
 use model::DefId;
@@ -133,14 +132,14 @@ impl TypeNode for InterfaceType {
                 .lists
                 .items(method.signature.parameters)
                 .next();
-            if !first.is_some_and(|first| is_self(tree, tree.children.params[first])) {
+            if !first.is_some_and(|first| tree.is_self(tree.children.params[first])) {
                 let message = format!("an interface method takes `self` first: `fn {text}(&self)`");
                 checker.error(diagnostics::INVALID_DECLARATION, message, method.name.span);
                 methods.push(TypeId::INVALID);
                 continue;
             }
-            if let Some(span) = const_parameter(tree, method.signature) {
-                let message = "a call through an interface reference cannot pick a copy, so an interface method takes no `const` parameter";
+            if let Some(span) = first_copy_parameter(tree, method.signature) {
+                let message = "a call through an interface reference cannot pick a copy, so an interface method takes no type or `const` parameter";
                 checker.error(diagnostics::INVALID_DECLARATION, message, span);
                 methods.push(TypeId::INVALID);
                 continue;

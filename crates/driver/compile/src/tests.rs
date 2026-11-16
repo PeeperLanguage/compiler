@@ -1214,7 +1214,8 @@ fn a_prelude_edit_checks_what_it_changes() {
 
 /// What a copy's check finds goes to the module that called for it, with
 /// that call marked, also from a copy made inside another copy; an error
-/// every copy finds in the function's text is reported once.
+/// every copy finds in the function's text is reported once, by the
+/// function's own body, in its module.
 #[test]
 fn copies_report_once_to_the_calling_module() {
     let program = load(&[
@@ -1248,30 +1249,20 @@ fn copies_report_once_to_the_calling_module() {
             .map(|diagnostic| (diagnostic.message.clone(), labels(diagnostic)))
             .collect()
     };
-    assert_eq!(found(&results.modules[0]), []);
-    let call = |argument: &str| format!("list::Twice({argument})");
+    let wrong_whatever_its_types = (
+        "mismatched types: expected `i32`, found `bool`".to_string(),
+        vec!["true ".to_string()],
+    );
+    assert_eq!(found(&results.modules[0]), [wrong_whatever_its_types]);
     assert_eq!(
         found(&results.modules[1]),
-        [
-            (
-                "mismatched types: expected `i32`, found `bool`".to_string(),
-                vec![
-                    "true ".to_string(),
-                    // Copies are built newest first.
-                    format!(
-                        "{} in `Twice<i64>`, the copy made for this call",
-                        call("i64, 2")
-                    ),
-                ]
-            ),
-            (
-                "operator `+` cannot be applied to `bool`".to_string(),
-                vec![
-                    "x + x ".to_string(),
-                    "add(T, x) in `add<bool>`, the copy made for this call".to_string(),
-                ]
-            ),
-        ]
+        [(
+            "operator `+` cannot be applied to `bool`".to_string(),
+            vec![
+                "x + x ".to_string(),
+                "add(T, x) in `add<bool>`, the copy made for this call".to_string(),
+            ]
+        ),]
     );
 }
 
@@ -1327,16 +1318,31 @@ fn a_function_with_const_parameters_records_its_signature_once() {
     assert_eq!(found.iter().filter(|&&text| text == "i64").count(), 1);
 }
 
-/// An editor's compile checks the own body of a function with `const`
-/// parameters for its facts, and reports what a build reports: nothing of
-/// that body, which has no type for its `T`, and nothing of a copy only
-/// that body would make, here one whose error is in the copy alone.
+/// The own body of a function with `const` parameters, which no call
+/// copies, is checked with no type for its `T`: it reports what is wrong
+/// whatever `T` is, here an unknown name, nothing of what has `T`'s type,
+/// and nothing of a copy only that body would make, here one whose error
+/// is in the copy alone. An editor's compile reports what a build does.
 #[test]
-fn an_own_body_reports_nothing_and_makes_no_copy() {
+fn an_own_body_reports_what_no_type_changes_and_makes_no_copy() {
     let utils = "fn Half(const T: type) -> T { return 1.5; }
 fn Unused(const T: type, given: T) -> i32 { return Half(i32) + missing + given; }";
     let main = "import \"app:utils\";\nfn main() {}";
     let program = load(&[("app:utils", utils), ("app:main", main)]);
+    let messages = |found: &Results| -> Vec<String> {
+        let diagnostics = found.diagnostics();
+        diagnostics
+            .map(|diagnostic| diagnostic.message.clone())
+            .collect()
+    };
+    let build = run(
+        &program,
+        x86_64(),
+        Results::default(),
+        Options::default(),
+        &mut |_| {},
+    );
+    assert_eq!(messages(&build), ["unknown name `missing`"]);
     let mut built = Vec::new();
     let found = run(
         &program,
@@ -1353,7 +1359,7 @@ fn Unused(const T: type, given: T) -> i32 { return Half(i32) + missing + given; 
             }
         },
     );
-    assert_eq!(found.diagnostics().count(), 0);
+    assert_eq!(messages(&found), messages(&build));
     // The own bodies, with no MIR, then `main`.
     let expected = [("Half", false), ("Unused", false), ("main", true)];
     assert_eq!(

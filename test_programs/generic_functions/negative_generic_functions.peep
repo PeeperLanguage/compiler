@@ -1,0 +1,78 @@
+iface Shape {
+    fn Area(&self) -> i32,
+}
+
+struct Square {
+    side: i32,
+}
+
+fn Square::Area(&self) -> i32 {
+    return self.side;
+}
+
+fn Id<T>(value: T) -> T {
+    return value;
+}
+
+fn Read<T>(place: &T) -> T {
+    return place.*;
+}
+
+fn Both<T>(first: T, second: T) -> T {
+    return first;
+}
+
+// No parameter's type names `T`.
+fn Make<T>() -> i32 {
+    return 1;
+}
+
+// Checked for each copy: this one is of a type that cannot be added.
+fn Add<T>(a: T, b: T) -> T {
+    return a + b; //~ error[T0004]: operator `+` cannot be applied to `bool`
+}
+
+#[extern("outside")]
+fn Outside<T>(value: T); //~ error[P0005]: an `extern` function is one C function, so it takes no type or `const` parameter
+
+fn main() {
+    Make(); //~ error[T0004]: the arguments of `Make` do not say what its `T` is
+    Read(5); //~ error[T0004]: the arguments of `Read` do not say what its `T` is
+    Both(1, true); //~ error[T0001]: mismatched types: expected `i32`, found `bool`
+    Id(missing); //~ error[T0002]: unknown name `missing`
+    Id(); //~ error[T0006]: `Id` takes 1 argument, but 0 were given
+    Id(1, 2); //~ error[T0006]: `Id` takes 1 argument, but 2 were given
+    Add(true, false);
+    let wide: f64 = Id(1); //~ error[T0001]: mismatched types: expected `f64`, found `i32`
+    let shape: Shape = Square.{ side = 1 };
+    Id(Nothing()); //~ error[T0004]: this expression has no value to pass
+    Id(shape); //~ error[T0043]: owned interfaces as type arguments are not supported yet
+}
+
+fn Twice<T, T>(value: T) -> T { //~ error[T0003]: `T` is already declared in this function
+    return value;
+}
+
+// A `const T: type` is a type of the function too.
+fn Named<T>(const T: type, value: T) -> T { //~ error[T0003]: `T` is already declared in this function
+    return value;
+}
+
+fn Nothing() {}
+
+struct Pair {
+    left: i32,
+}
+
+// No call copies it, so its `T` is no one type: what is of that type is
+// not known and reports nothing, and the rest is checked as written.
+fn Uncalled<T>(const COUNT: usize, value: T, pair: Pair) -> T {
+    let kept = value;
+    let doubled = kept + kept;
+    if is_pointer(T) {
+        println(value as rawptr == none, COUNT + 1);
+    }
+    absent(); //~ error[T0002]: unknown name `absent`
+    println(pair.right); //~ error[T0010]: `Pair` has no field `right`
+    return doubled;
+}

@@ -33,7 +33,7 @@ use crate::Checker;
 use crate::Checking;
 use crate::builder::Declared;
 use crate::builder::ThirBuilder;
-use crate::declaration::const_parameter;
+use crate::declaration::first_copy_parameter;
 use crate::function::function_declaration;
 use crate::scope::report_redeclared;
 
@@ -43,10 +43,10 @@ impl<L: Checked> Checker<'_, L> {
     /// (`Checking`), with `has_errors` set when it has an error (`Body`);
     /// what `body` held is dropped, its memory kept. False, with `body`
     /// untouched, for a function without a body or whose signature had
-    /// an error. A function with `const` parameters given none is checked
-    /// as its signature is, with no type for a `const T: type`
-    /// (`own_arguments`): what its body names is found, and what it
-    /// reports means nothing.
+    /// an error. A function a copy is made for, given nothing, is checked
+    /// as its signature is, with no type for a type parameter and no value
+    /// for a `const` one (`own_arguments`): what its body names is found,
+    /// and it reports what is wrong whatever those are.
     pub fn check_body(
         &mut self,
         copy: FunctionCopy,
@@ -73,7 +73,7 @@ impl<L: Checked> Checker<'_, L> {
         };
         let (parameters, result) = (parameters.clone(), *result);
         let tree = &self.modules[module].ast;
-        let arguments = match const_parameter(tree, function.signature) {
+        let arguments = match first_copy_parameter(tree, function.signature) {
             Some(_) if arguments == ConstArguments::NONE => {
                 self.own_arguments(tree, function.signature)
             }
@@ -101,7 +101,10 @@ impl<L: Checked> Checker<'_, L> {
                 .types
                 .arguments(arguments)
                 .to_vec()
-                .into_iter();
+                .into_iter()
+                // A type parameter, `<T>`, is a type (`resolve_global`); those
+                // come first (`copy_parameters`).
+                .skip(function.signature.type_parameters.len());
             let mut types = parameters.iter();
             for parameter in tree.children.lists.items(function.signature.parameters) {
                 let parameter = tree.children.params[parameter];
@@ -109,8 +112,14 @@ impl<L: Checked> Checker<'_, L> {
                 // A `const` value is a constant of the body; a `const T: type`
                 // is a type (`resolve_global`).
                 if parameter.constant {
-                    if let Some(ConstArgument::Value(constant)) = given.next() {
-                        let constant = builder.body.constants.push(Some(constant), name.span);
+                    let is_type = matches!(tree.types[parameter.ty], ast::Type::Type);
+                    let constant = match given.next() {
+                        Some(ConstArgument::Value(constant)) => Some(constant),
+                        // The function's own body: a value no call gave.
+                        _ => None,
+                    };
+                    if !is_type {
+                        let constant = builder.body.constants.push(constant, name.span);
                         builder.declare(name, Local::Constant(constant));
                     }
                     continue;

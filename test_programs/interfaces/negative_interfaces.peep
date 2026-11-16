@@ -9,7 +9,7 @@ iface Bad {
     fn plain() -> i32, //~ error[P0005]: an interface method takes `self` first: `fn plain(&self)`
     fn twice(&self),
     fn twice(&self), //~ error[T0003]: `twice` is already declared in this interface
-    fn generic<T>(&self, value: T) //~ error[T0043]: generic functions are not supported yet
+    fn generic<T>(&self, value: T) //~ error[P0005]: a call through an interface reference cannot pick a copy, so an interface method takes no type or `const` parameter
 }
 
 struct Square { side: f64 }

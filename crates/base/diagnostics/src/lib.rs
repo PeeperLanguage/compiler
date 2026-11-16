@@ -180,6 +180,17 @@ impl Diagnostic {
         message
     }
 
+    /// Whether it reports what `other` does: the same code and message at
+    /// the same primary place. A function's copies each find again what
+    /// its text has wrong whatever its types are.
+    pub fn reports_same(&self, other: &Diagnostic) -> bool {
+        let place = |diagnostic: &Diagnostic| {
+            let label = diagnostic.labels.first();
+            label.map(|label| (Arc::as_ptr(&label.file), label.span))
+        };
+        self.code == other.code && self.message == other.message && place(self) == place(other)
+    }
+
     /// Whether it is an error, which fails the compile.
     pub fn is_error(&self) -> bool {
         self.code.severity == Severity::Error

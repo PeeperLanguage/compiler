@@ -92,7 +92,8 @@ impl<L: Checked> Checker<'_, L> {
     }
 
     /// What the function of `signature`, in `tree`, is checked with outside
-    /// any copy: an invalid type for each `const` parameter. Only a type one
+    /// any copy: an invalid type for each type parameter, `<T>`, which come
+    /// first, then for each `const` parameter. Only a type one
     /// is read as one (`resolve_global`), and an invalid type reports
     /// nothing.
     pub(crate) fn own_arguments(
@@ -100,9 +101,7 @@ impl<L: Checked> Checker<'_, L> {
         tree: &ast::Tree<L>,
         signature: ast::Signature<L>,
     ) -> ConstArguments {
-        let count = (tree.children.lists.items(signature.parameters))
-            .filter(|&parameter| tree.children.params[parameter].constant)
-            .count();
+        let count = model::program::copy_parameters(tree, signature).count();
         let invalid = ConstArgument::Type(TypeId::INVALID);
         self.types.const_arguments(&vec![invalid; count])
     }
@@ -147,10 +146,10 @@ impl<L: Checked> Checker<'_, L> {
         // A malformed `extern` is still read as one, so its signature gets
         // the C rules.
         let external = symbol != Ok(None);
-        let first_const = const_parameter(tree, signature);
+        let first_const = first_copy_parameter(tree, signature);
         if external && let Some(span) = first_const {
             let message =
-                "an `extern` function is one C function, so it takes no `const` parameter";
+                "an `extern` function is one C function, so it takes no type or `const` parameter";
             return self.error(diagnostics::INVALID_DECLARATION, message, span);
         }
         let module = definition.module.index();
@@ -262,8 +261,20 @@ impl<L: Checked> Checker<'_, L> {
         external: bool,
     ) -> TypeId {
         let tree = &self.module().ast;
-        if let Some(parameter) = tree.children.lists.items(signature.type_parameters).next() {
-            return self.not_supported(tree.children.names.span(parameter), "generic functions");
+        // Each name that stands for a type, `<T>` or `const T: type`, once.
+        let type_names: Vec<Span> = (model::program::copy_parameters(tree, signature))
+            .flatten()
+            .collect();
+        for (place, &again) in type_names.iter().enumerate() {
+            let name = tree.file.slice(again);
+            let mut earlier = type_names[..place].iter();
+            if let Some(&first) = earlier.find(|&&first| tree.file.slice(first) == name) {
+                let file = &tree.file;
+                self.report(scope::report_redeclared(
+                    file, name, "function", again, first,
+                ));
+                return TypeId::INVALID;
+            }
         }
         let mut parameters = Vec::with_capacity(signature.parameters.len());
         let mut variadic = false;
@@ -289,10 +300,9 @@ impl<L: Checked> Checker<'_, L> {
                 // which cannot know a type parameter yet: only the copy does.
                 // Any other error in it was reported.
                 let tree = &self.module().ast;
-                let type_parameters: Vec<&str> = (tree.children.lists.items(signature.parameters))
-                    .map(|parameter| tree.children.params[parameter])
-                    .filter(|parameter| matches!(tree.types[parameter.ty], ast::Type::Type))
-                    .filter_map(|parameter| Some(parameter.name?.text(&tree.file)))
+                let type_parameters: Vec<&str> = (model::program::copy_parameters(tree, signature))
+                    .flatten()
+                    .map(|name| tree.file.slice(name))
                     .collect();
                 if names_type_parameter(tree, parameter.ty, &type_parameters) {
                     return self
@@ -308,7 +318,7 @@ impl<L: Checked> Checker<'_, L> {
                 let message = "a `...` parameter must be the last one";
                 return self.error(diagnostics::INVALID_DECLARATION, message, span);
             }
-            if is_self(tree, parameter) {
+            if tree.is_self(parameter) {
                 let message = match (position, has_owner) {
                     (0, true) => None,
                     (0, false) => {
@@ -395,7 +405,8 @@ impl<L: Checked> Checker<'_, L> {
             let ty = function.map(|function| (function, self.function_type(function, span)));
             let generic = |function: DefId| {
                 let tree = &modules[function.module.index()].ast;
-                const_parameter(tree, function_declaration(modules, function).signature).is_some()
+                first_copy_parameter(tree, function_declaration(modules, function).signature)
+                    .is_some()
             };
             let message = match ty {
                 Some((function, _)) if generic(function) => {
@@ -924,10 +935,17 @@ impl<L: Checked> Checker<'_, L> {
     pub(crate) fn resolve_type_argument(&mut self, argument: Id<ast::Expr<L>>) -> TypeId {
         let resolved = self.expression_type(argument);
         let span = self.module().ast.exprs.span(argument);
-        if self.is_interface(resolved) {
+        let resolved = self.type_argument(resolved, span);
+        self.value_type_at(resolved, span)
+    }
+
+    /// `ty`, a type argument written or found at `span`, when a copy can be
+    /// made for it; an owned interface is reported.
+    pub(crate) fn type_argument(&mut self, ty: TypeId, span: Span) -> TypeId {
+        if self.is_interface(ty) {
             return self.not_supported(span, "owned interfaces as type arguments");
         }
-        self.value_type_at(resolved, span)
+        ty
     }
 
     /// `resolve_type_argument` before it is made a value's type, as
@@ -1056,30 +1074,31 @@ impl<L: Checked> Checker<'_, L> {
     }
 }
 
-/// Where the first `const` parameter of `signature`, in `tree`, is written,
-/// if it has one.
-pub fn const_parameter<L: Language>(
+/// Where the first parameter of `signature`, in `tree`, that a copy is
+/// made for is written, if it has one: a type parameter, `<T>`, or a
+/// `const` parameter.
+pub fn first_copy_parameter<L: Language>(
     tree: &ast::Tree<L>,
     signature: ast::Signature<L>,
 ) -> Option<Span> {
+    if let Some(parameter) = tree.children.lists.items(signature.type_parameters).next() {
+        return Some(tree.children.names.span(parameter));
+    }
     let mut parameters = tree.children.lists.items(signature.parameters);
     let parameter = parameters.find(|&parameter| tree.children.params[parameter].constant)?;
     Some(tree.children.params.span(parameter))
 }
 
-/// Whether the type written `ty` in `tree` names one of `parameters`, the
-/// names of a function's `const T: type` parameters, which only its copies
-/// know. A path names another module's type, and a type the checker
-/// refuses (`resolve_type`), such as `?T`, is reported: neither names one.
-/// Its own function, as it recurses.
-fn names_type_parameter<L: Language>(
+/// The type written inside the type written `ty` in `tree`, where a type
+/// parameter can be named: a reference's or a pointer's target, or the
+/// element of a slice, a `...`, an array or a range. `None` for a name and
+/// for a type not looked into: a path names another module's type, and a
+/// type the checker refuses (`resolve_type`), such as `?T`, is reported.
+fn written_inside<L: Language>(
     tree: &ast::Tree<L>,
     ty: Id<ast::Type<L>>,
-    parameters: &[&str],
-) -> bool {
-    // Types written in types, `& & ... T`, are a deep recursion.
-    source::grow_stack(|| match tree.types[ty] {
-        ast::Type::Name => parameters.contains(&tree.file.slice(tree.types.span(ty))),
+) -> Option<Id<ast::Type<L>>> {
+    match tree.types[ty] {
         ast::Type::Bracketed { inner: written, .. }
         | ast::Type::Reference {
             target: written, ..
@@ -1089,30 +1108,84 @@ fn names_type_parameter<L: Language>(
         }
         | ast::Type::Variadic {
             element: written, ..
-        } => names_type_parameter(tree, written, parameters),
-        ast::Type::Path(_)
-        | ast::Type::Generic { .. }
-        | ast::Type::Function(_)
-        | ast::Type::Owner
-        | ast::Type::Type
-        | ast::Type::Invalid => false,
+        } => Some(written),
         // shortcut: of a feature's types, only a pointer's target and an
         // array's element are looked into; a struct's fields and an
         // interface's methods are taken to name no type parameter, as a
         // written one is not supported yet.
-        ast::Type::Feature(ty) => (L::pointee(&ty).or_else(|| L::element(&ty)))
-            .is_some_and(|written| names_type_parameter(tree, written, parameters)),
-    })
+        ast::Type::Feature(ty) => L::pointee(&ty).or_else(|| L::element(&ty)),
+        ast::Type::Name
+        | ast::Type::Path(_)
+        | ast::Type::Generic { .. }
+        | ast::Type::Function(_)
+        | ast::Type::Owner
+        | ast::Type::Type
+        | ast::Type::Invalid => None,
+    }
 }
 
-/// Whether `parameter` of a function in `tree` is `self`, `&self` or
-/// `&mut self`: of the type the function belongs to.
-pub fn is_self<L: Language>(tree: &ast::Tree<L>, parameter: ast::Param<L>) -> bool {
-    let taken = match tree.types[parameter.ty] {
-        ast::Type::Reference { target, .. } => target,
-        _ => parameter.ty,
-    };
-    matches!(tree.types[taken], ast::Type::Owner)
+/// Finds the type one of the type parameters `names` of a function in
+/// `tree` stands for, from one argument: its parameter is written `written`
+/// and the argument has the type `ty`. The type is put in `found`, at the
+/// name's place, unless an earlier argument gave it one. Each type written
+/// around the name (`written_inside`) takes the argument's type one step
+/// in; an argument of another shape finds another type, or none, and the
+/// call reports the mismatch.
+pub(crate) fn find_type_argument<L: Language>(
+    tree: &ast::Tree<L>,
+    types: &Types,
+    written: Id<ast::Type<L>>,
+    ty: TypeId,
+    names: &[&str],
+    found: &mut [Option<TypeId>],
+) {
+    let (mut written, mut ty) = (written, ty);
+    while let Some(inside) = written_inside(tree, written) {
+        ty = match (&tree.types[written], &types[ty]) {
+            // A `&[3]T` is given where a `&[]T` is taken.
+            (ast::Type::Slice { .. }, Type::Reference { target, .. }) => match &types[*target] {
+                Type::Array { element, .. } => *element,
+                _ => return,
+            },
+            (_, Type::Reference { target, .. }) => *target,
+            (
+                _,
+                Type::Slice { element, .. }
+                | Type::Range { element, .. }
+                | Type::Array { element, .. },
+            ) => *element,
+            (
+                _,
+                Type::RawPointer {
+                    target: Some(target),
+                },
+            ) => *target,
+            _ => return,
+        };
+        written = inside;
+    }
+    let name = tree.file.slice(tree.types.span(written));
+    if let ast::Type::Name = tree.types[written]
+        && let Some(place) = names.iter().position(|&parameter| parameter == name)
+    {
+        found[place].get_or_insert(types.real(ty));
+    }
+}
+
+/// Whether the type written `ty` in `tree` names one of `parameters`, the
+/// names of a function's type parameters, `<T>` or `const T: type`, which
+/// only its copies know.
+pub(crate) fn names_type_parameter<L: Language>(
+    tree: &ast::Tree<L>,
+    ty: Id<ast::Type<L>>,
+    parameters: &[&str],
+) -> bool {
+    let mut ty = ty;
+    while let Some(inside) = written_inside(tree, ty) {
+        ty = inside;
+    }
+    matches!(tree.types[ty], ast::Type::Name)
+        && parameters.contains(&tree.file.slice(tree.types.span(ty)))
 }
 
 #[cfg(test)]

@@ -1,0 +1,94 @@
+//@ run
+//@ target: i686-linux
+
+// A function with type parameters, `<T>`: each call finds what `T` is from
+// its arguments, and a copy of the function is made for it.
+
+struct Point {
+    x: i32,
+}
+
+fn Id<T>(value: T) -> T {
+    return value;
+}
+
+fn Max<T>(a: T, b: T) -> T {
+    if a > b {
+        return a;
+    }
+    return b;
+}
+
+// A type parameter is found inside the type of a parameter.
+fn First<T>(list: &[]T) -> T {
+    return list[0];
+}
+
+fn Head<T>(list: [3]T) -> T {
+    return list[0];
+}
+
+fn Read<T>(place: &T) -> T {
+    return place.*;
+}
+
+fn Set<T>(place: &mut T, value: T) {
+    place.* = value;
+}
+
+fn At<T>(pointer: *T) -> T {
+    return pointer.*;
+}
+
+// Each type parameter has its own type.
+fn Second<T, U>(first: T, second: U) -> U {
+    return second;
+}
+
+// The copy knows its type: what the compiler answers about it is a constant.
+fn Kind<T>(value: T) {
+    if is_int(T) {
+        println("int", bits_of(T), size_of(T));
+    } else {
+        println("other", size_of(T));
+    }
+}
+
+// A `const` parameter is still written at the call.
+fn Scaled<T>(const BY: i32, value: T) -> i32 {
+    return BY * (size_of(T) as i32);
+}
+
+// A type's function takes type parameters too.
+fn Point::With<T>(&self, extra: T) -> T {
+    return extra;
+}
+
+// A copy calls copies, of itself for another type too.
+fn Twice<T>(value: T) -> T {
+    return Id(Id(value));
+}
+
+// A call on constants runs when compiling.
+const SEVEN: i32 = Id(7);
+
+fn main() {
+    println(Id(1), Id(2.5), Id(true), Id("text"));
+    let big: i64 = 9;
+    // The first argument that says what `T` is decides; the next converts.
+    println(Max(3, 7), Max(big, 2), Max(1.5, 0.5));
+    let numbers = [3]i32{4, 5, 6};
+    let view: &[]i32 = &numbers;
+    // A reference to an array is taken as a slice of its elements.
+    println(First(view), First(&numbers), Head(numbers));
+    let mut count = 3;
+    Set(&mut count, 8);
+    // A `&mut` is lent as the `&T` the copy takes.
+    println(Read(&count), Read(&mut count), At(@count));
+    println(Second(1, 2.5), Scaled(3, big), Point.{ x = 1 }.With(2.5), SEVEN, Twice(4));
+    Kind(7);
+    Kind(true);
+    let narrow: u7 = 1;
+    Kind(narrow);
+    Kind(Point.{ x = 1 });
+}

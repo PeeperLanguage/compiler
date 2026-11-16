@@ -332,6 +332,15 @@ pub fn run(
         found.changed = previous_interface != Some(interface);
         let checked = &mut checker.module_checks[index];
         found.diagnostics = std::mem::take(&mut checked.diagnostics);
+        // A copy of another module's function finds again what that
+        // function's own body reported there.
+        let (earlier, found) = results.split_at_mut(index);
+        let found = &mut found[0];
+        let reported = |diagnostic: &Diagnostic| {
+            let mut earlier = earlier.iter().flat_map(|module| &module.diagnostics);
+            earlier.any(|earlier| earlier.reports_same(diagnostic))
+        };
+        found.diagnostics.retain(|diagnostic| !reported(diagnostic));
         let ran = checked.ran_modules.iter();
         found.ran_modules = ran
             .map(|ran| modules[ran.index()].ast.file.path.clone())
@@ -381,8 +390,9 @@ fn find_entry_point(
                         index: index as u32,
                     },
                     function.name.span,
-                    // A `const T: type` parameter is not among its type's.
-                    function.signature.parameters.is_empty(),
+                    // A type or `const T: type` parameter is not among its type's.
+                    function.signature.parameters.is_empty()
+                        && function.signature.type_parameters.is_empty(),
                 ))
             }
             _ => None,
@@ -422,20 +432,38 @@ fn compile_module(
     use_output: &mut dyn FnMut(Output),
 ) {
     let tree = &checker.modules[module.index()].ast;
-    // The functions with `const` parameters, built only as their copies.
-    let mut copied = Vec::new();
     for (index, declaration) in tree.declarations().enumerate() {
         let definition = DefId {
             module,
             index: index as u32,
         };
         match tree.decls[declaration] {
-            // Only its signature: a call makes a copy, built below.
+            // A call makes a copy, built below. Its own body is checked with
+            // no type for a type parameter, where what is of such a type is
+            // unknown and reports nothing: what the body has wrong whatever
+            // its types are is reported here, once, though no call copies
+            // it, and an editor asks about its text.
             ast::Decl::Function(function)
-                if check::declaration::const_parameter(tree, function.signature).is_some() =>
+                if check::declaration::first_copy_parameter(tree, function.signature).is_some() =>
             {
-                checker.function_type(definition, function.name.span);
-                copied.push((definition, function.name.span));
+                let name = function.name.span;
+                checker.function_type(definition, name);
+                let function = FunctionCopy {
+                    definition,
+                    arguments: ConstArguments::NONE,
+                };
+                if checker.check_body(function, name, thir, true) && record_facts {
+                    let facts = std::mem::take(&mut checker.module_checks[module.index()].facts);
+                    use_output(Output::Function(CheckedFunction {
+                        function,
+                        module,
+                        thir,
+                        facts: &facts,
+                        mir: None,
+                        types: &checker.types,
+                        debug_types: &checker.debug_types.table,
+                    }));
+                }
             }
             ast::Decl::Function(_) => {
                 let function = FunctionCopy {
@@ -458,32 +486,6 @@ fn compile_module(
     // The copies the module's bodies made, and those their bodies made.
     while let Some(copy) = checker.next_copy() {
         build_function(checker, module, copy, thir, use_output);
-    }
-    // An editor asks about the text of such a function whether or not a
-    // call copies it, so its own body is checked for its facts. Last, when
-    // nothing else is left to report here: with no type for a `const T:
-    // type`, what the body reports means nothing and is dropped.
-    for (definition, name) in copied.into_iter().filter(|_| record_facts) {
-        let function = FunctionCopy {
-            definition,
-            arguments: ConstArguments::NONE,
-        };
-        let reported = checker.module_checks[module.index()].diagnostics.len();
-        if !checker.check_body(function, name, thir, true) {
-            continue;
-        }
-        let checks = &mut checker.module_checks[module.index()];
-        checks.diagnostics.truncate(reported);
-        let facts = std::mem::take(&mut checks.facts);
-        use_output(Output::Function(CheckedFunction {
-            function,
-            module,
-            thir,
-            facts: &facts,
-            mir: None,
-            types: &checker.types,
-            debug_types: &checker.debug_types.table,
-        }));
     }
     let facts = std::mem::take(&mut checker.module_checks[module.index()].facts);
     use_output(Output::Facts {
@@ -616,7 +618,7 @@ fn interface(checker: &Checker<Peeper>, module: ModuleId, done: &[ModuleResults]
                 .hash(&mut hasher);
             // Another module's call builds a copy of its body, so the body
             // is what that module sees.
-            if check::declaration::const_parameter(tree, function.signature).is_some() {
+            if check::declaration::first_copy_parameter(tree, function.signature).is_some() {
                 tree.file
                     .slice(tree.decls.span(declaration))
                     .hash(&mut hasher);

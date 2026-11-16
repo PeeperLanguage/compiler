@@ -127,13 +127,12 @@ fn definition(module: usize, index: u32) -> DefId {
 #[test]
 fn errors_are_located() {
     let (found, found_reported) = declared_types(
-        "fn a(x: Missing) {}\nfn b(m: utils) {}\nfn c(r: &i32) -> &i32 in q {}\nfn d<T>(x: T) {}\nfn e(x: i32 = 1) {}\nstruct P { x: i32 }\n#[extern(\"f\")]\nfn f(p: P);\nfn ok(p: P) -> P { return p; }\nfn g(x: a) {}\nfn h(s: string) {}\nfn i(&self) {}\nfn P::j(a: i32, mut self) {}\n",
+        "fn a(x: Missing) {}\nfn b(m: utils) {}\nfn c(r: &i32) -> &i32 in q {}\nfn e(x: i32 = 1) {}\nstruct P { x: i32 }\n#[extern(\"f\")]\nfn f(p: P);\nfn ok(p: P) -> P { return p; }\nfn g(x: a) {}\nfn h(s: string) {}\nfn i(&self) {}\nfn P::j(a: i32, mut self) {}\n",
     );
     let expected = reported(&[
         ("T0002", "unknown type `Missing`", "Missing"),
         ("T0021", "`utils` is a module, not a type", "utils"),
         ("T0002", "`q` is not a parameter", "q"),
-        ("T0043", "generic functions are not supported yet", "T"),
         ("T0043", "default parameters are not supported yet", "1"),
         (
             "T0043",

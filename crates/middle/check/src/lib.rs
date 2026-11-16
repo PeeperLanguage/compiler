@@ -524,6 +524,29 @@ impl<'p, L: Checked> Checker<'p, L> {
         }
     }
 
+    /// Makes the fact that the name ending at `name_end` is a function
+    /// (`record`) the fact that its call there made `copy`, of the type
+    /// `ty`. Only a body checked once has it: a copy has no facts, and a
+    /// function's own body (`check_body`) makes no copy, so it would have
+    /// only those that other calls happened to make.
+    pub(crate) fn record_copy(&mut self, name_end: u32, copy: FunctionCopy, ty: TypeId) {
+        let checking = self
+            .internals
+            .declarations_being_checked
+            .last()
+            .expect("a declaration is being checked");
+        if checking.arguments != ConstArguments::NONE {
+            return;
+        }
+        let module = self.current_module().index();
+        let names_it = |kind| matches!(kind, FactKind::Name(Symbol::Function(named)) if named == copy.definition);
+        let mut facts = self.module_checks[module].facts.iter_mut().rev();
+        // The facts of the call's arguments were recorded after its name's.
+        if let Some(fact) = facts.find(|fact| fact.span.end == name_end && names_it(fact.kind)) {
+            fact.kind = FactKind::Copy { function: copy, ty };
+        }
+    }
+
     /// What `name` stands for at the top level: a `const T: type` parameter
     /// of the function being checked, the type it is given
     /// (`Checking::arguments`; a `const` value is a local of the body);
@@ -540,19 +563,14 @@ impl<'p, L: Checked> Checker<'p, L> {
             // Only a function is given `const` arguments.
             let function = function_declaration(self.modules, checking.definition);
             let tree = &self.module().ast;
-            let const_parameters = (tree.children.lists.items(function.signature.parameters))
-                .map(|parameter| tree.children.params[parameter])
-                .filter(|parameter| parameter.constant);
-            let given = self.types.arguments(checking.arguments);
-            for (parameter, given) in const_parameters.zip(given) {
-                if let ast::Type::Type = tree.types[parameter.ty]
-                    && let &ConstArgument::Type(ty) = given
-                    && parameter
-                        .name
-                        .is_some_and(|written| written.text(&tree.file) == name)
-                {
-                    return Some(Symbol::TypeArgument(ty));
-                }
+            let mut parameters = model::program::copy_parameters(tree, function.signature);
+            let names_it = |parameter: Option<Span>| {
+                parameter.is_some_and(|written| tree.file.slice(written) == name)
+            };
+            if let Some(place) = parameters.position(names_it)
+                && let ConstArgument::Type(ty) = self.types.arguments(checking.arguments)[place]
+            {
+                return Some(Symbol::TypeArgument(ty));
             }
         }
         if let Some(builtin) = self.types.builtin(name) {

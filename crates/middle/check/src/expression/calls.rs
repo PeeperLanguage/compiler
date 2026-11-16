@@ -29,8 +29,9 @@ use crate::Checked;
 use crate::builder::ThirBuilder;
 use crate::builtin::TypeFact;
 use crate::builtin::type_fact;
-use crate::declaration::const_parameter;
-use crate::declaration::is_self;
+use crate::declaration::find_type_argument;
+use crate::declaration::first_copy_parameter;
+use crate::declaration::names_type_parameter;
 use crate::function::function_declaration;
 use crate::scope;
 
@@ -168,14 +169,27 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
         let first = usize::from(receiver.is_some());
         // The places among the written arguments of what a copy is for.
         let mut const_places = Vec::new();
+        // The written arguments checked to find a type parameter, by place.
+        let mut checked_early: Vec<Option<Expr>> = Vec::new();
         let found = match found {
             Some((Callee::Function(function), _))
                 if let definition = function.definition
                     && let declared = function_declaration(self.checker.modules, definition)
                     && let tree = &self.checker.modules[definition.module.index()].ast
-                    && const_parameter(tree, declared.signature).is_some() =>
+                    && first_copy_parameter(tree, declared.signature).is_some() =>
             {
-                self.copy_called(definition, arguments, first, &mut const_places, span)
+                let early = &mut checked_early;
+                let copied =
+                    self.copy_called(definition, arguments, first, &mut const_places, early, span);
+                // The function's name ends its callee. Its own type, for too
+                // few arguments, and a type with an error are of no copy.
+                if let Some((Callee::Function(copy), ty)) = copied
+                    && copy.arguments != ConstArguments::NONE
+                    && ty != TypeId::INVALID
+                {
+                    self.checker.record_copy(callee_span.end, copy, ty);
+                }
+                copied
             }
             found => found,
         };
@@ -193,7 +207,10 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
         )) = signature
         else {
             let written = arguments.iter().copied().enumerate();
-            for (_, argument) in written.filter(not_const) {
+            let unchecked = |&(place, _): &(usize, Id<ast::Expr<L>>)| {
+                checked_early.get(place).is_none_or(Option::is_none)
+            };
+            for (_, argument) in written.filter(not_const).filter(unchecked) {
                 let argument = match tree.exprs[argument] {
                     ast::Expr::Spread(values) => values,
                     _ => argument,
@@ -229,19 +246,27 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
             checked.push(argument.into());
         }
         let written = arguments.iter().copied().enumerate();
-        let mut given = written.filter(not_const).map(|(_, argument)| argument);
-        for (&parameter, argument) in parameters[first..first + fixed].iter().zip(given.by_ref()) {
-            let argument = self.add_required(argument, parameter);
+        let mut given = written.filter(not_const);
+        for (&parameter, (place, argument)) in
+            parameters[first..first + fixed].iter().zip(given.by_ref())
+        {
+            let argument = match checked_early.get_mut(place).and_then(Option::take) {
+                Some(checked) => {
+                    let required = self.require(checked, argument, parameter);
+                    self.body.add(required, tree.exprs.span(argument))
+                }
+                None => self.add_required(argument, parameter),
+            };
             self.reborrow_in_place(argument);
             checked.push(argument.into());
         }
         if variadic {
-            let rest: Vec<Id<ast::Expr<L>>> = given.collect();
+            let rest: Vec<Id<ast::Expr<L>>> = given.map(|(_, argument)| argument).collect();
             let slice = self.check_variadic(&rest, parameters[first + fixed], span);
             self.reborrow_in_place(slice);
             checked.push(slice.into());
         } else {
-            for extra in given {
+            for (_, extra) in given {
                 self.add_expr(extra, None); // for its own errors
             }
         }
@@ -361,7 +386,11 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
     /// and its type. The argument in the place of each `const` parameter,
     /// put in `const_places`, is what the copy is made for: a type for
     /// `const T: type` (`resolve_type_argument`), else a value of the
-    /// parameter's type known when compiling. When one is missing, the
+    /// parameter's type known when compiling. A type parameter, `<T>`,
+    /// takes no argument: its type is found from the arguments of the
+    /// parameters whose types name it (`find_type_argument`), each
+    /// checked here, once, and left in `checked_early` at its place for
+    /// `check_call` to take. When a `const` one is missing, the
     /// function itself and its own type, for `check_call` to report the
     /// count. `None` when one has an error, or the function's signature
     /// has one, reported.
@@ -371,36 +400,101 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
         arguments: &[Id<ast::Expr<L>>],
         first: usize,
         const_places: &mut Vec<usize>,
+        checked_early: &mut Vec<Option<Expr>>,
         span: Span,
     ) -> Option<(Callee, TypeId)> {
         let modules = self.checker.modules;
         let tree = &modules[definition.module.index()].ast;
         let declared = function_declaration(modules, definition);
         let parameters = tree.children.lists.items(declared.signature.parameters);
-        // `self` is never `const`, so a `const` parameter is past the receiver.
-        let const_parameters: Vec<(usize, ast::Param<L>)> = (parameters.enumerate())
-            .map(|(place, parameter)| (place, tree.children.params[parameter]))
-            .filter(|(_, parameter)| parameter.constant)
-            .map(|(place, parameter)| (place - first, parameter))
+        // The parameters past the receiver, each with its written argument's place.
+        let written_parameters: Vec<(usize, ast::Param<L>)> = (parameters.skip(first))
+            .map(|parameter| tree.children.params[parameter])
+            .enumerate()
             .collect();
+        let const_parameters = (written_parameters.iter().copied())
+            .filter(|(_, parameter)| parameter.constant)
+            .collect::<Vec<_>>();
         const_places.extend(const_parameters.iter().map(|&(place, _)| place));
         let pattern = self.checker.function_type(definition, span);
         if pattern == TypeId::INVALID {
             return None; // reported
         }
         // Too few arguments: `check_call` reports it, by the function's own type.
-        if const_parameters
-            .last()
-            .is_some_and(|&(place, _)| place >= arguments.len())
-        {
+        let required = (written_parameters.iter())
+            .filter(|(_, parameter)| {
+                !matches!(tree.types[parameter.ty], ast::Type::Variadic { .. })
+            })
+            .count();
+        if arguments.len() < required {
             let function = FunctionCopy {
                 definition,
                 arguments: ConstArguments::NONE,
             };
             return Some((Callee::Function(function), pattern));
         }
-        let mut given = Vec::with_capacity(const_parameters.len());
+        // Its type parameters, `<T>`, which take no argument of their own.
+        let names: Vec<&str> = (tree
+            .children
+            .lists
+            .items(declared.signature.type_parameters))
+        .map(|parameter| tree.file.slice(tree.children.names.span(parameter)))
+        .collect();
+        let mut types_found = vec![None; names.len()];
         let mut failed = false;
+        if !names.is_empty() {
+            checked_early.resize(arguments.len(), None);
+        }
+        for &(place, parameter) in &written_parameters {
+            // shortcut: the arguments of a `...T` do not say what `T` is,
+            // as `check_variadic` checks them; find it from them when a
+            // function needs it.
+            if parameter.constant
+                || place >= arguments.len()
+                || matches!(tree.types[parameter.ty], ast::Type::Variadic { .. })
+                || !names_type_parameter(tree, parameter.ty, &names)
+            {
+                continue;
+            }
+            let checked = self.check_expr(arguments[place], None);
+            if checked.ty == TypeId::VOID {
+                let written = self.checker.module().ast.exprs.span(arguments[place]);
+                let message = "this expression has no value to pass";
+                self.checker
+                    .error(diagnostics::INVALID_OPERATION, message, written);
+                failed = true;
+            }
+            failed |= checked.ty == TypeId::INVALID; // reported
+            let types = &self.checker.types;
+            find_type_argument(
+                tree,
+                types,
+                parameter.ty,
+                checked.ty,
+                &names,
+                &mut types_found,
+            );
+            checked_early[place] = Some(checked);
+        }
+        let mut given = Vec::with_capacity(names.len() + const_parameters.len());
+        for (name, found) in names.iter().zip(types_found) {
+            match found {
+                Some(ty) => {
+                    let ty = self.checker.type_argument(ty, span);
+                    failed |= ty == TypeId::INVALID;
+                    given.push(ConstArgument::Type(ty));
+                }
+                None if failed => {}
+                None => {
+                    let function = model::program::declared_path(modules, definition);
+                    let message =
+                        format!("the arguments of `{function}` do not say what its `{name}` is");
+                    self.checker
+                        .error(diagnostics::INVALID_OPERATION, message, span);
+                    failed = true;
+                }
+            }
+        }
         for (place, parameter) in const_parameters {
             let argument = arguments[place];
             if let ast::Type::Type = tree.types[parameter.ty] {
@@ -512,7 +606,7 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
             .lists
             .items(declared.signature.parameters)
             .next();
-        if first.is_some_and(|first| is_self(tree, tree.children.params[first])) {
+        if first.is_some_and(|first| tree.is_self(tree.children.params[first])) {
             return true;
         }
         let path = model::program::declared_path(modules, function);

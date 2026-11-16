@@ -168,6 +168,16 @@ impl<L: Language> Tree<L> {
         self.children.lists.get(self.top_level, index as usize)
     }
 
+    /// Whether `parameter` of a function is `self`, `&self` or `&mut self`:
+    /// of the type the function belongs to.
+    pub fn is_self(&self, parameter: Param<L>) -> bool {
+        let taken = match self.types[parameter.ty] {
+            Type::Reference { target, .. } => target,
+            _ => parameter.ty,
+        };
+        matches!(self.types[taken], Type::Owner)
+    }
+
     /// The module's own declarations, in source order (`top_level`).
     pub fn declarations(&self) -> impl ExactSizeIterator<Item = Id<Decl<L>>> + '_ {
         self.children.lists.items(self.top_level)
