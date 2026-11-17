@@ -197,10 +197,9 @@ pub struct ModuleChecks<'p> {
     /// (`evaluate_call`), so a constant's value depends on their bodies,
     /// which no interface holds.
     pub ran_modules: Vec<ModuleId>,
-    /// The facts found in it (`Checker::record`), when they are recorded.
-    /// Declarations are checked as they are asked for, in any order, so the
-    /// facts wait here until the compile hands them over.
-    pub facts: Vec<Fact>,
+    /// The facts found in it (`Checker::record`), by the declaration being
+    /// checked.
+    facts: FxHashMap<DefId, Vec<Fact>>,
     /// What checking it reported, in order.
     pub diagnostics: Vec<Diagnostic>,
 }
@@ -232,7 +231,7 @@ impl<'p, L: Checked> Checker<'p, L> {
                     declared_types: vec![State::NotStarted; declarations],
                     constants: vec![State::NotStarted; declarations],
                     ran_modules: Vec::new(),
-                    facts: Vec::new(),
+                    facts: FxHashMap::default(),
                     diagnostics,
                 }
             })
@@ -522,8 +521,12 @@ impl<'p, L: Checked> Checker<'p, L> {
             return;
         };
         if checking.records_facts && !self.in_copy() {
-            let module = checking.definition.module.index();
-            self.module_checks[module].facts.push(Fact { span, kind });
+            let definition = checking.definition;
+            let facts = &mut self.module_checks[definition.module.index()].facts;
+            facts
+                .entry(definition)
+                .or_default()
+                .push(Fact { span, kind });
         }
     }
 
@@ -541,13 +544,46 @@ impl<'p, L: Checked> Checker<'p, L> {
         if checking.arguments != ConstArguments::NONE {
             return;
         }
-        let module = self.current_module().index();
+        let definition = checking.definition;
         let names_it = |kind| matches!(kind, FactKind::Name(Symbol::Function(named)) if named == copy.definition);
-        let mut facts = self.module_checks[module].facts.iter_mut().rev();
+        let facts = &mut self.module_checks[definition.module.index()].facts;
+        let Some(facts) = facts.get_mut(&definition) else {
+            return; // none are recorded
+        };
+        let mut facts = facts.iter_mut().rev();
         // The facts of the call's arguments were recorded after its name's.
         if let Some(fact) = facts.find(|fact| fact.span.end == name_end && names_it(fact.kind)) {
             fact.kind = FactKind::Copy { function: copy, ty };
         }
+    }
+
+    /// The facts found in the text of `function`, its signature's and its
+    /// body's, which declares each local they name, as its `where` does
+    /// (`constraints_hold`); none for a copy, which records none and whose
+    /// body is not the one they name.
+    pub fn function_facts(&mut self, function: FunctionCopy) -> Vec<Fact> {
+        let definition = function.definition;
+        let facts = &mut self.module_checks[definition.module.index()].facts;
+        (function.arguments == ConstArguments::NONE)
+            .then(|| facts.remove(&definition))
+            .flatten()
+            .unwrap_or_default()
+    }
+
+    /// The facts of `module` no function took (`function_facts`), by
+    /// declaration: of its types and constants, and of functions with no
+    /// body or an error in their signature, whose locals no body declares,
+    /// so no name among them stands for a local.
+    pub fn other_facts(&mut self, module: ModuleId) -> Vec<Fact> {
+        let mut rest: Vec<(DefId, Vec<Fact>)> =
+            std::mem::take(&mut self.module_checks[module.index()].facts)
+                .into_iter()
+                .collect();
+        rest.sort_unstable_by_key(|(definition, _)| definition.index);
+        (rest.into_iter())
+            .flat_map(|(_, facts)| facts)
+            .filter(|fact| !matches!(fact.kind, FactKind::Name(Symbol::Local(_))))
+            .collect()
     }
 
     /// What `name` stands for at the top level: a `const T: type` parameter

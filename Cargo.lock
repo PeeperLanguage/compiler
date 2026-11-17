@@ -486,6 +486,7 @@ dependencies = [
  "serde_json",
  "source",
  "syntax",
+ "test_programs",
 ]
 
 [[package]]

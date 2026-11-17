@@ -116,9 +116,8 @@ pub enum Output<'c> {
         constant: Option<&'c Constant>,
         types: &'c Types, // the program's types so far, which `constant` names
     },
-    /// The facts of `module` found after its last function was handed on;
-    /// none unless the compile records facts (`ModuleChecks::facts`), and
-    /// no name among them stands for a local.
+    /// The facts of `module` no function was handed on with
+    /// (`Checker::other_facts`); none unless the compile records facts.
     Facts {
         module: ModuleId,
         facts: &'c [thir::Fact],
@@ -135,10 +134,8 @@ pub struct CheckedFunction<'c> {
     /// that first called it.
     pub module: ModuleId,
     pub thir: &'c thir::Body,
-    /// The facts of its module found since the last function was handed on:
-    /// those of its text, and of the declarations checked meanwhile, when
-    /// the compile records facts (as for an editor); otherwise none. Only
-    /// this function's locals are among their names, explained by `thir`.
+    /// Its facts (`Checker::function_facts`), whose locals `thir` declares,
+    /// when the compile records facts (as for an editor); otherwise none.
     pub facts: &'c [thir::Fact],
     /// Its path-checked MIR, `None` when checking it found an error, and
     /// for the own body of a function with `const` parameters, which an
@@ -232,7 +229,7 @@ pub struct Options {
 /// whose imports' interfaces are unchanged keeps its diagnostics, and its
 /// bodies are not checked again. What it checks goes to `use_output` in
 /// declaration order, module by module: each function with a body as soon as
-/// it is built, with the facts found so far when `options.record_facts`, then
+/// it is built, with its own facts when `options.record_facts`, then
 /// dropped except its MIR, which is `use_output`'s: nothing here holds every
 /// function's bodies at once. Each module constant goes once checked, with
 /// its type and value, and last the module's remaining facts, none unless
@@ -422,7 +419,7 @@ fn find_entry_point(
 }
 
 /// Checks each function and constant of `module` where it is declared, used
-/// or not, and gives each, with its MIR and the facts found so far for a
+/// or not, and gives each, with its MIR and its own facts for a
 /// function, then the module's remaining facts, to `use_output`.
 fn compile_module(
     checker: &mut Checker<Peeper>,
@@ -453,7 +450,7 @@ fn compile_module(
                     arguments: ConstArguments::NONE,
                 };
                 if checker.check_body(function, name, thir, true) && record_facts {
-                    let facts = std::mem::take(&mut checker.module_checks[module.index()].facts);
+                    let facts = checker.function_facts(function);
                     use_output(Output::Function(CheckedFunction {
                         function,
                         module,
@@ -487,7 +484,7 @@ fn compile_module(
     while let Some(copy) = checker.next_copy() {
         build_function(checker, module, copy, thir, use_output);
     }
-    let facts = std::mem::take(&mut checker.module_checks[module.index()].facts);
+    let facts = checker.other_facts(module);
     use_output(Output::Facts {
         module,
         facts: &facts,
@@ -496,7 +493,7 @@ fn compile_module(
 }
 
 /// Builds `function`, in the compile of `module`, and gives it with its MIR
-/// and the facts found so far to `use_output`; nothing when it has no body
+/// and its facts to `use_output`; nothing when it has no body
 /// or its signature has an error.
 fn build_function(
     checker: &mut Checker<Peeper>,
@@ -511,7 +508,7 @@ fn build_function(
     let Some(mir) = checker.build_function(function, span, thir, true) else {
         return;
     };
-    let facts = std::mem::take(&mut checker.module_checks[module.index()].facts);
+    let facts = checker.function_facts(function);
     use_output(Output::Function(CheckedFunction {
         function,
         module,
