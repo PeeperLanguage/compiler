@@ -33,12 +33,18 @@ fn Add<T>(a: T, b: T) -> T {
 }
 
 #[extern("outside")]
-fn Outside<T>(value: T); //~ error[P0005]: an `extern` function is one C function, so it takes no type or `const` parameter
+fn Outside<T>(value: T); //~ error[P0005]: an `extern` function takes no type or `const` parameter: C gives one function for every call
+
+fn Width(const T: type) -> usize {
+    return size_of(T);
+}
 
 fn main() {
     Make(); //~ error[T0004]: the arguments of `Make` do not say what its `T` is: write it at the call, `Make::<...>(...)`
     Id::<i32, f64>(1); //~ error[T0006]: `Id` takes 1 type argument, but 2 were given
     Square::Area::<i32>(&Square.{ side = 1 }); //~ error[T0006]: `Square::Area` takes no type arguments
+    // A `const T: type` is given as an argument, not after `::`.
+    Width::<i32>(i32); //~ error[T0006]: `Width` takes no type arguments
     Id::<bool>(1); //~ error[T0001]: mismatched types: expected `bool`, found `i32`
     Read(5); //~ error[T0004]: the arguments of `Read` do not say what its `T` is
     Both(1, true); //~ error[T0001]: mismatched types: expected `i32`, found `bool`

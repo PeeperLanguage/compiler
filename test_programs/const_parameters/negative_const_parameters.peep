@@ -22,11 +22,11 @@ fn Pointed(const p: Point) {}
 
 // A C function is one function: it has no copies.
 #[extern("abs")]
-fn Abs(const T: type, x: i32) -> i32; //~ error[P0005]: an `extern` function is one C function, so it takes no type or `const` parameter
+fn Abs(const T: type, x: i32) -> i32; //~ error[P0005]: an `extern` function takes no type or `const` parameter: C gives one function for every call
 
 // A call through an interface reference runs one function of a table.
 iface Shape {
-    fn Area(&self, const T: type) -> i32 //~ error[P0005]: a call through an interface reference cannot pick a copy, so an interface method takes no type or `const` parameter
+    fn Area(&self, const T: type) -> i32 //~ error[P0005]: an interface method takes no type or `const` parameter: each type that implements it gives one function for every call
 }
 iface Named {
     fn Name(&self) -> i32

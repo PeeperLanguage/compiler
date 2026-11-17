@@ -96,11 +96,6 @@ impl<L: Checked> Checker<'_, L> {
                 tree.blocks.span(block),
             );
             builder.declare_parameters(function.signature, arguments, &parameters, outermost);
-            // A copy's were asked with its signature (`constraints_hold`).
-            if !function.signature.constraints.is_empty() && !builder.checker.in_copy() {
-                let known = copy.arguments == ConstArguments::NONE;
-                builder.check_constraints(function.signature, known);
-            }
             let statements = builder.check_statements(None, tree.blocks[block].statements);
             builder.body.blocks[outermost].statements = statements;
         });

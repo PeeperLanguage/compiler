@@ -311,7 +311,7 @@ fn builtin_functions_are_declared_as_the_compiler_answers_them() {
         ),
         (
             "#[builtin] fn align_of(const T: type) -> usize { return 1; }",
-            "the compiler answers a `#[builtin]` function, so it has no body",
+            "a `#[builtin]` function has no body: the compiler gives its code",
             "align_of",
         ),
     ] {
@@ -1315,7 +1315,7 @@ fn a_false_constraint_is_reported_at_each_call() {
     assert_eq!(found(&results.modules[0]), []);
     let at = |call: &str| {
         (
-            "`Largest` needs `T: Number`, which is false for `Largest<bool>`".to_string(),
+            "`T: Number` is false for `Largest<bool>`".to_string(),
             vec![
                 format!("main.peep: list::Largest({call}) "),
                 "list.peep: T: Number ".to_string(),

@@ -6,9 +6,8 @@
 use arena::Id;
 use arena::List;
 use check::Checker;
-use check::declaration::first_copy_parameter;
+use check::declaration::FunctionKind;
 use check::scope::report_redeclared;
-use diagnostics::Diagnostic;
 use model::DefId;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
@@ -49,30 +48,6 @@ fn interface_type(p: &mut Parser<Peeper>, start: u32) -> Id<ast::Type<Peeper>> {
         |p| {
             let start = p.next().span.start;
             let (name, signature) = p.named_signature();
-            if !signature.constraints.is_empty() {
-                let first = p.tree.children.lists.get(signature.constraints, 0);
-                let span = p.tree.children.constraints.span(first);
-                p.repair(
-                    Diagnostic::new(
-                        diagnostics::INVALID_DECLARATION,
-                        "an interface method has no body, so it takes no `where`",
-                    )
-                    .label(&p.tree.file, span, ""),
-                );
-            }
-            let parameters: Vec<_> = p.tree.children.lists.items(signature.parameters).collect();
-            for parameter in parameters {
-                if let Some(value) = p.tree.children.params[parameter].default {
-                    let span = p.tree.exprs.span(value);
-                    p.repair(
-                        Diagnostic::new(
-                            diagnostics::INVALID_DECLARATION,
-                            "interface method defaults are not supported",
-                        )
-                        .label(&p.tree.file, span, ""),
-                    );
-                }
-            }
             p.add(
                 start,
                 ast::Decl::Function(ast::Function {
@@ -138,24 +113,8 @@ impl TypeNode for InterfaceType {
                 methods.push(TypeId::INVALID);
                 continue;
             }
-            let first = tree
-                .children
-                .lists
-                .items(method.signature.parameters)
-                .next();
-            if !first.is_some_and(|first| tree.is_self(tree.children.params[first])) {
-                let message = format!("an interface method takes `self` first: `fn {text}(&self)`");
-                checker.error(diagnostics::INVALID_DECLARATION, message, method.name.span);
-                methods.push(TypeId::INVALID);
-                continue;
-            }
-            if let Some(span) = first_copy_parameter(tree, method.signature) {
-                let message = "a call through an interface reference cannot pick a copy, so an interface method takes no type or `const` parameter";
-                checker.error(diagnostics::INVALID_DECLARATION, message, span);
-                methods.push(TypeId::INVALID);
-                continue;
-            }
-            methods.push(checker.signature_type(method.signature, true, false));
+            let kind = &FunctionKind::INTERFACE_METHOD;
+            methods.push(checker.signature_type(method.name, method.signature, true, kind));
         }
         let invalid = |ty: TypeId| match &checker.types[ty] {
             Type::Function {

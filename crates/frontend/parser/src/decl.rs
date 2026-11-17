@@ -235,7 +235,9 @@ impl<L: Grammar> Parser<L> {
             loop {
                 let constraint = self.constraint();
                 self.list_items.push(constraint.into());
-                if !self.at(TokenKind::Comma) {
+                // Only a constraint continues it: an interface's `,` after
+                // its last one separates its methods.
+                if !(self.at(TokenKind::Comma) && self.ahead(1).kind == TokenKind::Ident) {
                     break;
                 }
                 self.next();

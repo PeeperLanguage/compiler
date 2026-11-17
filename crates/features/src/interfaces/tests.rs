@@ -79,13 +79,12 @@ fn parses_declarations() {
     );
 }
 
-/// A method takes no default value; the rest of the interface is still
-/// read.
+/// A method's default value is read as any function's: checking a
+/// signature refuses it, for every function alike.
 #[test]
-fn declaration_errors() {
+fn default_values_are_read() {
     let (tree, errors) = parse_text("iface I { fn f(&self, a: i32 = 1) }");
-    let got: Vec<_> = errors.iter().map(|e| e.message.as_str()).collect();
-    assert_eq!(got, ["interface method defaults are not supported"]);
+    assert!(errors.is_empty());
     let ast::Decl::Type(declared) = tree.decls[tree.declarations().next().unwrap()] else {
         panic!("not a type declaration")
     };

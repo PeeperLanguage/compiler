@@ -3,32 +3,27 @@
 //! value.
 
 use arena::Id;
-use arena::List;
-use bigint::Limbs;
 use diagnostics::Diagnostic;
 use model::ConstArguments;
 use model::DefId;
-use model::FunctionCopy;
-use model::constant::Value;
 use model::layout::layout;
 use model::program::BUILTIN_ATTRIBUTE;
 use model::program::EXTERN_ATTRIBUTE;
 use model::semantic_types;
 use model::semantic_types::ConstArgument;
 use model::semantic_types::Constant;
-use model::semantic_types::Float;
 use model::semantic_types::ImplementationId;
 use model::semantic_types::Integer;
 use model::semantic_types::Members;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
 use model::semantic_types::Types;
-use model::thir::Block;
 use model::thir::Body;
 use model::thir::FactKind;
 use model::thir::Symbol;
 use source::Span;
 use syntax::ast;
+use syntax::ast::Ident;
 use syntax::ast::Language;
 
 use crate::Checked;
@@ -48,6 +43,64 @@ use crate::scope;
 // references hold a few; lift this if the check ever tracks them by
 // lifetime, as Rust does.
 const MOST_HOLDERS: usize = 4_096;
+
+/// What a function's declaration may hold, from who gives its code: its
+/// body, C, the compiler or each type that implements its interface. Each
+/// rule reads it (`Checker::signature_type`, and `Checker::check_function`
+/// for the body).
+pub struct FunctionKind {
+    /// How a message names such a function.
+    pub name: &'static str,
+    /// Who gives its code, as a message says it.
+    pub coded_by: &'static str,
+    pub has_body: bool,
+    /// Whether it may take type or `const` parameters, which make a copy
+    /// for each call.
+    pub has_copies: bool,
+    pub takes_variadic: bool,
+    pub takes_self_first: bool,
+    /// Whether its parameters and result must be C types.
+    pub c_types: bool,
+}
+
+impl FunctionKind {
+    pub const BODY: FunctionKind = FunctionKind {
+        name: "a function",
+        coded_by: "its body",
+        has_body: true,
+        has_copies: true,
+        takes_variadic: true,
+        takes_self_first: false,
+        c_types: false,
+    };
+    pub const C: FunctionKind = FunctionKind {
+        name: "an `extern` function",
+        coded_by: "C",
+        has_body: false,
+        has_copies: false,
+        takes_variadic: false,
+        takes_self_first: false,
+        c_types: true,
+    };
+    pub const COMPILER: FunctionKind = FunctionKind {
+        name: "a `#[builtin]` function",
+        coded_by: "the compiler",
+        has_body: false,
+        has_copies: true,
+        takes_variadic: true,
+        takes_self_first: false,
+        c_types: false,
+    };
+    pub const INTERFACE_METHOD: FunctionKind = FunctionKind {
+        name: "an interface method",
+        coded_by: "each type that implements it",
+        has_body: false,
+        has_copies: false,
+        takes_variadic: true,
+        takes_self_first: true,
+        c_types: false,
+    };
+}
 
 impl<L: Checked> Checker<'_, L> {
     /// The type the module's type declaration or alias `definition` declares:
@@ -151,13 +204,15 @@ impl<L: Checked> Checker<'_, L> {
         }
         // A malformed `extern` is still read as one, so its signature gets
         // the C rules.
-        let external = symbol != Ok(None);
+        let builtin = model::program::is_builtin(self.modules, definition);
+        let kind = if symbol != Ok(None) {
+            &FunctionKind::C
+        } else if builtin {
+            &FunctionKind::COMPILER
+        } else {
+            &FunctionKind::BODY
+        };
         let first_const = first_copy_parameter(tree, signature);
-        if external && let Some(span) = first_const {
-            let message =
-                "an `extern` function is one C function, so it takes no type or `const` parameter";
-            return self.error(diagnostics::INVALID_DECLARATION, message, span);
-        }
         let module = definition.module.index();
         let reported = self.module_checks[module].diagnostics.len();
         let checking = self
@@ -173,7 +228,7 @@ impl<L: Checked> Checker<'_, L> {
                 .expect("the function is being checked")
                 .arguments = own;
         }
-        let ty = self.signature_type(signature, owner.is_some(), external);
+        let ty = self.signature_type(name, signature, owner.is_some(), kind);
         // A copy's signature differs only by what it is given: an error in
         // the function's own is in each copy's.
         let failed = || {
@@ -183,24 +238,17 @@ impl<L: Checked> Checker<'_, L> {
         if ty == TypeId::INVALID || first_const.is_some() && failed() {
             return TypeId::INVALID;
         }
-        let builtin = model::program::is_builtin(self.modules, definition);
         if builtin && !self.is_builtin_declared(definition, ty) {
             return TypeId::INVALID; // reported
         }
-        if body.is_none() && !signature.constraints.is_empty() {
-            let first = tree.children.lists.get(signature.constraints, 0);
-            let span = tree.children.constraints.span(first);
-            let message =
-                "`where` is checked with a function's body, so one without a body takes none";
-            return self.error(diagnostics::INVALID_DECLARATION, message, span);
-        }
-        if (external || builtin) == body.is_some() {
-            let message = if external {
-                "an `extern` function is defined in C, so it has no body"
-            } else if builtin {
-                "the compiler answers a `#[builtin]` function, so it has no body"
+        if kind.has_body != body.is_some() {
+            let message = if kind.has_body {
+                "a function needs a body, or `#[extern(\"name\")]` when C defines it".to_owned()
             } else {
-                "a function needs a body, or `#[extern(\"name\")]` when C defines it"
+                format!(
+                    "{} has no body: {} gives its code",
+                    kind.name, kind.coded_by
+                )
             };
             return self.error(diagnostics::INVALID_DECLARATION, message, name.span);
         }
@@ -209,69 +257,6 @@ impl<L: Checked> Checker<'_, L> {
             return TypeId::INVALID;
         }
         ty
-    }
-
-    /// What the `#[builtin]` function `function`, a copy for the type it
-    /// is given, answers when its call at `span` runs (`evaluate_call`): the
-    /// fact of that type its name asks for. `None` for a type the fact is
-    /// not of, reported.
-    pub(crate) fn builtin_value(&mut self, function: FunctionCopy, span: Span) -> Option<Value> {
-        let &[ConstArgument::Type(ty)] = self.types.arguments(function.arguments) else {
-            unreachable!("a `#[builtin]` function takes one type")
-        };
-        let (name, file) = model::program::declared_name(self.modules, function.definition);
-        let name = name.text(file);
-        let fact = type_fact(name).expect("a `#[builtin]` function is one the compiler has");
-        let (size, align) = layout(&self.types, ty, self.target);
-        let number = |value: u64| Value::Integer(Limbs::new(self.target.pointer_bits, &[value]));
-        Some(match (fact, &self.types[ty]) {
-            (TypeFact::Size, _) => number(size),
-            (TypeFact::Align, _) => number(align),
-            (TypeFact::Bits, Type::Integer(integer)) => number(u64::from(integer.bits)),
-            (TypeFact::Bits, Type::Float(Float::F32)) => number(32),
-            (TypeFact::Bits, Type::Float(Float::F64)) => number(64),
-            (TypeFact::Signed, Type::Integer(integer)) => Value::Bool(integer.signed),
-            (TypeFact::IsInteger, kind) => Value::Bool(matches!(kind, Type::Integer(_))),
-            (TypeFact::IsFloat, kind) => Value::Bool(matches!(kind, Type::Float(_))),
-            (TypeFact::IsText, kind) => Value::Bool(matches!(kind, Type::Str)),
-            (TypeFact::IsBool, kind) => Value::Bool(matches!(kind, Type::Bool)),
-            (TypeFact::IsPointer, kind) => Value::Bool(matches!(kind, Type::RawPointer { .. })),
-            (TypeFact::Bits | TypeFact::Signed, _) => {
-                let kinds = match fact {
-                    TypeFact::Bits => "an integer or a float",
-                    _ => "an integer",
-                };
-                let found = self.type_text(ty);
-                let message = format!("`{name}` takes {kinds} type, found `{found}`");
-                self.error(diagnostics::INVALID_OPERATION, message, span);
-                return None;
-            }
-        })
-    }
-
-    /// Whether the constraints of `signature`, after `where`, hold for the
-    /// copy being checked, whose parameters are of the types `parameters`,
-    /// with what its call gives (`ThirBuilder::check_constraints`). A
-    /// function's own check asks them in its body, where their names get
-    /// the body's facts.
-    fn constraints_hold(&mut self, signature: ast::Signature<L>, parameters: &[TypeId]) -> bool {
-        let arguments = (self.internals.declarations_being_checked.last())
-            .expect("a function is being checked")
-            .arguments;
-        let tree = &self.module().ast;
-        let first = tree.children.lists.get(signature.constraints, 0);
-        let span = tree.children.constraints.span(first);
-        let mut body = Body::default();
-        let mut builder = ThirBuilder::new(self, &mut body, TypeId::VOID);
-        let scope = builder.body.add(
-            Block {
-                parent: None,
-                statements: List::EMPTY,
-            },
-            span,
-        );
-        builder.declare_parameters(signature, arguments, parameters, scope);
-        builder.check_constraints(signature, true)
     }
 
     /// Whether the `#[builtin]` function `definition`, of the type `ty`, is
@@ -323,20 +308,38 @@ impl<L: Checked> Checker<'_, L> {
         false
     }
 
-    /// The function type `signature` of the module's tree declares, of a
-    /// type's function or an interface's method when `has_owner` (only these
-    /// take `self`), of a C function when `external`. Invalid when the
-    /// signature is reported; a parameter or result whose type is reported
-    /// is invalid inside it. A `const T: type` parameter is not among its
-    /// parameters: each call gives it a type, which makes its own copy
-    /// (`copy_type`).
+    /// The function type `signature` of the module's tree declares, for the
+    /// function `name`, of a type's function or an interface's method when
+    /// `has_owner` (only these take `self`), of the kind `kind`.
+    /// Invalid when the signature is reported; a parameter or result whose
+    /// type is reported is invalid inside it. A `const T: type` parameter is
+    /// not among its parameters: each call gives it a type, which makes its
+    /// own copy (`copy_type`).
     pub fn signature_type(
         &mut self,
+        name: Ident,
         signature: ast::Signature<L>,
         has_owner: bool,
-        external: bool,
+        kind: &FunctionKind,
     ) -> TypeId {
         let tree = &self.module().ast;
+        let first = tree.children.lists.items(signature.parameters).next();
+        if kind.takes_self_first
+            && !first.is_some_and(|first| tree.is_self(tree.children.params[first]))
+        {
+            let (what, text) = (kind.name, name.text(&tree.file));
+            let message = format!("{what} takes `self` first: `fn {text}(&self)`");
+            return self.error(diagnostics::INVALID_DECLARATION, message, name.span);
+        }
+        if !kind.has_copies
+            && let Some(span) = first_copy_parameter(tree, signature)
+        {
+            let message = format!(
+                "{} takes no type or `const` parameter: {} gives one function for every call",
+                kind.name, kind.coded_by
+            );
+            return self.error(diagnostics::INVALID_DECLARATION, message, span);
+        }
         // Each name that stands for a type, `<T>` or `const T: type`, once.
         let type_names: Vec<Span> = (model::program::copy_parameters(tree, signature))
             .flatten()
@@ -387,8 +390,8 @@ impl<L: Checked> Checker<'_, L> {
                 }
                 return TypeId::INVALID;
             }
-            if is_variadic && external {
-                let message = "an `extern` function cannot have a `...` parameter";
+            if is_variadic && !kind.takes_variadic {
+                let message = format!("{} cannot have a `...` parameter", kind.name);
                 return self.error(diagnostics::INVALID_DECLARATION, message, span);
             }
             if is_variadic && position + 1 != signature.parameters.len() {
@@ -408,18 +411,15 @@ impl<L: Checked> Checker<'_, L> {
                 }
             }
             variadic |= is_variadic;
-            parameters.push(self.resolve_signature_type(parameter.ty, external));
+            parameters.push(self.resolve_signature_type(parameter.ty, kind.c_types));
         }
         let result = signature.result.map_or(TypeId::VOID, |result| {
-            self.resolve_signature_type(result, external)
+            self.resolve_signature_type(result, kind.c_types)
         });
         let Some(origins) = self.result_origins(&signature, &parameters, result) else {
             return TypeId::INVALID;
         };
-        if !signature.constraints.is_empty()
-            && self.in_copy()
-            && !self.constraints_hold(signature, &parameters)
-        {
+        if !signature.constraints.is_empty() && !self.constraints_hold(signature, &parameters) {
             return TypeId::INVALID;
         }
         let parameters = parameters.into();
@@ -728,11 +728,11 @@ impl<L: Checked> Checker<'_, L> {
         }
     }
 
-    /// The type of a parameter or result written `ty`, of a C function when
-    /// `external`.
-    fn resolve_signature_type(&mut self, ty: Id<ast::Type<L>>, external: bool) -> TypeId {
+    /// The type of a parameter or result written `ty`, which must be a C
+    /// type when `c_types` (`FunctionKind::c_types`).
+    fn resolve_signature_type(&mut self, ty: Id<ast::Type<L>>, c_types: bool) -> TypeId {
         let resolved = self.resolve_value_type(ty);
-        if !external {
+        if !c_types {
             return resolved;
         }
         let span = self.module().ast.types.span(ty);

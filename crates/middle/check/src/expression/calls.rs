@@ -146,6 +146,22 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
         let mut const_places = Vec::new();
         // The written arguments checked to find a type parameter, by place.
         let mut checked_early: Vec<Option<Expr>> = Vec::new();
+        let type_parameters = match found {
+            Some((Callee::Function(function), _)) => {
+                function_declaration(self.checker.modules, function.definition)
+                    .signature
+                    .type_parameters
+                    .len()
+            }
+            _ => 0,
+        };
+        let mut type_arguments = type_arguments;
+        if type_parameters == 0 && !type_arguments.is_empty() && found.is_some() {
+            let message = format!("`{text}` takes no type arguments");
+            self.checker
+                .error(diagnostics::WRONG_ARGUMENT_COUNT, message, callee_span);
+            type_arguments = List::EMPTY;
+        }
         let found = match found {
             Some((Callee::Function(function), _))
                 if let definition = function.definition
@@ -173,14 +189,7 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
                 }
                 copied
             }
-            found => {
-                if !type_arguments.is_empty() && found.is_some() {
-                    let message = format!("`{text}` takes no type arguments");
-                    self.checker
-                        .error(diagnostics::WRONG_ARGUMENT_COUNT, message, callee_span);
-                }
-                found
-            }
+            found => found,
         };
         let not_const = |&(place, _): &(usize, Id<ast::Expr<L>>)| !const_places.contains(&place);
         let signature = found.map(|(callee, ty)| (callee, ty, self.checker.types[ty].clone()));
@@ -308,6 +317,23 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
                 arguments,
             },
         }
+    }
+
+    /// The type `argument`, written in the body for a type (a `const T:
+    /// type` argument, a constraint's subject), names. A local of its name
+    /// is a value, reported; a type of its name elsewhere is still the type.
+    pub(crate) fn written_type_argument(&mut self, argument: Id<ast::Expr<L>>) -> TypeId {
+        let tree = &self.checker.module().ast;
+        let written = tree.exprs.span(argument);
+        if let ast::Expr::Name = tree.exprs[argument]
+            && let name = tree.file.slice(written)
+            && let Some(&position) = self.innermost.get(name)
+            && self.checker.resolve_global(name).is_none()
+        {
+            let local = Symbol::Local(self.names[position].local);
+            return self.checker.type_named_by(local, written);
+        }
+        self.checker.resolve_type_argument(argument)
     }
 
     /// What the function `symbol`, called at `span`, is: its callee and
@@ -527,20 +553,7 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
         for (place, parameter) in const_parameters {
             let argument = arguments[place];
             if let ast::Type::Type = tree.types[parameter.ty] {
-                // A variable is a value; a type of its name is still the type.
-                let calling = &self.checker.module().ast;
-                let written = calling.exprs.span(argument);
-                if let ast::Expr::Name = calling.exprs[argument]
-                    && let name = calling.file.slice(written)
-                    && let Some(&position) = self.innermost.get(name)
-                    && self.checker.resolve_global(name).is_none()
-                {
-                    let local = Symbol::Local(self.names[position].local);
-                    self.checker.type_named_by(local, written);
-                    failed = true;
-                    continue;
-                }
-                let ty = self.checker.resolve_type_argument(argument);
+                let ty = self.written_type_argument(argument);
                 failed |= ty == TypeId::INVALID;
                 given.push(ConstArgument::Type(self.checker.types.real(ty)));
                 continue;

@@ -51,7 +51,7 @@ fn only_an_extern_function_has_no_body() {
         [
             (
                 "P0005",
-                "an `extern` function is defined in C, so it has no body".to_string(),
+                "an `extern` function has no body: C gives its code".to_string(),
                 "f".to_string()
             ),
             ("P0005", body.to_string(), "g".to_string()),
