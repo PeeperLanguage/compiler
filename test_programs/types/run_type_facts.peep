@@ -1,0 +1,76 @@
+//@ run
+
+// `bits_of` and `is_signed` take a type and give a constant: how many bits
+// an integer or a float type has, and whether an integer type has negative
+// values. `is_int`, `is_float`, `is_text`, `is_bool` and `is_pointer` say
+// which kind any type is.
+
+type Count = u16;
+
+const WORD_BITS: usize = bits_of(usize);
+const SIGNED: bool = is_signed(i8);
+
+// The facts of the type each copy is made for.
+fn Facts(const T: type) {
+    println(bits_of(T), is_signed(T), size_of(T), align_of(T));
+}
+
+// A copy picks its work by a fact of its type.
+fn Lowest(const T: type) -> i64 {
+    if is_signed(T) {
+        return -1;
+    }
+    return 0;
+}
+
+struct Node {
+    value: i32,
+}
+
+// One body for every kind: a copy keeps the branch of its type's kind, and
+// the others, which its type could not do, are not checked for it.
+fn Put(const T: type, value: T) {
+    if is_int(T) {
+        println("int", bits_of(T), is_signed(T), value as i64);
+    } else if is_float(T) {
+        println("float", bits_of(T), value as f64);
+    } else if is_text(T) {
+        println("text", value);
+    } else if is_bool(T) {
+        println("bool", !value);
+    } else if is_pointer(T) {
+        println("pointer", value as rawptr == none);
+    } else {
+        println("other", size_of(T));
+    }
+}
+
+fn main() {
+    // Integers of the usual widths, and of widths that fill no whole byte.
+    println(bits_of(i8), bits_of(u16), bits_of(i32), bits_of(u64), bits_of(i128));
+    println(bits_of(u1), bits_of(u7), bits_of(i24), bits_of(u129));
+    println(is_signed(i8), is_signed(u8), is_signed(i128), is_signed(u1));
+    // Floats have bits; an alias has its type's facts.
+    println(bits_of(f32), bits_of(f64), bits_of(Count), is_signed(Count));
+    // The target's own integers.
+    println(WORD_BITS, is_signed(usize), bits_of(isize), is_signed(isize));
+    println(SIGNED, bits_of((i32)));
+    Facts(i32);
+    Facts(u7);
+    Facts(i128);
+    println(Lowest(i16), Lowest(u16));
+    // Which kind a type is: any type can be asked.
+    println(is_int(i32), is_int(u7), is_int(usize), is_int(Count), is_int(f32), is_int(bool), is_int(*i32));
+    println(is_float(f32), is_float(f64), is_float(i64), is_float(&str));
+    println(is_text(&str), is_text(&cstr), is_text(&[]u8), is_text(Node), is_text(&mut i32));
+    println(is_bool(bool), is_bool(u1), is_bool(i32), is_bool(&bool), is_bool(*bool));
+    println(is_pointer(*i32), is_pointer(rawptr), is_pointer(**Node), is_pointer(&i32), is_pointer(&cstr), is_pointer(usize));
+    Put(i32, -7);
+    Put(u7, 100);
+    Put(f32, 1.5);
+    Put(&str, "hi");
+    Put(bool, true);
+    Put(*Node, none);
+    Put(rawptr, none);
+    Put(Node, Node.{ value = 1 });
+}

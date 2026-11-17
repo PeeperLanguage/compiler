@@ -21,7 +21,8 @@ const HIDDEN: &str = "/* ... */";
 /// What hover shows for `declaration` of the module at `module`
 /// (`hover_text`), its attributes first: a constant as its name, type and
 /// value, from `constant`, worked out from its initializer; a function up to
-/// its body, which is `HIDDEN`; a struct whole, then its functions (`write_functions`), only
+/// its body, which is `HIDDEN`, under `copy`, the signature of the copy a
+/// call made of it, when hovered at one; a struct whole, then its functions (`write_functions`), only
 /// the exported ones when hovered `from_elsewhere`, another module; another
 /// declaration, or a constant with an error, whole.
 pub(crate) fn declaration_hover(
@@ -29,6 +30,7 @@ pub(crate) fn declaration_hover(
     declaration: Id<ast::Decl<Peeper>>,
     module: &str,
     constant: Option<&ConstantText>,
+    copy: Option<&str>,
     from_elsewhere: bool,
 ) -> String {
     let span = tree.decls.span(declaration);
@@ -78,12 +80,17 @@ pub(crate) fn declaration_hover(
         }
         _ => (written(span.end).to_string(), None),
     };
+    // A call's copy, worked out from the function as written.
+    let (facts, from) = match copy {
+        Some(copy) => (copy, Some(facts.as_str())),
+        None => (facts.as_str(), from),
+    };
     let declared = decl.name().span;
     hover_text(
         &tree.file,
         module,
         declared,
-        &facts,
+        facts,
         from,
         metadata.doc_comment,
     )

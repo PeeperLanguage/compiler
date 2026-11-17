@@ -1,0 +1,164 @@
+iface Shape {
+    fn area(&self) -> i32,
+}
+
+struct Point {
+    x: i32,
+}
+
+// Has `area`, but of another type than `Shape` asks.
+struct Circle {
+    radius: i32,
+}
+
+fn Circle::area(&self) -> f64 {
+    return 1.5;
+}
+
+const Limit: i32 = 3;
+const Nothing: i32 = 0;
+
+fn Number(const T: type) -> bool {
+    return is_int(T) || is_float(T);
+}
+
+fn Sized(const T: type, const N: usize) -> bool {
+    return size_of(T) == N;
+}
+
+fn Positive(const N: i32) -> bool {
+    return N > 0;
+}
+
+fn Count(const T: type) -> i32 {
+    return 1;
+}
+
+// A call for which one is false is refused, each such call.
+fn Max<T>(a: T, b: T) -> T
+where
+    T: Number
+{
+    return a;
+}
+
+fn Whole<T>(value: T) -> T
+where
+    T: is_int
+{
+    return value;
+}
+
+fn Eight<T>(value: T) -> T
+where
+    T: Sized(8)
+{
+    return value;
+}
+
+fn Times<T>(const N: i32, value: T) -> T
+where
+    N: Positive
+{
+    return value;
+}
+
+fn Area<T>(shape: &T) -> i32
+where
+    T: Shape //~ error[T0001]: `Circle` does not implement `Shape`: its `area` is `fn(&Circle) -> f64`, but `Shape` needs `fn(&Circle) -> i32`
+{
+    return 0;
+}
+
+// With nothing given by a call, it is worked out once, for the function.
+fn Always()
+where
+    Limit: Positive
+{}
+
+fn Never()
+where
+    Nothing: Positive //~ error[T0004]: `Nothing: Positive` is false
+{}
+
+// A bound is an interface or a function giving a `bool`, known when
+// compiling: a parameter that is not `const` is known only when the
+// program runs. What a function gives may hang on `T`, so it is known at
+// a call.
+fn Unknown<T>(value: T)
+where
+    T: Missing //~ error[T0002]: unknown name `Missing`
+{}
+
+fn NotBool<T>(value: T)
+where
+    T: Count //~ error[T0001]: `Count` gives `i32`, but a constraint needs `bool`
+{}
+
+fn NotBound<T>(value: T)
+where
+    T: Point //~ error[T0004]: `Point` is not an interface or a function
+{}
+
+fn NotValue<T>(value: T)
+where
+    T: Limit //~ error[T0004]: `Limit` is not an interface or a function
+{}
+
+fn ShapeArguments<T>(value: T)
+where
+    T: Shape(1) //~ error[T0006]: `Shape` is an interface, which takes no arguments
+{}
+
+fn Value(value: i32)
+where
+    value: Positive //~ error[T0004]: the value of a constant must be known at compile time
+{}
+
+fn ValueShape(const N: i32)
+where
+    N: Shape //~ error[T0021]: `N` is a value, not a type
+{}
+
+// Part of the signature, so asked without a body too.
+iface Bounded {
+    fn area(&self) -> i32
+    where
+        Nothing: Positive, //~ error[T0004]: `Nothing: Positive` is false
+    fn side(&self) -> i32,
+}
+
+#[extern("outside")]
+fn Outside()
+where
+    Nothing: Positive; //~ error[T0004]: `Nothing: Positive` is false
+
+// It runs as any call does while compiling: one that cannot run says why.
+fn Negate<T>(value: T) -> T
+where
+    T: is_signed //~ error[T0004]: `is_signed` takes an integer type, found `f64`
+{
+    return value;
+}
+
+fn main() {
+    Max(true, false); //~ error[T0004]: `T: Number` is false for `Max<bool>`
+    Whole(Point.{ x = 1 }); //~ error[T0004]: `T: is_int` is false for `Whole<Point>`
+    Eight(1); //~ error[T0004]: `T: Sized(8)` is false for `Eight<i32>`
+    Times(0, 5); //~ error[T0004]: `N: Positive` is false for `Times<i32, 0>`
+    Area(&5); //~ error[T0004]: `T: Shape` is false for `Area<i32>`
+    Area(&Circle.{ radius = 1 }); //~ label: in `Area<Circle>`, the copy made for this call
+    println(Max(1, 2), Eight(2.5), Times(2, 5));
+    // The same types again are refused again.
+    Max(false, true); //~ error[T0004]: `T: Number` is false for `Max<bool>`
+    // Types written at the call are asked about too.
+    Max::<bool>(true, false); //~ error[T0004]: `T: Number` is false for `Max<bool>`
+    NotBool(1); //~ label: in `NotBool<i32>`, the copy made for this call
+    Twice(true); //~ label: in `Twice<bool>`, the copy made for this call
+    Negate(2.5); //~ label: in `Negate<f64>`, the copy made for this call
+}
+
+// A call in a copy is refused too, with the call the copy was made for.
+fn Twice<T>(value: T) -> T {
+    return Max(value, value); //~ error[T0004]: `T: Number` is false for `Max<bool>`
+}

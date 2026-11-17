@@ -8,8 +8,12 @@ use std::path::Path;
 use std::path::PathBuf;
 
 use lsp_types::CodeAction;
+use model::FunctionCopy;
 use model::ModuleId;
+use model::semantic_types::ConstArgument;
 use model::semantic_types::Constant;
+use model::semantic_types::Type;
+use model::semantic_types::TypeId;
 use model::semantic_types::Types;
 use model::semantic_types::value_text;
 use model::thir;
@@ -17,6 +21,8 @@ use model::thir::FactKind;
 use model::thir::Local;
 use model::thir::Symbol;
 use source::Span;
+use std::fmt::Write;
+use syntax::ast;
 
 use crate::host;
 
@@ -117,8 +123,10 @@ pub(crate) struct CachedFact {
 #[derive(Clone)]
 pub(crate) enum CachedKind {
     /// A variable of a body, this name being its declaration: whether it is
-    /// `mut`, and its type's text.
-    Variable { mutable: bool, ty: String },
+    /// `mut`, and its type's text; `None` for a type the check did not
+    /// find, as after an error, or in a function's own body for a type of
+    /// its `const T: type`, which only a copy knows.
+    Variable { mutable: bool, ty: Option<String> },
     /// A `const` of a body or of the module, this name being its
     /// declaration, with its checked type and value; `None` when it had an
     /// error.
@@ -130,7 +138,16 @@ pub(crate) enum CachedKind {
     /// module read from `file`. Its importer is reused only while those keep
     /// their kinds and names (`compile::run`), so the position stays right;
     /// an arena index would not, as a body's `const` shifts it.
-    Declaration { file: PathBuf, position: u32 },
+    /// `copy`: at a call that made a copy of a function with type or
+    /// `const` parameters, that copy's signature (`copy_signature`).
+    Declaration {
+        file: PathBuf,
+        position: u32,
+        copy: Option<String>,
+    },
+    /// A use of a type parameter, `<T>` or `const T: type`, of the function
+    /// whose text holds it, declared at `declared`.
+    TypeParameter { declared: Span },
     /// The module read from this file.
     Module(PathBuf),
     /// A built-in type, named as written.
@@ -162,7 +179,9 @@ impl CachedFact {
                         let variable = body.variables[variable];
                         CachedKind::Variable {
                             mutable: variable.mutable,
-                            ty: model::program::type_text(&program.modules, types, variable.ty),
+                            ty: (variable.ty != TypeId::INVALID).then(|| {
+                                model::program::type_text(&program.modules, types, variable.ty)
+                            }),
                         }
                     }
                     Local::Constant(constant) => CachedKind::Constant {
@@ -179,14 +198,110 @@ impl CachedFact {
             ) => CachedKind::Declaration {
                 file: file(definition.module),
                 position: definition.index,
+                copy: None,
             },
-            FactKind::Name(Symbol::Builtin(_) | Symbol::TypeArgument(_)) => CachedKind::Builtin,
+            FactKind::Copy { function, ty } => CachedKind::Declaration {
+                file: file(function.definition.module),
+                position: function.definition.index,
+                copy: Some(copy_signature(program, function, ty, types)),
+            },
+            FactKind::Name(Symbol::TypeArgument { declared, .. }) => {
+                CachedKind::TypeParameter { declared }
+            }
+            FactKind::Name(Symbol::Builtin(_)) => CachedKind::Builtin,
         };
         CachedFact {
             span: fact.span,
             kind,
         }
     }
+}
+/// The signature of `copy`, a function of `program` whose function type is
+/// `ty` of `types`, as its declaration writes it, but each parameter with
+/// the type the copy takes, a `const` one with what it is given, and no
+/// type parameters.
+fn copy_signature(
+    program: &model::program::Program<Peeper>,
+    copy: FunctionCopy,
+    ty: TypeId,
+    types: &Types,
+) -> String {
+    let modules = &program.modules;
+    let tree = &modules[copy.definition.module.index()].ast;
+    let ast::Decl::Function(function) = model::program::declaration(modules, copy.definition)
+    else {
+        unreachable!("a copy is of a function")
+    };
+    let Type::Function {
+        parameters, result, ..
+    } = &types[ty]
+    else {
+        unreachable!("a copy has a function type")
+    };
+    let text = |ty: TypeId| model::program::type_text(modules, types, ty);
+    // The types its type parameters, `<T>`, are given come first (`copy_parameters`).
+    let mut given =
+        types.arguments(copy.arguments)[function.signature.type_parameters.len()..].iter();
+    let mut taken = parameters.iter();
+    let mut signature = String::from("fn ");
+    if let Some(owner) = function.owner {
+        _ = write!(signature, "{}::", owner.text(&tree.file));
+    }
+    signature.push_str(function.name.text(&tree.file));
+    signature.push('(');
+    for (place, parameter) in tree
+        .children
+        .lists
+        .items(function.signature.parameters)
+        .enumerate()
+    {
+        if place > 0 {
+            signature.push_str(", ");
+        }
+        let written = tree.file.slice(tree.children.params.span(parameter));
+        let parameter = tree.children.params[parameter];
+        let name = parameter.name.map_or("_", |name| name.text(&tree.file));
+        if parameter.constant {
+            match given
+                .next()
+                .expect("a copy is given each `const` parameter")
+            {
+                ConstArgument::Type(ty) => {
+                    _ = write!(signature, "const {name}: type = {}", text(*ty));
+                }
+                ConstArgument::Value(constant) => {
+                    // Its type as written: `usize`, not the integer it is here.
+                    let ty = tree.file.slice(tree.types.span(parameter.ty));
+                    let value = value_text(&constant.value, &types[constant.ty]);
+                    _ = write!(signature, "const {name}: {ty} = {value}");
+                }
+            }
+            continue;
+        }
+        let ty = *taken.next().expect("a copy's type has each parameter");
+        match (&tree.types[parameter.ty], &types[ty]) {
+            _ if tree.is_self(parameter) => signature.push_str(written),
+            (ast::Type::Variadic { .. }, Type::Slice { mutable, element }) => {
+                let mutable = if *mutable { "mut " } else { "" };
+                _ = write!(signature, "{name}: ...{mutable}{}", text(*element));
+            }
+            _ => {
+                let mutable = if parameter.mutable { "mut " } else { "" };
+                _ = write!(signature, "{mutable}{name}: {}", text(ty));
+            }
+        }
+    }
+    signature.push(')');
+    if *result != TypeId::VOID {
+        _ = write!(signature, " -> {}", text(*result));
+    }
+    let mut separator = " in ";
+    for origin in tree.children.lists.items(function.signature.origins) {
+        signature.push_str(separator);
+        signature.push_str(tree.file.slice(tree.children.names.span(origin)));
+        separator = ", ";
+    }
+    signature
 }
 /// A constant's checked type and value, as text, which outlives the compile
 /// that found them.

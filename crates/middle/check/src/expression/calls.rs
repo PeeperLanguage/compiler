@@ -4,13 +4,12 @@
 use std::num::NonZeroU32;
 
 use arena::Id;
-use bigint::Limbs;
+use arena::List;
 use model::Callee;
 use model::ConstArguments;
 use model::DefId;
 use model::FunctionCopy;
 use model::constant::Value;
-use model::layout::layout;
 use model::semantic_types::ConstArgument;
 use model::semantic_types::Constant;
 use model::semantic_types::Members;
@@ -26,10 +25,9 @@ use syntax::ast::Ident;
 
 use crate::Checked;
 use crate::builder::ThirBuilder;
-use crate::builtin::LayoutFact;
-use crate::builtin::layout_function;
-use crate::declaration::const_parameter;
-use crate::declaration::is_self;
+use crate::declaration::find_type_argument;
+use crate::declaration::first_copy_parameter;
+use crate::declaration::names_type_parameter;
 use crate::function::function_declaration;
 use crate::scope;
 
@@ -55,7 +53,7 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
                 self.checker.not_supported(span, "functions as values");
                 return Expr::INVALID;
             }
-            Some(Symbol::Type(_) | Symbol::Builtin(_) | Symbol::TypeArgument(_)) => "a type",
+            Some(Symbol::Type(_) | Symbol::Builtin(_) | Symbol::TypeArgument { .. }) => "a type",
             Some(Symbol::Module(_)) => "a module",
         };
         let text = self.checker.module().ast.file.slice(span);
@@ -63,50 +61,6 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
         self.checker
             .error(diagnostics::INVALID_OPERATION, message, span);
         Expr::INVALID
-    }
-
-    /// `size_of(T)` or `align_of(T)`, written at `span`, which gives `fact` of
-    /// the type `T`: a `usize` constant, for the target being built.
-    fn check_layout_function(
-        &mut self,
-        fact: LayoutFact,
-        text: &str,
-        arguments: &[Id<ast::Expr<L>>],
-        span: Span,
-    ) -> Expr {
-        let tree = &self.checker.module().ast;
-        let mut given = arguments.iter().copied();
-        let (Some(argument), None) = (given.next(), given.next()) else {
-            let message = argument_count_message(text, 1, false, arguments.len());
-            self.checker
-                .error(diagnostics::WRONG_ARGUMENT_COUNT, message, span);
-            return Expr::INVALID;
-        };
-        // A variable is a value; a type of its name is still the type.
-        let written = tree.exprs.span(argument);
-        if let ast::Expr::Name = tree.exprs[argument]
-            && let name = tree.file.slice(written)
-            && let Some(&position) = self.innermost.get(name)
-            && self.checker.resolve_global(name).is_none()
-        {
-            let local = Symbol::Local(self.names[position].local);
-            self.checker.type_named_by(local, written);
-            return Expr::INVALID;
-        }
-        let ty = self.checker.resolve_type_argument(argument);
-        if ty == TypeId::INVALID {
-            return Expr::INVALID;
-        }
-        let (size, align) = layout(&self.checker.types, ty, self.checker.target);
-        let bits = self.checker.target.pointer_bits;
-        let value = match fact {
-            LayoutFact::Size => size,
-            LayoutFact::Align => align,
-        };
-        Expr {
-            ty: self.checker.types.usize,
-            kind: ExprKind::Constant(Value::Integer(Limbs::new(bits, &[value]))),
-        }
     }
 
     /// `callee(arguments)`, written at `span`; a pipe gives its value as the
@@ -120,18 +74,14 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
     pub fn check_call(
         &mut self,
         callee: Id<ast::Expr<L>>,
+        type_arguments: List<ast::Type<L>>,
         arguments: &[Id<ast::Expr<L>>],
         span: Span,
     ) -> Expr {
         let tree = &self.checker.module().ast;
         let callee_span = tree.exprs.span(callee);
-        let text = tree.file.slice(callee_span);
         let mut receiver = None;
         let found = match tree.exprs[callee] {
-            // A built-in function, which no declaration hides.
-            ast::Expr::Name if let Some(fact) = layout_function(text) => {
-                return self.check_layout_function(fact, text, arguments, span);
-            }
             ast::Expr::Name => {
                 let symbol = match self.resolve(callee_span) {
                     // Their errors were reported.
@@ -166,18 +116,78 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
                 None
             }
         };
+        self.call_found(
+            found,
+            receiver,
+            callee_span,
+            type_arguments,
+            arguments,
+            span,
+        )
+    }
+
+    /// The call at `span` of `found`, the callee written at `callee_span`
+    /// and its type, with `type_arguments` and the written `arguments`,
+    /// after `receiver`'s for a method (`check_call`). `None` was reported.
+    pub(crate) fn call_found(
+        &mut self,
+        found: Option<(Callee, TypeId)>,
+        receiver: Option<Id<Expr>>,
+        callee_span: Span,
+        type_arguments: List<ast::Type<L>>,
+        arguments: &[Id<ast::Expr<L>>],
+        span: Span,
+    ) -> Expr {
+        let tree = &self.checker.module().ast;
+        let text = tree.file.slice(callee_span);
         // The written arguments come after the receiver's.
         let first = usize::from(receiver.is_some());
         // The places among the written arguments of what a copy is for.
         let mut const_places = Vec::new();
+        // The written arguments checked to find a type parameter, by place.
+        let mut checked_early: Vec<Option<Expr>> = Vec::new();
+        let type_parameters = match found {
+            Some((Callee::Function(function), _)) => {
+                function_declaration(self.checker.modules, function.definition)
+                    .signature
+                    .type_parameters
+                    .len()
+            }
+            _ => 0,
+        };
+        let mut type_arguments = type_arguments;
+        if type_parameters == 0 && !type_arguments.is_empty() && found.is_some() {
+            let message = format!("`{text}` takes no type arguments");
+            self.checker
+                .error(diagnostics::WRONG_ARGUMENT_COUNT, message, callee_span);
+            type_arguments = List::EMPTY;
+        }
         let found = match found {
             Some((Callee::Function(function), _))
                 if let definition = function.definition
                     && let declared = function_declaration(self.checker.modules, definition)
                     && let tree = &self.checker.modules[definition.module.index()].ast
-                    && const_parameter(tree, declared.signature).is_some() =>
+                    && first_copy_parameter(tree, declared.signature).is_some() =>
             {
-                self.copy_called(definition, arguments, first, &mut const_places, span)
+                let early = &mut checked_early;
+                let copied = self.copy_called(
+                    definition,
+                    type_arguments,
+                    arguments,
+                    first,
+                    &mut const_places,
+                    early,
+                    span,
+                );
+                // The function's name ends its callee. Its own type, for too
+                // few arguments, and a type with an error are of no copy.
+                if let Some((Callee::Function(copy), ty)) = copied
+                    && copy.arguments != ConstArguments::NONE
+                    && ty != TypeId::INVALID
+                {
+                    self.checker.record_copy(callee_span.end, copy, ty);
+                }
+                copied
             }
             found => found,
         };
@@ -195,7 +205,10 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
         )) = signature
         else {
             let written = arguments.iter().copied().enumerate();
-            for (_, argument) in written.filter(not_const) {
+            let unchecked = |&(place, _): &(usize, Id<ast::Expr<L>>)| {
+                checked_early.get(place).is_none_or(Option::is_none)
+            };
+            for (_, argument) in written.filter(not_const).filter(unchecked) {
                 let argument = match tree.exprs[argument] {
                     ast::Expr::Spread(values) => values,
                     _ => argument,
@@ -213,7 +226,7 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
             arguments.len() == all
         };
         if !arity_matches {
-            let message = argument_count_message(text, all, variadic, arguments.len());
+            let message = argument_count_message(text, "argument", all, variadic, arguments.len());
             self.checker
                 .error(diagnostics::WRONG_ARGUMENT_COUNT, message, span);
         }
@@ -231,24 +244,46 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
             checked.push(argument.into());
         }
         let written = arguments.iter().copied().enumerate();
-        let mut given = written.filter(not_const).map(|(_, argument)| argument);
-        for (&parameter, argument) in parameters[first..first + fixed].iter().zip(given.by_ref()) {
-            let argument = self.add_required(argument, parameter);
+        let mut given = written.filter(not_const);
+        for (&parameter, (place, argument)) in
+            parameters[first..first + fixed].iter().zip(given.by_ref())
+        {
+            let argument = match checked_early.get_mut(place).and_then(Option::take) {
+                Some(checked) => {
+                    let required = self.require(checked, argument, parameter);
+                    self.body.add(required, tree.exprs.span(argument))
+                }
+                None => self.add_required(argument, parameter),
+            };
             self.reborrow_in_place(argument);
             checked.push(argument.into());
         }
         if variadic {
-            let rest: Vec<Id<ast::Expr<L>>> = given.collect();
+            let rest: Vec<Id<ast::Expr<L>>> = given.map(|(_, argument)| argument).collect();
             let slice = self.check_variadic(&rest, parameters[first + fixed], span);
             self.reborrow_in_place(slice);
             checked.push(slice.into());
         } else {
-            for extra in given {
+            for (_, extra) in given {
                 self.add_expr(extra, None); // for its own errors
             }
         }
         if !arity_matches {
             return Expr::INVALID;
+        }
+        if let Callee::Function(function) = callee
+            && model::program::is_builtin(self.checker.modules, function.definition)
+        {
+            // Its answer is known now, wherever the call is.
+            let Some(value) = self.checker.evaluate_call(function, &[], span) else {
+                return Expr::INVALID; // reported
+            };
+            let ty = match value {
+                Value::Bool(_) => TypeId::BOOL,
+                _ => self.checker.types.usize,
+            };
+            let kind = ExprKind::Constant(value);
+            return Expr { ty, kind };
         }
         let arguments = self.body.children.lists.add(&checked);
         // In a constant's value, a call on constants runs now.
@@ -284,10 +319,31 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
         }
     }
 
+    /// The type `argument`, written in the body for a type (a `const T:
+    /// type` argument, a constraint's subject), names. A local of its name
+    /// is a value, reported; a type of its name elsewhere is still the type.
+    pub(crate) fn written_type_argument(&mut self, argument: Id<ast::Expr<L>>) -> TypeId {
+        let tree = &self.checker.module().ast;
+        let written = tree.exprs.span(argument);
+        if let ast::Expr::Name = tree.exprs[argument]
+            && let name = tree.file.slice(written)
+            && let Some(&position) = self.innermost.get(name)
+            && self.checker.resolve_global(name).is_none()
+        {
+            let local = Symbol::Local(self.names[position].local);
+            return self.checker.type_named_by(local, written);
+        }
+        self.checker.resolve_type_argument(argument)
+    }
+
     /// What the function `symbol`, called at `span`, is: its callee and
     /// type. `None` when it is not a function, reported, or when finding it
     /// reported an error.
-    fn function_called(&mut self, symbol: Option<Symbol>, span: Span) -> Option<(Callee, TypeId)> {
+    pub(crate) fn function_called(
+        &mut self,
+        symbol: Option<Symbol>,
+        span: Span,
+    ) -> Option<(Callee, TypeId)> {
         match symbol {
             Some(Symbol::Function(definition)) => {
                 let ty = self.checker.function_type(definition, span);
@@ -358,50 +414,146 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
     /// and its type. The argument in the place of each `const` parameter,
     /// put in `const_places`, is what the copy is made for: a type for
     /// `const T: type` (`resolve_type_argument`), else a value of the
-    /// parameter's type known when compiling. When one is missing, the
+    /// parameter's type known when compiling. A type parameter, `<T>`,
+    /// takes no argument: its type is written at the call, in
+    /// `type_arguments`, or found from the arguments of the parameters
+    /// whose types name it (`find_type_argument`), each checked here, once,
+    /// and left in `checked_early` at its place for
+    /// `check_call` to take. When a `const` one is missing, the
     /// function itself and its own type, for `check_call` to report the
     /// count. `None` when one has an error, or the function's signature
     /// has one, reported.
+    #[expect(clippy::too_many_arguments, reason = "each is one fact of the call")]
     fn copy_called(
         &mut self,
         definition: DefId,
+        type_arguments: List<ast::Type<L>>,
         arguments: &[Id<ast::Expr<L>>],
         first: usize,
         const_places: &mut Vec<usize>,
+        checked_early: &mut Vec<Option<Expr>>,
         span: Span,
     ) -> Option<(Callee, TypeId)> {
         let modules = self.checker.modules;
         let tree = &modules[definition.module.index()].ast;
         let declared = function_declaration(modules, definition);
         let parameters = tree.children.lists.items(declared.signature.parameters);
-        // `self` is never `const`, so a `const` parameter is past the receiver.
-        let const_parameters: Vec<(usize, ast::Param<L>)> = (parameters.enumerate())
-            .map(|(place, parameter)| (place, tree.children.params[parameter]))
-            .filter(|(_, parameter)| parameter.constant)
-            .map(|(place, parameter)| (place - first, parameter))
+        // The parameters past the receiver, each with its written argument's place.
+        let written_parameters: Vec<(usize, ast::Param<L>)> = (parameters.skip(first))
+            .map(|parameter| tree.children.params[parameter])
+            .enumerate()
             .collect();
+        let const_parameters = (written_parameters.iter().copied())
+            .filter(|(_, parameter)| parameter.constant)
+            .collect::<Vec<_>>();
         const_places.extend(const_parameters.iter().map(|&(place, _)| place));
         let pattern = self.checker.function_type(definition, span);
         if pattern == TypeId::INVALID {
             return None; // reported
         }
         // Too few arguments: `check_call` reports it, by the function's own type.
-        if const_parameters
-            .last()
-            .is_some_and(|&(place, _)| place >= arguments.len())
-        {
+        let required = (written_parameters.iter())
+            .filter(|(_, parameter)| {
+                !matches!(tree.types[parameter.ty], ast::Type::Variadic { .. })
+            })
+            .count();
+        if arguments.len() < required {
             let function = FunctionCopy {
                 definition,
                 arguments: ConstArguments::NONE,
             };
             return Some((Callee::Function(function), pattern));
         }
-        let mut given = Vec::with_capacity(const_parameters.len());
+        // Its type parameters, `<T>`, which take no argument of their own:
+        // the types written at the call, or else found from the arguments.
+        let names: Vec<&str> = (tree.children.lists)
+            .items(declared.signature.type_parameters)
+            .map(|parameter| tree.file.slice(tree.children.names.span(parameter)))
+            .collect();
+        let calling = &self.checker.module().ast;
+        let written_types: Vec<Id<ast::Type<L>>> =
+            calling.children.lists.items(type_arguments).collect();
+        let function = model::program::declared_path(modules, definition);
         let mut failed = false;
+        let mut types_found = vec![None; names.len()];
+        if !written_types.is_empty() {
+            if written_types.len() == names.len() {
+                for (found, &written) in types_found.iter_mut().zip(&written_types) {
+                    *found = Some(self.checker.resolve_value_type(written));
+                }
+            } else {
+                let (count, given) = (names.len(), written_types.len());
+                let message =
+                    argument_count_message(&function, "type argument", count, false, given);
+                self.checker
+                    .error(diagnostics::WRONG_ARGUMENT_COUNT, message, span);
+                failed = true;
+            }
+        } else if !names.is_empty() {
+            checked_early.resize(arguments.len(), None);
+            for &(place, parameter) in &written_parameters {
+                // shortcut: the arguments of a `...T` do not say what `T` is,
+                // as `check_variadic` checks them; find it from them when a
+                // function needs it.
+                if parameter.constant
+                    || place >= arguments.len()
+                    || matches!(tree.types[parameter.ty], ast::Type::Variadic { .. })
+                    || !names_type_parameter(tree, parameter.ty, &names)
+                {
+                    continue;
+                }
+                let checked = self.check_expr(arguments[place], None);
+                if checked.ty == TypeId::VOID {
+                    let written = self.checker.module().ast.exprs.span(arguments[place]);
+                    let message = "this expression has no value to pass";
+                    self.checker
+                        .error(diagnostics::INVALID_OPERATION, message, written);
+                    failed = true;
+                }
+                failed |= checked.ty == TypeId::INVALID; // reported
+                let types = &self.checker.types;
+                find_type_argument(
+                    tree,
+                    types,
+                    parameter.ty,
+                    checked.ty,
+                    &names,
+                    &mut types_found,
+                );
+                checked_early[place] = Some(checked);
+            }
+        }
+        let mut given = Vec::with_capacity(names.len() + const_parameters.len());
+        for (name, found) in names.iter().zip(types_found) {
+            match found {
+                Some(ty) => {
+                    let ty = self.checker.type_argument(ty, span);
+                    failed |= ty == TypeId::INVALID;
+                    given.push(ConstArgument::Type(ty));
+                }
+                None if failed => {}
+                None => {
+                    // No parameter names it, so only the call can.
+                    let named = (written_parameters.iter())
+                        .any(|(_, parameter)| names_type_parameter(tree, parameter.ty, &[name]));
+                    let hint = if named {
+                        String::new()
+                    } else {
+                        format!(": write it at the call, `{function}::<...>(...)`")
+                    };
+                    let message = format!(
+                        "the arguments of `{function}` do not say what its `{name}` is{hint}"
+                    );
+                    self.checker
+                        .error(diagnostics::INVALID_OPERATION, message, span);
+                    failed = true;
+                }
+            }
+        }
         for (place, parameter) in const_parameters {
             let argument = arguments[place];
             if let ast::Type::Type = tree.types[parameter.ty] {
-                let ty = self.checker.resolve_type_argument(argument);
+                let ty = self.written_type_argument(argument);
                 failed |= ty == TypeId::INVALID;
                 given.push(ConstArgument::Type(self.checker.types.real(ty)));
                 continue;
@@ -496,7 +648,7 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
             .lists
             .items(declared.signature.parameters)
             .next();
-        if first.is_some_and(|first| is_self(tree, tree.children.params[first])) {
+        if first.is_some_and(|first| tree.is_self(tree.children.params[first])) {
             return true;
         }
         let path = model::program::declared_path(modules, function);
@@ -521,9 +673,15 @@ fn constant_expr(constant: Option<Constant>) -> Expr {
 
 /// Why a call of `callee` with `given` arguments is wrong, when it takes
 /// `fixed` of them, or at least that many when `variadic`.
-fn argument_count_message(callee: &str, fixed: usize, variadic: bool, given: usize) -> String {
+fn argument_count_message(
+    callee: &str,
+    what: &str,
+    fixed: usize,
+    variadic: bool,
+    given: usize,
+) -> String {
     format!(
-        "`{callee}` takes {}{fixed} argument{}, but {given} {} given",
+        "`{callee}` takes {}{fixed} {what}{}, but {given} {} given",
         if variadic { "at least " } else { "" },
         if fixed == 1 { "" } else { "s" },
         if given == 1 { "was" } else { "were" },

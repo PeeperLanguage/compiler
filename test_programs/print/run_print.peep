@@ -13,6 +13,13 @@ fn twice(n: i32) -> i32 {
     return n * 2;
 }
 
+// Prints and changes `count`, to show when a value is worked out.
+fn loud(count: &mut i32) -> i32 {
+    print("[loud] ");
+    count.* = count.* + 1;
+    return count.*;
+}
+
 fn main() -> i32 {
     let small: i8 = -5;
     let big: u64 = 18446744073709551615;
@@ -49,6 +56,10 @@ fn main() -> i32 {
     changed.* = 30;
     println("after:", point.x + point.y, twice(5));
 
+    // Every value is worked out, in order, before any is printed.
+    let mut count = 1;
+    println("order:", count, loud(&mut count), count);
+
     print("no newline");
     print();
     Write(Stdout, c" | written\n", 11);
@@ -56,5 +67,12 @@ fn main() -> i32 {
 
     let address: rawptr = none;
     println("pointer:", address);
+
+    // What `print` calls are functions of the prelude, which a program can
+    // call too: an integer of no limbs is zero.
+    let mut unread: i64 = 9;
+    PrintInt(1, 0, @unread as rawptr);
+    PrintText(c" direct\n");
+    Flush();
     return 0;
 }

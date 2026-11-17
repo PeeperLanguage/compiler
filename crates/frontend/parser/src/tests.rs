@@ -250,7 +250,7 @@ const BROKEN_INPUTS: &[&str] = &[
     "fn f() { a as ; }",
     "fn f() { [_]i32{1, 2; }",
     "fn f() { [x]i32{}; }",
-    "fn f() { Box<T>::; }",
+    "fn f() { Box::<T>::; }",
     "fn f() { &mut ; }",
     "fn f() { a < b > c; }",
     "fn f() { -; }",

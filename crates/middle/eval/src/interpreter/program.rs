@@ -19,10 +19,15 @@ use runtime_abi::abi::STDOUT;
 use runtime_abi::number_text;
 use runtime_abi::symbols::ALLOC;
 use runtime_abi::symbols::EXIT;
+use runtime_abi::symbols::FLUSH;
 use runtime_abi::symbols::FREE;
+use runtime_abi::symbols::PRINT_BYTES;
+use runtime_abi::symbols::PRINT_FLOAT;
+use runtime_abi::symbols::PRINT_INT;
+use runtime_abi::symbols::PRINT_POINTER;
+use runtime_abi::symbols::PRINT_TEXT;
 use runtime_abi::symbols::READ;
 use runtime_abi::symbols::REALLOC;
-use runtime_abi::symbols::Runtime;
 use runtime_abi::symbols::WRITE;
 
 use super::Failure;
@@ -131,37 +136,31 @@ impl<'f> Interpreter<'_, 'f> {
         Ok(())
     }
 
-    /// Runs the runtime function `runtime`, which only `print` calls, with
-    /// `arguments`, for the call `id`.
-    pub(super) fn call_runtime(
+    /// Runs the runtime function `symbol`, one that only `print` calls,
+    /// with `arguments`, for the call `id`.
+    fn call_print(
         &mut self,
-        runtime: Runtime,
+        symbol: &str,
         arguments: &[Operand],
         id: Id<Instruction>,
     ) -> Result<(), Halt> {
-        if self.memory.is_constant() {
-            return Err(self.fail(
-                "`print` calls cannot run at compile time yet",
-                self.span_of(id),
-            ));
-        }
         let argument = |run: &Self, index: usize| run.operand(arguments[index]) as u64;
         let mut text = Vec::new();
         let mut push = |piece: &[u8]| text.extend_from_slice(piece);
-        match runtime {
-            Runtime::PrintBytes => {
+        match symbol {
+            PRINT_BYTES => {
                 let (address, length) = (argument(self, 0), argument(self, 1));
                 self.check_output(length, id)?;
                 push(self.read_bytes(address, length, id)?);
             }
-            Runtime::PrintText => match argument(self, 0) {
+            PRINT_TEXT => match argument(self, 0) {
                 0 => push(b"null"),
                 address => match self.memory.c_text(address) {
                     Some(bytes) => push(bytes),
                     None => return Err(self.fail(INVALID_ACCESS, self.span_of(id))),
                 },
             },
-            Runtime::PrintInt => {
+            PRINT_INT => {
                 let (signed, count) = (argument(self, 0) != 0, argument(self, 1) as usize);
                 let bytes = self.read_bytes(argument(self, 2), count as u64 * 8, id)?;
                 let mut limbs: Vec<u64> = (bytes.chunks(8))
@@ -170,19 +169,17 @@ impl<'f> Interpreter<'_, 'f> {
                 let mut chunks = vec![0; number_text::max_chunks(count)];
                 number_text::write_integer(signed, &mut limbs, &mut chunks, &mut push);
             }
-            Runtime::PrintFloat => {
+            PRINT_FLOAT => {
                 let (value, bits) = (argument(self, 0), argument(self, 1));
                 number_text::write_float(f64::from_bits(value), bits as i32, &mut push);
             }
-            Runtime::PrintPointer => number_text::write_pointer(argument(self, 0), &mut push),
-            Runtime::Flush => {
+            PRINT_POINTER => number_text::write_pointer(argument(self, 0), &mut push),
+            FLUSH => {
                 let kept = std::mem::take(&mut self.host.kept);
                 self.write_output(Stream::Stdout, &kept, id)?;
                 return Ok(());
             }
-            Runtime::PanicWrite | Runtime::PanicExit => {
-                unreachable!("the LLVM writer writes a panic's calls; lowering makes none")
-            }
+            _ => unreachable!("`{symbol}` is no function `print` calls"),
         }
         // Kept for `print`'s next flush.
         self.count_copy(text.len() as u64, id)?;
@@ -316,6 +313,13 @@ impl<'f> Interpreter<'_, 'f> {
                 Some(if at_end { 0 } else { u128::MAX })
             }
             (EXIT, 1) => return Err(Halt::Exited(self.i32_argument(arguments, 0))),
+            (PRINT_TEXT | PRINT_POINTER, 1)
+            | (PRINT_BYTES | PRINT_FLOAT, 2)
+            | (PRINT_INT, 3)
+            | (FLUSH, 0) => {
+                self.call_print(&symbol, arguments, id)?;
+                None
+            }
             (symbol, _) => {
                 let message = format!("`{symbol}` is outside Peeper, so it cannot run here");
                 return Err(self.fail(message, self.span_of(id)));

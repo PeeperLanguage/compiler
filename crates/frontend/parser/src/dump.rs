@@ -11,6 +11,7 @@ use source::Span;
 use syntax::ast;
 use syntax::ast::Attribute;
 use syntax::ast::Block;
+use syntax::ast::Constraint;
 use syntax::ast::Decl;
 use syntax::ast::Expr;
 use syntax::ast::Ident;
@@ -48,6 +49,7 @@ enum Item {
     Attribute(Id<Attribute<Bare>>),
     Decl(Id<Decl<Bare>>),
     Param(Id<Param<Bare>>),
+    Constraint(Id<Constraint<Bare>>),
     Type(Id<Type<Bare>>),
     Block(Id<Block<Bare>>),
     Stmt(Id<Stmt<Bare>>),
@@ -196,6 +198,12 @@ impl<'t> Dumper<'t> {
                     }
                 }
             }
+            Item::Constraint(id) => {
+                let c = t.children.constraints[id];
+                let mut nested = vec![Item::Expr(c.subject), Item::Expr(c.bound)];
+                nested.extend(t.children.lists.items(c.arguments).map(Item::Expr));
+                ("constraint", None, t.children.constraints.span(id), nested)
+            }
             Item::Param(id) => {
                 let p = t.children.params[id];
                 let mut nested: Vec<Item> = p.name.map(declared).into_iter().collect();
@@ -248,6 +256,8 @@ impl<'t> Dumper<'t> {
         nested.extend(parameters.map(Item::Param));
         nested.extend(signature.result.map(Item::Type));
         nested.extend(self.names("name reference", signature.origins));
+        let constraints = self.tree.children.lists.items(signature.constraints);
+        nested.extend(constraints.map(Item::Constraint));
         nested
     }
 
@@ -407,8 +417,13 @@ impl<'t> Dumper<'t> {
             Expr::Reference { mutable: m, value } => {
                 ("reference expression", mutable(m), one(value))
             }
-            Expr::Call { callee, arguments } => {
+            Expr::Call {
+                callee,
+                type_arguments,
+                arguments,
+            } => {
                 let mut nested = one(callee);
+                nested.extend(t.children.lists.items(type_arguments).map(Item::Type));
                 nested.extend(t.children.lists.items(arguments).map(Item::Expr));
                 ("call expression", None, nested)
             }

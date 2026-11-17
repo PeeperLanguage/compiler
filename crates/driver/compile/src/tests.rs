@@ -54,6 +54,17 @@ fn load(modules: &[(&str, &str)]) -> model::program::Program<Peeper> {
     program
 }
 
+/// A prelude with what `print` calls, for a program that prints.
+const PRINTING: (&str, &str) = (
+    "core:global",
+    "#[extern(\"print_text\")] fn PrintText(text: &cstr);
+#[extern(\"print_bytes\")] fn PrintBytes(bytes: rawptr, length: usize);
+#[extern(\"print_int\")] fn PrintInt(signed: i32, limbs: i32, number: rawptr);
+#[extern(\"print_float\")] fn PrintFloat(value: f64, bits: i32);
+#[extern(\"print_pointer\")] fn PrintPointer(pointer: rawptr);
+#[extern(\"flush\")] fn Flush();",
+);
+
 /// Checks the program of `modules` (see `load`) and gives each
 /// diagnostic as its code, message and the text of its first label.
 fn diagnostics(modules: &[(&str, &str)]) -> Vec<(&'static str, String, String)> {
@@ -226,6 +237,92 @@ fn constants_short_circuit() {
 
 /// A long chain of constants, each naming the next, is checked, not a
 /// stack overflow.
+/// `print` is calls of the prelude's functions: one that lacks a function,
+/// or declares it another way, is one error for the print, and the
+/// program's own function of the name is not taken.
+#[test]
+fn print_needs_what_the_prelude_declares() {
+    let text = "fn Flush() {}\nfn main() { println(1, true); }";
+    assert_eq!(diagnostics(&[PRINTING, ("app:main", text)]), []);
+    let lacking = PRINTING.1.rsplit_once('\n').unwrap().0;
+    let differing = PRINTING
+        .1
+        .replace("fn PrintText(text: &cstr)", "fn PrintText(text: i32)");
+    for (prelude, name) in [(lacking, "Flush"), (&*differing, "PrintText")] {
+        assert_eq!(
+            diagnostics(&[("core:global", prelude), ("app:main", text)]),
+            expected(&[(
+                "T0002",
+                &format!("the `core` library does not declare `{name}` as `print` calls it"),
+                "println(1, true)"
+            )])
+        );
+    }
+}
+
+/// A `#[builtin]` function is one the compiler has, declared as the
+/// compiler answers it and with no body; each other one is an error where it
+/// is declared. Every module sees the prelude's, and a module's own function
+/// of the name hides it.
+#[test]
+fn builtin_functions_are_declared_as_the_compiler_answers_them() {
+    let declared = "#[builtin] fn bits_of(const T: type) -> usize;
+#[builtin] fn is_signed(const T: type) -> bool;";
+    let uses = "const BITS: usize = bits_of(u7);\nfn main() { let signed: bool = is_signed(i8); }";
+    assert_eq!(
+        diagnostics(&[("core:global", declared), ("app:main", uses)]),
+        []
+    );
+    let own = "fn bits_of(value: i32) -> i32 { return value; }\nfn main() { let bits: i32 = bits_of(7); }";
+    assert_eq!(
+        diagnostics(&[("core:global", declared), ("app:main", own)]),
+        []
+    );
+    for (prelude, message, label) in [
+        (
+            "#[builtin] fn kind_of(const T: type) -> usize;",
+            "the compiler has no built-in function `kind_of`",
+            "kind_of",
+        ),
+        (
+            "#[builtin] fn bits_of(const T: type) -> bool;",
+            "the compiler's `bits_of` is `fn bits_of(const T: type) -> usize`",
+            "bits_of",
+        ),
+        (
+            "#[builtin] fn is_signed(const T: type) -> usize;",
+            "the compiler's `is_signed` is `fn is_signed(const T: type) -> bool`",
+            "is_signed",
+        ),
+        (
+            "#[builtin] fn is_int(const T: type) -> usize;",
+            "the compiler's `is_int` is `fn is_int(const T: type) -> bool`",
+            "is_int",
+        ),
+        (
+            "#[builtin] fn size_of(value: i32) -> usize;",
+            "the compiler's `size_of` is `fn size_of(const T: type) -> usize`",
+            "size_of",
+        ),
+        (
+            "#[builtin] fn size_of(const T: type, const U: type) -> usize;",
+            "the compiler's `size_of` is `fn size_of(const T: type) -> usize`",
+            "size_of",
+        ),
+        (
+            "#[builtin] fn align_of(const T: type) -> usize { return 1; }",
+            "a `#[builtin]` function has no body: the compiler gives its code",
+            "align_of",
+        ),
+    ] {
+        assert_eq!(
+            diagnostics(&[("core:global", prelude), ("app:main", "fn main() {}")]),
+            expected(&[("P0005", message, label)]),
+            "{prelude}"
+        );
+    }
+}
+
 #[test]
 fn checks_a_long_chain_of_constants() {
     const DEPTH: usize = 5000;
@@ -295,7 +392,7 @@ fn checks_deeply_nested_statements() {
         "[1]".repeat(DEPTH),
         "[0]".repeat(DEPTH)
     );
-    assert_eq!(diagnostics(&[("app:main", &arrays)]), []);
+    assert_eq!(diagnostics(&[PRINTING, ("app:main", &arrays)]), []);
     // A pointer breaks a flat array, so an error's type text recurses.
     let pointers = format!(
         "fn f(a: {}i32) {{ let b: bool = a; }}\nfn main() {{}}",
@@ -333,7 +430,7 @@ fn checks_structs_holding_structs_twice() {
         fn replace(to: &mut S39, s: S39) {{ to.* = s; }}
         fn borrowing(s: S39) -> S39 {{ let n = 1; let r = &n; println(r); return s; }}"
     );
-    assert_eq!(diagnostics(&[("app:main", &text)]), []);
+    assert_eq!(diagnostics(&[PRINTING, ("app:main", &text)]), []);
 }
 
 /// Each struct holds the last twice, and the first a reference, so the loan
@@ -852,10 +949,14 @@ fn a_struct_field_edit_reaches_importers_through_a_pointer() {
         "import \"app:other\";
         fn main() { println(other::First().*.x); }",
     );
-    let (first, _) = recompile(&[("app:utils", &start), other, main], Results::default());
-    let (second, checked) = recompile(&[("app:utils", &retyped), other, main], first);
+    let (first, _) = recompile(
+        &[PRINTING, ("app:utils", &start), other, main],
+        Results::default(),
+    );
+    assert_eq!(messages(&first), [] as [&str; 0]);
+    let (second, checked) = recompile(&[PRINTING, ("app:utils", &retyped), other, main], first);
     assert_eq!(checked, ["app:utils", "app:other", "app:main"]);
-    let (third, checked) = recompile(&[("app:utils", &renamed), other, main], second);
+    let (third, checked) = recompile(&[PRINTING, ("app:utils", &renamed), other, main], second);
     assert_eq!(checked, ["app:utils", "app:other", "app:main"]);
     assert_eq!(messages(&third), ["`Item` has no field `x`"]);
 }
@@ -1113,7 +1214,8 @@ fn a_prelude_edit_checks_what_it_changes() {
 
 /// What a copy's check finds goes to the module that called for it, with
 /// that call marked, also from a copy made inside another copy; an error
-/// every copy finds in the function's text is reported once.
+/// every copy finds in the function's text is reported once, by the
+/// function's own body, in its module.
 #[test]
 fn copies_report_once_to_the_calling_module() {
     let program = load(&[
@@ -1147,30 +1249,82 @@ fn copies_report_once_to_the_calling_module() {
             .map(|diagnostic| (diagnostic.message.clone(), labels(diagnostic)))
             .collect()
     };
-    assert_eq!(found(&results.modules[0]), []);
-    let call = |argument: &str| format!("list::Twice({argument})");
+    let wrong_whatever_its_types = (
+        "mismatched types: expected `i32`, found `bool`".to_string(),
+        vec!["true ".to_string()],
+    );
+    assert_eq!(found(&results.modules[0]), [wrong_whatever_its_types]);
     assert_eq!(
         found(&results.modules[1]),
-        [
-            (
-                "mismatched types: expected `i32`, found `bool`".to_string(),
-                vec![
-                    "true ".to_string(),
-                    // Copies are built newest first.
-                    format!(
-                        "{} in `Twice<i64>`, the copy made for this call",
-                        call("i64, 2")
-                    ),
-                ]
-            ),
-            (
-                "operator `+` cannot be applied to `bool`".to_string(),
-                vec![
-                    "x + x ".to_string(),
-                    "add(T, x) in `add<bool>`, the copy made for this call".to_string(),
-                ]
-            ),
-        ]
+        [(
+            "operator `+` cannot be applied to `bool`".to_string(),
+            vec![
+                "x + x ".to_string(),
+                "add(T, x) in `add<bool>`, the copy made for this call".to_string(),
+            ]
+        ),]
+    );
+}
+
+/// A constraint false for what a call gives is the error of each such call,
+/// in the module the call is written in, marked at the call, with the
+/// constraint marked in its function's module; the function's own module
+/// reports nothing.
+#[test]
+fn a_false_constraint_is_reported_at_each_call() {
+    let program = load(&[
+        (
+            "app:list",
+            "#[builtin]
+            fn is_int(const T: type) -> bool;
+            fn Number(const T: type) -> bool { return is_int(T); }
+            fn Largest<T>(a: T, b: T) -> T where T: Number { return a; }",
+        ),
+        (
+            "app:main",
+            "import \"app:list\";
+            fn main() { list::Largest(true, false); list::Largest(1, 2); list::Largest(false, true); }",
+        ),
+    ]);
+    let results = run(
+        &program,
+        x86_64(),
+        Results::default(),
+        Options::default(),
+        &mut |_| {},
+    );
+    let found = |module: &ModuleResults| -> Vec<(String, Vec<String>)> {
+        let label = |label: &diagnostics::Label| {
+            let module = label.file.path.rsplit('/').next().unwrap_or_default();
+            format!(
+                "{module}: {} {}",
+                label.file.slice(label.span),
+                label.message
+            )
+        };
+        let diagnostics = module.diagnostics.iter();
+        diagnostics
+            .map(|diagnostic| {
+                (
+                    diagnostic.message.clone(),
+                    diagnostic.labels.iter().map(label).collect(),
+                )
+            })
+            .collect()
+    };
+    assert_eq!(found(&results.modules[0]), []);
+    let at = |call: &str| {
+        (
+            "`T: Number` is false for `Largest<bool>`".to_string(),
+            vec![
+                format!("main.peep: list::Largest({call}) "),
+                "list.peep: T: Number ".to_string(),
+            ],
+        )
+    };
+    assert_eq!(
+        found(&results.modules[1]),
+        [at("true, false"), at("false, true")]
     );
 }
 
@@ -1226,6 +1380,56 @@ fn a_function_with_const_parameters_records_its_signature_once() {
     assert_eq!(found.iter().filter(|&&text| text == "i64").count(), 1);
 }
 
+/// The own body of a function with `const` parameters, which no call
+/// copies, is checked with no type for its `T`: it reports what is wrong
+/// whatever `T` is, here an unknown name, nothing of what has `T`'s type,
+/// and nothing of a copy only that body would make, here one whose error
+/// is in the copy alone. An editor's compile reports what a build does.
+#[test]
+fn an_own_body_reports_what_no_type_changes_and_makes_no_copy() {
+    let utils = "fn Half(const T: type) -> T { return 1.5; }
+fn Unused(const T: type, given: T) -> i32 { return Half(i32) + missing + given; }";
+    let main = "import \"app:utils\";\nfn main() {}";
+    let program = load(&[("app:utils", utils), ("app:main", main)]);
+    let messages = |found: &Results| -> Vec<String> {
+        let diagnostics = found.diagnostics();
+        diagnostics
+            .map(|diagnostic| diagnostic.message.clone())
+            .collect()
+    };
+    let build = run(
+        &program,
+        x86_64(),
+        Results::default(),
+        Options::default(),
+        &mut |_| {},
+    );
+    assert_eq!(messages(&build), ["unknown name `missing`"]);
+    let mut built = Vec::new();
+    let found = run(
+        &program,
+        x86_64(),
+        Results::default(),
+        Options {
+            record_facts: true,
+            ..Options::default()
+        },
+        &mut |output| {
+            if let Output::Function(CheckedFunction { function, mir, .. }) = output {
+                let name = model::program::declared_path(&program.modules, function.definition);
+                built.push((name, mir.is_some()));
+            }
+        },
+    );
+    assert_eq!(messages(&found), messages(&build));
+    // The own bodies, with no MIR, then `main`.
+    let expected = [("Half", false), ("Unused", false), ("main", true)];
+    assert_eq!(
+        built,
+        expected.map(|(name, has_mir)| (name.to_string(), has_mir))
+    );
+}
+
 /// Each element of an array keeps its own loans: a constant index reads,
 /// replaces and borrows only its element, nested and inside structs, and ends
 /// what was borrowed through it; an index known only when the program runs
@@ -1235,7 +1439,7 @@ fn array_elements_keep_their_own_loans() {
     let check = |function: &str| -> Vec<(&'static str, String)> {
         let text =
             format!("struct Pair {{ first: &i32, second: &i32 }}\n{function}\nfn main() {{}}");
-        let found = diagnostics(&[("app:main", &text)]);
+        let found = diagnostics(&[PRINTING, ("app:main", &text)]);
         found
             .into_iter()
             .map(|(code, message, _)| (code, message))

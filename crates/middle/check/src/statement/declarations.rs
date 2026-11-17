@@ -7,10 +7,12 @@ use model::layout::in_memory;
 use model::semantic_types::Constant;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
+use model::thir::Expr;
 use model::thir::ExprKind;
 use model::thir::Local;
 use model::thir::Stmt;
 use model::thir::Variable;
+use source::Span;
 use syntax::ast;
 use syntax::ast::Ident;
 
@@ -137,6 +139,12 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
             None => self.check_expr(value, None),
         };
         self.in_constant = outer;
+        self.known_constant(checked, span)
+    }
+
+    /// `checked`, worked out with `in_constant`, as a constant; reported at
+    /// `span` when it is not one.
+    pub(crate) fn known_constant(&mut self, checked: Expr, span: Span) -> Option<Constant> {
         match checked.kind {
             ExprKind::Constant(value) => Some(Constant {
                 ty: checked.ty,

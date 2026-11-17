@@ -11,6 +11,8 @@ shared: 4 4
 raw: 3 4
 changed: 3
 after: 34 10
+[loud] order: 1 2 2
 no newline | written
 
 pointer: 0x0
+0 direct

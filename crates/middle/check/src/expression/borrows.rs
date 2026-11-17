@@ -94,7 +94,7 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
     /// a value it starts from that is not in a variable (a call's result, a
     /// literal) in a temporary: only a place can be lent, indexed or gone
     /// through.
-    pub(super) fn make_place(&mut self, place: Id<Expr>) -> (Id<Variable>, Option<Id<Expr>>) {
+    pub fn make_place(&mut self, place: Id<Expr>) -> (Id<Variable>, Option<Id<Expr>>) {
         let (start, decider) = self.place_root(place);
         if let Some(variable) = self.start_variable(start) {
             return (variable, decider);

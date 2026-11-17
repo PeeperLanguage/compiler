@@ -42,7 +42,8 @@ pub fn write_integer(
     push: &mut impl FnMut(&[u8]),
 ) {
     let count = wide.len();
-    let negative = is_signed && wide[count - 1] >> 63 != 0;
+    // No limbs is zero: a program can call this with any count.
+    let negative = is_signed && wide.last().is_some_and(|top| top >> 63 != 0);
     if negative {
         let mut carry = 1;
         for limb in wide.iter_mut() {

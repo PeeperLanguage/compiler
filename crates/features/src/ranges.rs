@@ -20,15 +20,25 @@ use syntax::ast::WrittenRange;
 use syntax::operators::Precedence;
 use token::TokenKind;
 
+use crate::ExprNode;
 use crate::FeatureExpr;
 use crate::Peeper;
 
-/// Adds the rules that read ranges to `rules`.
-pub(crate) const fn rows(rules: &mut Rules<Peeper>) {
-    rules.prefix(TokenKind::DotDot, open_range);
-    rules.prefix(TokenKind::DotDotEqual, open_range);
-    rules.infix(TokenKind::DotDot, Precedence::Range, range);
-    rules.infix(TokenKind::DotDotEqual, Precedence::Range, range);
+/// A range, as written: its parts are the core's, which slicing and loops
+/// read (`Language::written_range`).
+#[derive(Clone, Copy, Debug)]
+pub struct Range {
+    pub written: WrittenRange<Peeper>,
+}
+
+impl Range {
+    /// Adds the rules that read ranges to `rules`.
+    pub(crate) const fn rows(rules: &mut Rules<Peeper>) {
+        rules.prefix(TokenKind::DotDot, open_range);
+        rules.prefix(TokenKind::DotDotEqual, open_range);
+        rules.infix(TokenKind::DotDot, Precedence::Range, range);
+        rules.infix(TokenKind::DotDotEqual, Precedence::Range, range);
+    }
 }
 
 /// Reads a range with no start: `..b`, `..=b`, or `..` before `]`.
@@ -72,65 +82,76 @@ fn range_from(
         step = Some(p.expr(Precedence::Range));
     }
     let inclusive = op.kind == TokenKind::DotDotEqual;
+    let written = WrittenRange {
+        inclusive,
+        start: low,
+        end: high,
+        step,
+    };
     p.add(
         start,
-        ast::Expr::Feature(FeatureExpr::Range(WrittenRange {
-            inclusive,
-            start: low,
-            end: high,
-            step,
-        })),
+        ast::Expr::Feature(FeatureExpr::Range(Range { written })),
     )
 }
 
-/// The range `start..end`, or `..=`, stepping by `start..end:step`, at
-/// `span`: a `range[T]` of its ends' integer type `T`. A literal end
-/// without a suffix takes the other end's type, or `T` when a
-/// `range[T]` is `expected`; the step is of the range type's step type
-/// and not a constant zero (`check_range_step`). A range without both
-/// ends is not supported yet.
-pub(crate) fn check_range(
-    builder: &mut ThirBuilder<'_, '_, Peeper>,
-    range: WrittenRange<Peeper>,
-    span: Span,
-    expected: Option<TypeId>,
-) -> thir::Expr {
-    let WrittenRange {
-        inclusive,
-        start: Some(start),
-        end: Some(end),
-        step,
-    } = range
-    else {
-        builder
-            .checker
-            .not_supported(span, "ranges without both ends");
-        return thir::Expr::INVALID;
-    };
-    let hint = expected.and_then(|ty| match builder.checker.types[ty] {
-        Type::Range { element, .. } => Some(element),
-        _ => None,
-    });
-    let (start, end) = builder.check_range_ends(start, end, hint);
-    let ty = builder
-        .checker
-        .range_type(builder.body.exprs[start].ty, span);
-    let step_type = match builder.checker.types[ty] {
-        Type::Range { step, .. } => step,
-        _ => TypeId::INVALID,
-    };
-    let step = check_range_step(builder, step, step_type, span);
-    if ty == TypeId::INVALID {
-        return thir::Expr::INVALID;
+impl ExprNode for Range {
+    fn precedence(&self) -> Precedence {
+        Precedence::Range
     }
-    thir::Expr {
-        ty,
-        kind: thir::ExprKind::Range {
-            start,
-            end,
-            step,
+
+    fn written_range(&self) -> Option<WrittenRange<Peeper>> {
+        Some(self.written)
+    }
+
+    /// The range `start..end`, or `..=`, stepping by `start..end:step`, at
+    /// `span`: a `range[T]` of its ends' integer type `T`. A literal end
+    /// without a suffix takes the other end's type, or `T` when a
+    /// `range[T]` is `expected`; the step is of the range type's step type
+    /// and not a constant zero (`check_range_step`). A range without both
+    /// ends is not supported yet.
+    fn check(
+        &self,
+        builder: &mut ThirBuilder<'_, '_, Peeper>,
+        span: Span,
+        expected: Option<TypeId>,
+    ) -> thir::Expr {
+        let WrittenRange {
             inclusive,
-        },
+            start: Some(start),
+            end: Some(end),
+            step,
+        } = self.written
+        else {
+            builder
+                .checker
+                .not_supported(span, "ranges without both ends");
+            return thir::Expr::INVALID;
+        };
+        let hint = expected.and_then(|ty| match builder.checker.types[ty] {
+            Type::Range { element, .. } => Some(element),
+            _ => None,
+        });
+        let (start, end) = builder.check_range_ends(start, end, hint);
+        let ty = builder
+            .checker
+            .range_type(builder.body.exprs[start].ty, span);
+        let step_type = match builder.checker.types[ty] {
+            Type::Range { step, .. } => step,
+            _ => TypeId::INVALID,
+        };
+        let step = check_range_step(builder, step, step_type, span);
+        if ty == TypeId::INVALID {
+            return thir::Expr::INVALID;
+        }
+        thir::Expr {
+            ty,
+            kind: thir::ExprKind::Range {
+                start,
+                end,
+                step,
+                inclusive,
+            },
+        }
     }
 }
 

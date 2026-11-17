@@ -57,10 +57,10 @@ fn main:
     %1 = sext i32 %0 to i64
     store i64 .0, %1
     %3 = address 8 .0
-    call peeper_rt_v2_print_int(1, 1, %3)
-    call peeper_rt_v1_print_bytes(global 0, 1)
-    call peeper_rt_v1_flush()
+    call PrintInt(1, 1, %3) in C (register, register, register)
+    call PrintText(global 0) in C (register)
+    call Flush() in C ()
     dead .0
     call each()
     fall off at `}`
-  global 0 = "\n"
+  global 0 = "\n\x00"

@@ -367,7 +367,7 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
     /// `value`, or what it refers to when it is a reference or a typed raw
     /// pointer, added at `span`: a field or an element is reached through
     /// the pointer, and a reference lent again lends what it refers to.
-    pub(super) fn through_pointer(&mut self, value: Id<Expr>, span: Span) -> Id<Expr> {
+    pub fn through_pointer(&mut self, value: Id<Expr>, span: Span) -> Id<Expr> {
         let Some(target) = self.checker.types[self.body.exprs[value].ty].pointee() else {
             return value;
         };

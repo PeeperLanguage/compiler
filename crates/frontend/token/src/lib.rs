@@ -565,6 +565,20 @@ tokens! {
         /// type Meters = i64;
         /// ```
         Type = "type",
+        /// Says what a function's type parameters and `const` values must satisfy.
+        ///
+        /// Written after the result, before the body: a list of `name: Bound`, each checked when compiling, for each set of types and values the function is called with. A `Bound` that is an interface must be implemented by the type; one that is a function must give `true` when called with the name first, then any arguments written after it. A call for which one does not hold is an error.
+        ///
+        /// ```peeper
+        /// fn Sized(const T: type, const N: usize) -> bool {
+        ///     return size_of(T) == N;
+        /// }
+        ///
+        /// fn Total<T>(items: &[]T) -> i32 where T: Shape, T: Sized(8) {
+        ///     return items[0].area();
+        /// }
+        /// ```
+        Where = "where",
         /// Gives an enum case its payload, in a value or a pattern.
         ///
         /// Not supported yet.

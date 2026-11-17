@@ -19,8 +19,6 @@ use source::Span;
 use syntax::ast;
 use syntax::ast::Language;
 
-use crate::builtin::layout_function;
-
 /// A place that holds declarations, and where each name is written. A module
 /// has one for its top-level declarations, imports and type functions. A name
 /// it does not hold is looked up next among its parent's exported names.
@@ -157,25 +155,12 @@ pub fn collect<'p, L: Language>(
         .iter()
         .find(|import| import.kind == ImportKind::Prelude);
     let mut scope = Scope::new(prelude.map(|import| import.module));
-    // The error for a name declared twice, or a built-in function's.
+    // The error for a name declared twice.
     let declare = |scope: &mut Scope<'p>, owner, name: &'p str, symbol, span| {
         if name.is_empty() {
             return None; // missing after a syntax error
         }
-        let first = scope.declare(owner, name, symbol, span).err();
-        // A call by this name is the built-in's (`check_call`), whatever
-        // else the module calls it.
-        if owner.is_none() && layout_function(name).is_some() {
-            let message = format!("`{name}` is a built-in function");
-            return Some(
-                Diagnostic::new(diagnostics::ALREADY_DECLARED, message).label(
-                    file,
-                    span,
-                    "give it another name",
-                ),
-            );
-        }
-        let first = first?;
+        let first = scope.declare(owner, name, symbol, span).err()?;
         let place = if owner.is_some() { "type" } else { "module" };
         Some(report_redeclared(file, name, place, span, first))
     };

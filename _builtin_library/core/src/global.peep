@@ -1,3 +1,42 @@
+// What the compiler knows of a type. It answers each call itself, so these
+// have no body.
+
+// How many bytes a value of `T` takes, its padding included.
+#[builtin]
+fn size_of(const T: type) -> usize;
+
+// The multiple of bytes a value of `T` starts at in memory.
+#[builtin]
+fn align_of(const T: type) -> usize;
+
+// How many bits `T`, an integer or a float type, has.
+#[builtin]
+fn bits_of(const T: type) -> usize;
+
+// Whether `T`, an integer type, has negative values.
+#[builtin]
+fn is_signed(const T: type) -> bool;
+
+// Whether `T` is an integer type, of any width.
+#[builtin]
+fn is_int(const T: type) -> bool;
+
+// Whether `T` is a float type.
+#[builtin]
+fn is_float(const T: type) -> bool;
+
+// Whether `T` is `&str`, text.
+#[builtin]
+fn is_text(const T: type) -> bool;
+
+// Whether `T` is `bool`.
+#[builtin]
+fn is_bool(const T: type) -> bool;
+
+// Whether `T` is a raw pointer: `*T` or `rawptr`.
+#[builtin]
+fn is_pointer(const T: type) -> bool;
+
 const Stdin:  i32 = 0;
 const Stdout: i32 = 1;
 const Stderr: i32 = 2;
@@ -10,3 +49,25 @@ fn Read(fd: i32, buf: *u8, n: i32) -> i32;
 
 #[extern("peeper_rt_v1_exit")]
 fn Exit(code: i32);
+
+// What `print` and `println` call. They keep their text back until `Flush`.
+
+#[extern("peeper_rt_v1_print_text")]
+fn PrintText(text: &cstr);
+
+#[extern("peeper_rt_v1_print_bytes")]
+fn PrintBytes(bytes: rawptr, length: usize);
+
+// `limbs` 64-bit pieces at `number`, least significant first.
+#[extern("peeper_rt_v2_print_int")]
+fn PrintInt(signed: i32, limbs: i32, number: rawptr);
+
+// `bits` is 32 for a value that was an `f32`.
+#[extern("peeper_rt_v1_print_float")]
+fn PrintFloat(value: f64, bits: i32);
+
+#[extern("peeper_rt_v1_print_pointer")]
+fn PrintPointer(pointer: rawptr);
+
+#[extern("peeper_rt_v1_flush")]
+fn Flush();

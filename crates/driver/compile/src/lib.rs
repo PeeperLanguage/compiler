@@ -140,7 +140,9 @@ pub struct CheckedFunction<'c> {
     /// the compile records facts (as for an editor); otherwise none. Only
     /// this function's locals are among their names, explained by `thir`.
     pub facts: &'c [thir::Fact],
-    /// Its path-checked MIR, `None` when checking it found an error.
+    /// Its path-checked MIR, `None` when checking it found an error, and
+    /// for the own body of a function with `const` parameters, which an
+    /// editor's compile checks for its facts and never builds.
     pub mir: Option<mir::Body>,
     pub types: &'c Types, // the program's types so far, which the bodies name
     pub debug_types: &'c DebugTypes, // the program's so far, which `mir` names
@@ -317,13 +319,28 @@ pub fn run(
             };
             continue;
         }
-        compile_module(&mut checker, id, &mut thir, use_output);
+        compile_module(
+            &mut checker,
+            id,
+            &mut thir,
+            options.record_facts,
+            use_output,
+        );
         let interface = interface(&checker, id, &results);
         let found = &mut results[index];
         found.interface = interface;
         found.changed = previous_interface != Some(interface);
         let checked = &mut checker.module_checks[index];
         found.diagnostics = std::mem::take(&mut checked.diagnostics);
+        // A copy of another module's function finds again what that
+        // function's own body reported there.
+        let (earlier, found) = results.split_at_mut(index);
+        let found = &mut found[0];
+        let reported = |diagnostic: &Diagnostic| {
+            let mut earlier = earlier.iter().flat_map(|module| &module.diagnostics);
+            earlier.any(|earlier| earlier.reports_same(diagnostic))
+        };
+        found.diagnostics.retain(|diagnostic| !reported(diagnostic));
         let ran = checked.ran_modules.iter();
         found.ran_modules = ran
             .map(|ran| modules[ran.index()].ast.file.path.clone())
@@ -373,8 +390,9 @@ fn find_entry_point(
                         index: index as u32,
                     },
                     function.name.span,
-                    // A `const T: type` parameter is not among its type's.
-                    function.signature.parameters.is_empty(),
+                    // A type or `const T: type` parameter is not among its type's.
+                    function.signature.parameters.is_empty()
+                        && function.signature.type_parameters.is_empty(),
                 ))
             }
             _ => None,
@@ -410,6 +428,7 @@ fn compile_module(
     checker: &mut Checker<Peeper>,
     module: ModuleId,
     thir: &mut thir::Body,
+    record_facts: bool,
     use_output: &mut dyn FnMut(Output),
 ) {
     let tree = &checker.modules[module.index()].ast;
@@ -419,11 +438,32 @@ fn compile_module(
             index: index as u32,
         };
         match tree.decls[declaration] {
-            // Only its signature: a call makes a copy, built below.
+            // A call makes a copy, built below. Its own body is checked with
+            // no type for a type parameter, where what is of such a type is
+            // unknown and reports nothing: what the body has wrong whatever
+            // its types are is reported here, once, though no call copies
+            // it, and an editor asks about its text.
             ast::Decl::Function(function)
-                if check::declaration::const_parameter(tree, function.signature).is_some() =>
+                if check::declaration::first_copy_parameter(tree, function.signature).is_some() =>
             {
-                checker.function_type(definition, function.name.span);
+                let name = function.name.span;
+                checker.function_type(definition, name);
+                let function = FunctionCopy {
+                    definition,
+                    arguments: ConstArguments::NONE,
+                };
+                if checker.check_body(function, name, thir, true) && record_facts {
+                    let facts = std::mem::take(&mut checker.module_checks[module.index()].facts);
+                    use_output(Output::Function(CheckedFunction {
+                        function,
+                        module,
+                        thir,
+                        facts: &facts,
+                        mir: None,
+                        types: &checker.types,
+                        debug_types: &checker.debug_types.table,
+                    }));
+                }
             }
             ast::Decl::Function(_) => {
                 let function = FunctionCopy {
@@ -578,7 +618,7 @@ fn interface(checker: &Checker<Peeper>, module: ModuleId, done: &[ModuleResults]
                 .hash(&mut hasher);
             // Another module's call builds a copy of its body, so the body
             // is what that module sees.
-            if check::declaration::const_parameter(tree, function.signature).is_some() {
+            if check::declaration::first_copy_parameter(tree, function.signature).is_some() {
                 tree.file
                     .slice(tree.decls.span(declaration))
                     .hash(&mut hasher);

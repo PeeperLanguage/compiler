@@ -4,14 +4,18 @@
 //! type.
 
 use arena::Id;
+use check::builder::ThirBuilder;
 use model::constant::Value;
 use model::semantic_types::TypeId;
 use model::thir;
 use parser::Parser;
 use parser::Rules;
+use source::Span;
 use syntax::ast;
+use syntax::operators::Precedence;
 use token::TokenKind;
 
+use crate::ExprNode;
 use crate::FeatureExpr;
 use crate::Peeper;
 
@@ -21,10 +25,12 @@ pub struct BoolLiteral {
     pub value: bool,
 }
 
-/// Adds the rules that read bools to `rules`.
-pub(crate) const fn rows(rules: &mut Rules<Peeper>) {
-    rules.prefix(TokenKind::True, bool_literal);
-    rules.prefix(TokenKind::False, bool_literal);
+impl BoolLiteral {
+    /// Adds the rules that read bools to `rules`.
+    pub(crate) const fn rows(rules: &mut Rules<Peeper>) {
+        rules.prefix(TokenKind::True, bool_literal);
+        rules.prefix(TokenKind::False, bool_literal);
+    }
 }
 
 /// Reads `true` or `false`.
@@ -37,11 +43,22 @@ fn bool_literal(p: &mut Parser<Peeper>) -> Id<ast::Expr<Peeper>> {
     )
 }
 
-/// The constant `literal` is.
-pub(crate) fn check_literal(literal: BoolLiteral) -> thir::Expr {
-    thir::Expr {
-        ty: TypeId::BOOL,
-        kind: thir::ExprKind::Constant(Value::Bool(literal.value)),
+impl ExprNode for BoolLiteral {
+    fn precedence(&self) -> Precedence {
+        Precedence::Call
+    }
+
+    /// The constant `literal` is.
+    fn check(
+        &self,
+        _builder: &mut ThirBuilder<'_, '_, Peeper>,
+        _span: Span,
+        _expected: Option<TypeId>,
+    ) -> thir::Expr {
+        thir::Expr {
+            ty: TypeId::BOOL,
+            kind: thir::ExprKind::Constant(Value::Bool(self.value)),
+        }
     }
 }
 

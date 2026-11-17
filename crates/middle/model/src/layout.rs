@@ -74,18 +74,20 @@ pub fn in_memory(types: &Types, ty: TypeId) -> bool {
     )
 }
 
-/// Field `index` of the struct or range type `ty`: where it is from the
-/// value's start, in bytes, and its type. A struct's offsets are kept
-/// (`StructInternals`); a range's two or three fields are laid out here.
+/// Field `index` of the struct, range or `str` type `ty`: where it is from
+/// the value's start, in bytes, and its type. A struct's offsets are kept
+/// (`StructInternals`); a range's two or three fields are laid out here; a
+/// `str` is its bytes' address, then its length.
 pub fn field_placed(types: &Types, ty: TypeId, index: usize, target: &Machine) -> (u64, TypeId) {
     match &types[ty] {
         ty if let Some(members) = ty.members() => (members.offsets[index], members.fields[index]),
+        Type::Str => [(0, TypeId::RAWPTR), (target.pointer_bytes(), types.usize)][index],
         Type::Range { element, step } => {
             let fields = range_fields(*element, *step).map(|(_, ty)| ty);
             let (offsets, ..) = struct_layout(types, &fields, target);
             (offsets[index], fields[index])
         }
-        _ => unreachable!("only a struct and a range have fields"),
+        _ => unreachable!("only a struct, a range and a `str` have fields"),
     }
 }
 

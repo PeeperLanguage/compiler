@@ -107,16 +107,7 @@ fn the_runtime_core_and_the_backend_agree() {
             "`core` declares `{symbol}` as the runtime does not define it"
         );
     }
-    let called_by_backend = [
-        Runtime::PanicWrite,
-        Runtime::PanicExit,
-        Runtime::PrintText,
-        Runtime::PrintBytes,
-        Runtime::PrintInt,
-        Runtime::PrintFloat,
-        Runtime::PrintPointer,
-        Runtime::Flush,
-    ];
+    let called_by_backend = [Runtime::PanicWrite, Runtime::PanicExit];
     for function in called_by_backend {
         let signature = function.signature();
         let carriers = (signature.parameters.to_vec(), signature.result);
@@ -134,6 +125,12 @@ fn the_runtime_core_and_the_backend_agree() {
         symbols::WRITE,
         symbols::READ,
         symbols::EXIT,
+        symbols::PRINT_TEXT,
+        symbols::PRINT_BYTES,
+        symbols::PRINT_INT,
+        symbols::PRINT_FLOAT,
+        symbols::PRINT_POINTER,
+        symbols::FLUSH,
     ];
     for symbol in interpreted {
         assert!(

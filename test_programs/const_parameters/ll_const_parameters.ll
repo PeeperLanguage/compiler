@@ -1,7 +1,7 @@
 source_filename = "<fixture>/src/main.peep"
 
-@.str.0 = private unnamed_addr constant [1 x i8] c" "
-@.str.1 = private unnamed_addr constant [1 x i8] c"\0A"
+@.str.0 = private unnamed_addr constant [2 x i8] c" \00"
+@.str.1 = private unnamed_addr constant [2 x i8] c"\0A\00"
 
 define void @"ll_const_parameters:main.main"() {
 entry:
@@ -16,38 +16,38 @@ entry:
   br label %bb0
 bb0:
   %i0 = call i64 @"ll_const_parameters:main.Size<i32>"()
-  %i1 = call i64 @"ll_const_parameters:main.Size<i64>"()
-  %i2 = call i64 @"ll_const_parameters:main.Size<i32>"()
-  %i3 = call i64 @"ll_const_parameters:main.Size<i64>"()
   store i64 %i0, ptr %s0
+  %i2 = call i64 @"ll_const_parameters:main.Size<i64>"()
+  store i64 %i2, ptr %s1
+  %i4 = call i64 @"ll_const_parameters:main.Size<i32>"()
+  store i64 %i4, ptr %s2
+  %i6 = call i64 @"ll_const_parameters:main.Size<i64>"()
+  store i64 %i6, ptr %s3
   call void @"peeper_rt_v2_print_int"(i32 0, i32 1, ptr %s0)
-  store i64 %i1, ptr %s1
-  call void @"peeper_rt_v1_print_bytes"(ptr @.str.0, i64 1)
+  call void @"peeper_rt_v1_print_text"(ptr @.str.0)
   call void @"peeper_rt_v2_print_int"(i32 0, i32 1, ptr %s1)
-  store i64 %i2, ptr %s2
-  call void @"peeper_rt_v1_print_bytes"(ptr @.str.0, i64 1)
+  call void @"peeper_rt_v1_print_text"(ptr @.str.0)
   call void @"peeper_rt_v2_print_int"(i32 0, i32 1, ptr %s2)
-  store i64 %i3, ptr %s3
-  call void @"peeper_rt_v1_print_bytes"(ptr @.str.0, i64 1)
+  call void @"peeper_rt_v1_print_text"(ptr @.str.0)
   call void @"peeper_rt_v2_print_int"(i32 0, i32 1, ptr %s3)
-  call void @"peeper_rt_v1_print_bytes"(ptr @.str.1, i64 1)
+  call void @"peeper_rt_v1_print_text"(ptr @.str.1)
   call void @"peeper_rt_v1_flush"()
   %i25 = call i64 @"ll_const_parameters:main.Twice<2>"()
-  %i26 = call i64 @"ll_const_parameters:main.Twice<3>"()
-  %i27 = call i64 @"ll_const_parameters:main.Twice<2>"()
-  %i28 = call i64 @"ll_const_parameters:main.Twice<3>"()
   store i64 %i25, ptr %s4
+  %i27 = call i64 @"ll_const_parameters:main.Twice<3>"()
+  store i64 %i27, ptr %s5
+  %i29 = call i64 @"ll_const_parameters:main.Twice<2>"()
+  store i64 %i29, ptr %s6
+  %i31 = call i64 @"ll_const_parameters:main.Twice<3>"()
+  store i64 %i31, ptr %s7
   call void @"peeper_rt_v2_print_int"(i32 0, i32 1, ptr %s4)
-  store i64 %i26, ptr %s5
-  call void @"peeper_rt_v1_print_bytes"(ptr @.str.0, i64 1)
+  call void @"peeper_rt_v1_print_text"(ptr @.str.0)
   call void @"peeper_rt_v2_print_int"(i32 0, i32 1, ptr %s5)
-  store i64 %i27, ptr %s6
-  call void @"peeper_rt_v1_print_bytes"(ptr @.str.0, i64 1)
+  call void @"peeper_rt_v1_print_text"(ptr @.str.0)
   call void @"peeper_rt_v2_print_int"(i32 0, i32 1, ptr %s6)
-  store i64 %i28, ptr %s7
-  call void @"peeper_rt_v1_print_bytes"(ptr @.str.0, i64 1)
+  call void @"peeper_rt_v1_print_text"(ptr @.str.0)
   call void @"peeper_rt_v2_print_int"(i32 0, i32 1, ptr %s7)
-  call void @"peeper_rt_v1_print_bytes"(ptr @.str.1, i64 1)
+  call void @"peeper_rt_v1_print_text"(ptr @.str.1)
   call void @"peeper_rt_v1_flush"()
   ret void
 }
@@ -82,7 +82,7 @@ bb0:
 
 declare void @"peeper_rt_v1_flush"()
 
-declare void @"peeper_rt_v1_print_bytes"(ptr, i64)
+declare void @"peeper_rt_v1_print_text"(ptr)
 
 declare void @"peeper_rt_v2_print_int"(i32, i32, ptr)
 

@@ -4,6 +4,7 @@
 
 pub mod builder;
 pub mod builtin;
+mod constraints;
 pub mod declaration;
 mod expression;
 pub mod fold;
@@ -355,9 +356,9 @@ impl<'p, L: Checked> Checker<'p, L> {
     }
 
     /// Whether the declaration being checked is a copy of a function with
-    /// `const T: type` parameters (`copy_type`). A function's own signature,
-    /// checked with invalid types (`own_arguments`), is none; its own body is
-    /// never built.
+    /// `const T: type` parameters (`copy_type`). A function's own signature
+    /// and its own body, checked with invalid types (`own_arguments`), are
+    /// none.
     pub(crate) fn in_copy(&self) -> bool {
         let checking = self
             .internals
@@ -487,7 +488,7 @@ impl<'p, L: Checked> Checker<'p, L> {
     }
 
     /// The names the module being checked declares and imports.
-    pub(crate) fn scope(&self) -> &Scope<'p> {
+    pub fn scope(&self) -> &Scope<'p> {
         &self.module_checks[self.current_module().index()].scope
     }
 
@@ -524,6 +525,29 @@ impl<'p, L: Checked> Checker<'p, L> {
         }
     }
 
+    /// Makes the fact that the name ending at `name_end` is a function
+    /// (`record`) the fact that its call there made `copy`, of the type
+    /// `ty`. Only a body checked once has it: a copy has no facts, and a
+    /// function's own body (`check_body`) makes no copy, so it would have
+    /// only those that other calls happened to make.
+    pub(crate) fn record_copy(&mut self, name_end: u32, copy: FunctionCopy, ty: TypeId) {
+        let checking = self
+            .internals
+            .declarations_being_checked
+            .last()
+            .expect("a declaration is being checked");
+        if checking.arguments != ConstArguments::NONE {
+            return;
+        }
+        let module = self.current_module().index();
+        let names_it = |kind| matches!(kind, FactKind::Name(Symbol::Function(named)) if named == copy.definition);
+        let mut facts = self.module_checks[module].facts.iter_mut().rev();
+        // The facts of the call's arguments were recorded after its name's.
+        if let Some(fact) = facts.find(|fact| fact.span.end == name_end && names_it(fact.kind)) {
+            fact.kind = FactKind::Copy { function: copy, ty };
+        }
+    }
+
     /// What `name` stands for at the top level: a `const T: type` parameter
     /// of the function being checked, the type it is given
     /// (`Checking::arguments`; a `const` value is a local of the body);
@@ -540,19 +564,14 @@ impl<'p, L: Checked> Checker<'p, L> {
             // Only a function is given `const` arguments.
             let function = function_declaration(self.modules, checking.definition);
             let tree = &self.module().ast;
-            let const_parameters = (tree.children.lists.items(function.signature.parameters))
-                .map(|parameter| tree.children.params[parameter])
-                .filter(|parameter| parameter.constant);
-            let given = self.types.arguments(checking.arguments);
-            for (parameter, given) in const_parameters.zip(given) {
-                if let ast::Type::Type = tree.types[parameter.ty]
-                    && let &ConstArgument::Type(ty) = given
-                    && parameter
-                        .name
-                        .is_some_and(|written| written.text(&tree.file) == name)
-                {
-                    return Some(Symbol::TypeArgument(ty));
-                }
+            let parameters = model::program::copy_parameters(tree, function.signature);
+            let names_it = |(_, parameter): &(usize, Option<Span>)| {
+                parameter.is_some_and(|written| tree.file.slice(written) == name)
+            };
+            if let Some((place, Some(declared))) = parameters.enumerate().find(names_it)
+                && let ConstArgument::Type(ty) = self.types.arguments(checking.arguments)[place]
+            {
+                return Some(Symbol::TypeArgument { ty, declared });
             }
         }
         if let Some(builtin) = self.types.builtin(name) {
@@ -561,7 +580,7 @@ impl<'p, L: Checked> Checker<'p, L> {
         let in_prelude = || {
             self.prelude()?
                 .get(None, name)
-                .filter(|_| model::program::is_exported(name))
+                .filter(|&symbol| self.prelude_shares(name, symbol))
         };
         self.scope().get(None, name).or_else(in_prelude)
     }
@@ -611,7 +630,7 @@ impl<'p, L: Checked> Checker<'p, L> {
             let (place, module) = match (symbol, owner) {
                 (Symbol::Module(imported), _) => ("module", imported),
                 (_, Some(owner)) => ("type", owner.module),
-                (Symbol::Type(_) | Symbol::Builtin(_) | Symbol::TypeArgument(_), None) => {
+                (Symbol::Type(_) | Symbol::Builtin(_) | Symbol::TypeArgument { .. }, None) => {
                     let message = format!("`{head}` has no functions");
                     self.error(diagnostics::INVALID_OPERATION, message, head_span);
                     return None;
@@ -696,12 +715,21 @@ impl<'p, L: Checked> Checker<'p, L> {
             .prelude()
             .into_iter()
             .flat_map(|scope| scope.symbols(None));
-        let exported = prelude.filter(|&(name, _)| model::program::is_exported(name));
+        let exported = prelude.filter(|&(name, symbol)| self.prelude_shares(name, symbol));
         self.scope().symbols(None).chain(exported)
     }
 
+    /// Whether every module sees the prelude's `name`, which stands for
+    /// `symbol`: it is exported, or a `#[builtin]` function, which is part
+    /// of the language.
+    fn prelude_shares(&self, name: &str, symbol: Symbol) -> bool {
+        let builtin = |definition| model::program::is_builtin(self.modules, definition);
+        model::program::is_exported(name)
+            || matches!(symbol, Symbol::Function(definition) if builtin(definition))
+    }
+
     /// The prelude's scope; `None` while checking the prelude itself.
-    fn prelude(&self) -> Option<&Scope<'p>> {
+    pub fn prelude(&self) -> Option<&Scope<'p>> {
         Some(&self.module_checks[self.scope().parent?.index()].scope)
     }
 

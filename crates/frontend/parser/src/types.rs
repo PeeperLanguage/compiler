@@ -22,7 +22,11 @@ pub type TypeStartRule<L> = fn(&mut Parser<L>, u32) -> Id<Type<L>>;
 pub(crate) const fn starts_core_type(kind: TokenKind) -> bool {
     matches!(
         kind,
-        TokenKind::Ident | TokenKind::Ampersand | TokenKind::AndAnd | TokenKind::Fn
+        TokenKind::Ident
+            | TokenKind::Ampersand
+            | TokenKind::AndAnd
+            | TokenKind::Fn
+            | TokenKind::Type
     )
 }
 
@@ -57,6 +61,12 @@ impl<L: Grammar> Parser<L> {
                     self.add(t.span.start, Type::Reference { mutable, target })
                 }
                 TokenKind::Fn => self.function_type(),
+                // Read wherever a type is written: the checker says where
+                // `type` belongs, once, for every place.
+                TokenKind::Type => {
+                    self.next();
+                    self.add(t.span.start, Type::Type)
+                }
                 _ => {
                     if let Some(read) = L::rules().type_starts[t.kind as usize] {
                         self.next();
@@ -122,12 +132,50 @@ impl<L: Grammar> Parser<L> {
         if !self.at(TokenKind::Less) {
             return self.tree.add(Type::Name, name.span);
         }
+        let arguments = self.type_arguments();
+        self.add(start, Type::Generic { name, arguments })
+    }
+
+    /// Reads a path in an expression: `a::B`, or with type arguments after
+    /// `::`, `Box::<i32>::new`. There a `<` right after a name compares, so
+    /// only `::` opens type arguments.
+    pub(crate) fn expression_path(&mut self) -> Id<Type<L>> {
+        let start = self.tok().span.start;
+        let first = self.expression_segment();
+        if !self.at(TokenKind::ColonColon) {
+            return first;
+        }
+        let mark = self.list_items.len();
+        self.list_items.push(first.into());
+        while self.at(TokenKind::ColonColon) {
+            self.next();
+            let segment = self.expression_segment();
+            self.list_items.push(segment.into());
+        }
+        let segments = self.finish_list(mark);
+        self.add(start, Type::Path(segments))
+    }
+
+    /// Reads a name of an expression's path and the `::<T>` it may take.
+    fn expression_segment(&mut self) -> Id<Type<L>> {
+        let start = self.tok().span.start;
+        let name = self.name();
+        if !(self.at(TokenKind::ColonColon) && self.ahead(1).kind == TokenKind::Less) {
+            return self.tree.add(Type::Name, name.span);
+        }
+        self.next();
+        let arguments = self.type_arguments();
+        self.add(start, Type::Generic { name, arguments })
+    }
+
+    /// Reads `<T, U>`, the types a generic name is given, from its `<`.
+    fn type_arguments(&mut self) -> List<Type<L>> {
         let open = self.next();
         let arguments = self.items(TokenKind::Greater, false, starts_type::<L>, |p| {
             p.type_expr()
         });
         self.close_angle(open);
-        self.add(start, Type::Generic { name, arguments })
+        arguments
     }
 
     /// Reads the `>` closing type arguments. The lexer reads `>>` as one token;

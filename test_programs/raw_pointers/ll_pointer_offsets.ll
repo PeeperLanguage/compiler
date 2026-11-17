@@ -1,8 +1,8 @@
 source_filename = "<fixture>/src/main.peep"
 
-@.str.0 = private unnamed_addr constant [4 x i8] c"true"
-@.str.1 = private unnamed_addr constant [5 x i8] c"false"
-@.str.2 = private unnamed_addr constant [1 x i8] c"\0A"
+@.str.0 = private unnamed_addr constant [5 x i8] c"true\00"
+@.str.1 = private unnamed_addr constant [6 x i8] c"false\00"
+@.str.2 = private unnamed_addr constant [2 x i8] c"\0A\00"
 
 define ptr @"ll_pointer_offsets:main.Next"(ptr %a0, i64 %a1) {
 entry:
@@ -26,18 +26,18 @@ bb0:
   %i1.c = icmp eq ptr %i0, null
   br i1 %i1.c, label %bb1, label %bb2
 bb1:
-  call void @"peeper_rt_v1_print_bytes"(ptr @.str.0, i64 4)
+  call void @"peeper_rt_v1_print_text"(ptr @.str.0)
   br label %bb3
 bb2:
-  call void @"peeper_rt_v1_print_bytes"(ptr @.str.1, i64 5)
+  call void @"peeper_rt_v1_print_text"(ptr @.str.1)
   br label %bb3
 bb3:
-  call void @"peeper_rt_v1_print_bytes"(ptr @.str.2, i64 1)
+  call void @"peeper_rt_v1_print_text"(ptr @.str.2)
   call void @"peeper_rt_v1_flush"()
   ret void
 }
 
 declare void @"peeper_rt_v1_flush"()
 
-declare void @"peeper_rt_v1_print_bytes"(ptr, i64)
+declare void @"peeper_rt_v1_print_text"(ptr)
 

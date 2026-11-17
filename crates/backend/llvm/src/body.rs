@@ -870,10 +870,9 @@ impl Writer<'_, '_, '_> {
         constant_value(bits) != all
     }
 
-    /// Writes the call, as `name`, of `callee` in Peeper's convention, or
-    /// of a runtime function, with `arguments` after `result_at`, the
-    /// address a result kept in memory is written to, after noting its
-    /// declaration.
+    /// Writes the call, as `name`, of `callee` in Peeper's convention, with
+    /// `arguments` after `result_at`, the address a result kept in memory
+    /// is written to, after noting its declaration.
     #[allow(clippy::too_many_arguments)] // each is part of the one call
     fn write_call(
         &mut self,
@@ -889,9 +888,6 @@ impl Writer<'_, '_, '_> {
             Callee::Function(function) => self
                 .module
                 .declare_function(&self.symbols[&function], signature),
-            Callee::Runtime(runtime) => self
-                .module
-                .declare_function(runtime.signature().symbol, signature),
             Callee::Pointer(address) => self.operand(address).to_string(),
         };
         let (result, _) = peeper_types(signature);

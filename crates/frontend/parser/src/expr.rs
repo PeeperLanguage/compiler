@@ -6,6 +6,7 @@
 //! live in the table below and not in nested grammar rules.
 
 use arena::Id;
+use arena::List;
 use diagnostics::Diagnostic;
 use source::Span;
 use syntax::ast::Expr;
@@ -160,41 +161,10 @@ impl<L: Grammar> Parser<L> {
     fn starts_path(&self) -> bool {
         match self.ahead(1).kind {
             TokenKind::ColonColon => true,
-            TokenKind::Less => self.opens_type_arguments(),
             first => L::rules()
                 .after_path_rule(first, self.ahead(2).kind)
                 .is_some(),
         }
-    }
-
-    /// Whether the `<` after the current name opens type arguments: its
-    /// matching `>` comes before the statement ends, and `::` or what
-    /// continues a path (`.{`) follows it. Only those decide, so in
-    /// `if a < b && c > d {` the `<` stays a comparison.
-    fn opens_type_arguments(&self) -> bool {
-        let mut depth = 0i32;
-        for i in self.current() + 1..self.tokens.len() {
-            match self.tokens[i].kind {
-                TokenKind::Less => depth += 1,
-                TokenKind::Greater => depth -= 1,
-                TokenKind::ShiftRight => depth -= 2,
-                TokenKind::Semicolon
-                | TokenKind::LeftBrace
-                | TokenKind::RightBrace
-                | TokenKind::Eof => return false,
-                _ => {}
-            }
-            if depth < 0 {
-                return false;
-            }
-            if depth == 0 {
-                let next = self.tokens[i + 1].kind;
-                let after = self.tokens.get(i + 2).map_or(TokenKind::Eof, |t| t.kind);
-                return next == TokenKind::ColonColon
-                    || L::rules().after_path_rule(next, after).is_some();
-            }
-        }
-        false
     }
 }
 
@@ -204,13 +174,13 @@ fn self_name<L: Grammar>(p: &mut Parser<L>) -> Id<Expr<L>> {
 }
 
 /// Reads a name; or, when a path or type arguments follow it, a path
-/// (`a::B`, `Box<T>::new`) or what a feature reads after one
+/// (`a::B`, `Box::<T>::new`) or what a feature reads after one
 /// (`Point.{...}`).
-fn name_or_path<L: Grammar>(p: &mut Parser<L>) -> Id<Expr<L>> {
+pub(crate) fn name_or_path<L: Grammar>(p: &mut Parser<L>) -> Id<Expr<L>> {
     if !p.starts_path() {
         return p.leaf(Expr::Name);
     }
-    let path = p.named_type();
+    let path = p.expression_path();
     let start = p.tree.types.span(path).start;
     if let Some(read) = L::rules().after_path_rule(p.tok().kind, p.ahead(1).kind) {
         return read(p, path);
@@ -236,8 +206,33 @@ fn binary<L: Grammar>(p: &mut Parser<L>, left: Id<Expr<L>>) -> Id<Expr<L>> {
     p.add(p.start_of(left), Expr::Binary { op, left, right })
 }
 
-/// Reads the arguments of a call to `callee`.
+/// Reads the arguments of a call to `callee`. The type arguments of a
+/// callee written `f::<T>` or `a::f::<T>` are the call's, and the callee
+/// is the name or path without them.
 fn call<L: Grammar>(p: &mut Parser<L>, callee: Id<Expr<L>>) -> Id<Expr<L>> {
+    let start = p.start_of(callee);
+    let mut callee = callee;
+    let mut type_arguments = List::EMPTY;
+    if let Expr::Path(path) = p.tree.exprs[callee] {
+        let segments: Vec<Id<Type<L>>> = match p.tree.types[path] {
+            Type::Path(segments) => p.tree.children.lists.items(segments).collect(),
+            _ => vec![path],
+        };
+        let (&last, before) = segments.split_last().expect("a path has a name");
+        if let Type::Generic { name, arguments } = p.tree.types[last] {
+            type_arguments = arguments;
+            callee = if before.is_empty() {
+                p.tree.add(Expr::Name, name.span)
+            } else {
+                let last = p.tree.add(Type::Name, name.span);
+                let items: Vec<_> = before.iter().chain([&last]).map(|&s| s.into()).collect();
+                let segments = p.tree.children.lists.add(&items);
+                let span = Span::new(start as usize, name.span.end as usize);
+                let path = p.tree.add(Type::Path(segments), span);
+                p.tree.add(Expr::Path(path), span)
+            };
+        }
+    }
     let arguments = p.delimited(
         TokenKind::LeftParen,
         TokenKind::RightParen,
@@ -245,7 +240,14 @@ fn call<L: Grammar>(p: &mut Parser<L>, callee: Id<Expr<L>>) -> Id<Expr<L>> {
         starts_expression::<L>,
         spreadable,
     );
-    p.add(p.start_of(callee), Expr::Call { callee, arguments })
+    p.add(
+        start,
+        Expr::Call {
+            callee,
+            type_arguments,
+            arguments,
+        },
+    )
 }
 
 /// Reads an entry of an array literal or an argument of a call: `value` or

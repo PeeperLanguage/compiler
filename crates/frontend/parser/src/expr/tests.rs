@@ -99,7 +99,9 @@ fn grouped(t: &Tree<Bare>, id: Id<Expr<Bare>>) -> String {
         Expr::Index { value, index } => {
             format!("{}[{}]", grouped(t, value), text(t.exprs.span(index)))
         }
-        Expr::Call { callee, arguments } => {
+        Expr::Call {
+            callee, arguments, ..
+        } => {
             let arguments: Vec<_> = t
                 .children
                 .lists
@@ -146,7 +148,9 @@ fn precedence() {
 fn parses_expressions() {
     let text = r#"fn f() {
     none;
-    Box<i32>::new(1);
+    Box::<i32>::new(1);
+    Max::<f64, i32>(1);
+    list::Sum::<u8>();
     sum(1, (a)..., &mut b...);
     items[n];
 }
@@ -165,6 +169,18 @@ fn parses_expressions() {
               type name i32
             type name new
           number literal 1
+      expression statement
+        call expression
+          name reference Max
+          type name f64
+          type name i32
+          number literal 1
+      expression statement
+        call expression
+          path
+            type name list
+            type name Sum
+          type name u8
       expression statement
         call expression
           name reference sum
@@ -224,15 +240,17 @@ fn type_expressions() {
     assert_eq!(dump_of(text), want);
 }
 
-/// `<` begins type arguments only when `::`, or what continues a path, follows
-/// the matching `>`.
+/// In an expression `<` compares; type arguments follow `::`.
 #[test]
 fn comparison_is_not_type_arguments() {
     for (text, want) in [
         ("a < b && c > d;", "binary"),
-        ("Box<T>::new();", "call"),
+        ("Box::<T>::new();", "call"),
         ("a < b;", "binary"),
         ("f(a < b, c > d);", "call"),
+        ("Max::<f64>(1);", "call"),
+        ("a < b > (c);", "binary"),
+        ("a < b && c > (d);", "binary"),
     ] {
         let (tree, errors) = parse_text(&format!("fn f() {{ {text} }}"));
         assert!(errors.is_empty(), "{text}: {errors:?}");

@@ -4,7 +4,7 @@
 // ones C has on the target, at most 128 bits on AArch64. Any other function
 // has a body.
 #[extern("twice")]
-fn twice(value: i32) -> i32 { //~ error[P0005]: an `extern` function is defined in C, so it has no body
+fn twice(value: i32) -> i32 { //~ error[P0005]: an `extern` function has no body: C gives its code
     return value * 2;
 }
 

@@ -96,6 +96,13 @@ impl<L: Checked> Checker<'_, L> {
             .last()
             .expect("a call is being checked")
             .copy();
+        // A function's own body (`check_body`) is checked for its names
+        // only, so it makes no copy.
+        if made_inside.arguments != ConstArguments::NONE
+            && !self.internals.function_copies.contains_key(&made_inside)
+        {
+            return TypeId::INVALID;
+        }
         let (depth, reported_in) = match self.internals.function_copies.get(&made_inside) {
             Some(inside) => (inside.depth + 1, inside.reported_in),
             None => (1, self.current_module()),
@@ -134,15 +141,18 @@ impl<L: Checked> Checker<'_, L> {
             self.checking_in(checking, |checker| checker.check_function(copy.definition));
         let caller = self.current_module();
         self.report_from_copy(copy, reported, caller);
+        if signature == TypeId::INVALID {
+            // Not kept: another call that asks for it is told why as well.
+            self.internals.function_copies.remove(&copy);
+            return signature;
+        }
         let copied = self
             .internals
             .function_copies
             .get_mut(&copy)
             .expect("the copy was just made");
         copied.signature = signature;
-        if signature != TypeId::INVALID {
-            self.internals.copies_to_build.push(copy);
-        }
+        self.internals.copies_to_build.push(copy);
         signature
     }
 
@@ -177,19 +187,20 @@ impl<L: Checked> Checker<'_, L> {
         let file = &modules[called_in.index()].ast.file;
         let into = &mut self.module_checks[into.index()].diagnostics;
         for diagnostic in found {
-            let place = |diagnostic: &Diagnostic| {
-                let label = diagnostic.labels.first();
-                label.map(|label| (Arc::as_ptr(&label.file), label.span))
-            };
-            let same = |earlier: &Diagnostic| {
-                earlier.code == diagnostic.code
-                    && earlier.message == diagnostic.message
-                    && place(earlier) == place(&diagnostic)
-            };
-            if !into.iter().any(same) {
-                let message = format!("in `{name}`, the copy made for this call");
-                into.push(diagnostic.label(file, called_at, message));
+            if into.iter().any(|earlier| earlier.reports_same(&diagnostic)) {
+                continue;
             }
+            // One about the call itself (`constraints_hold`) already marks it.
+            let at_call = diagnostic
+                .labels
+                .first()
+                .is_some_and(|label| Arc::ptr_eq(&label.file, file) && label.span == called_at);
+            into.push(if at_call {
+                diagnostic
+            } else {
+                let message = format!("in `{name}`, the copy made for this call");
+                diagnostic.label(file, called_at, message)
+            });
         }
     }
 
@@ -225,16 +236,21 @@ impl<L: Checked> Checker<'_, L> {
         Some(mir)
     }
 
-    /// What the call of `function` with `arguments`, written at `span` in a
-    /// constant's value, gives: its MIR, and that of each function it may
-    /// call, is built and run (`eval::interpreter::run_function`). `None` when it cannot run,
-    /// reported unless a function it runs had an error, which was.
+    /// What the call of `function` with `arguments`, written at `span`,
+    /// gives when it runs while compiling: a `#[builtin]` function's answer
+    /// (`builtin_value`), else its MIR, and that of each function it may
+    /// call, is built and run (`eval::interpreter::run_function`). `None`
+    /// when it cannot run, reported unless a function it runs had an
+    /// error, which was.
     pub(crate) fn evaluate_call(
         &mut self,
         function: FunctionCopy,
         arguments: &[Value],
         span: Span,
     ) -> Option<Value> {
+        if model::program::is_builtin(self.modules, function.definition) {
+            return self.builtin_value(function, span);
+        }
         // Every function the run may reach, built first: the run then only
         // reads the table. Their modules are what the value depends on. One
         // still being checked is left out: only a run that calls it is a

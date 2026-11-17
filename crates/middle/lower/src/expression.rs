@@ -119,8 +119,8 @@ impl<L: Language> Lowering<'_, L> {
                     let (size, _) = layout(self.types, addressed_type, self.target);
                     Value::Register(self.emit(InstructionKind::Address { place, size }, span))
                 }
-                thir::ExprKind::Print { newline, values } => {
-                    self.lower_print(*newline, *values, span)?;
+                thir::ExprKind::Block(block) => {
+                    self.lower_block(*block, self.declared.len())?;
                     Value::Nothing
                 }
             })
