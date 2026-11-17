@@ -1,11 +1,14 @@
 # Design page: a front split by feature
 
-Since 2026-11-13 the features are files of one crate, not a crate each:
-`crates/features/src/lib.rs` is the list (`Peeper`, `FeatureExpr`,
-`FeatureType`, `FeatureStmt`), and `crates/features/src/<feature>.rs` holds a feature's
-nodes, parse rows and checking, written for `Peeper`. Where this page says
-"the top crate", "`driver/compile/src/language.rs`" or "a feature crate",
-read that; the phases are generic over `L` as described.
+Since 2026-11-13 the features are files of one crate, not a crate each,
+and since 2026-11-18 the phases are not generic over `L`
+(docs/structure-mapping.md, step 7): the tree lists every feature's node
+(`ast::FeatureExpr`, `FeatureType`, `FeatureStmt`), `crates/features/src/<feature>.rs`
+holds a feature's parse rows and checking, and `crates/features/src/lib.rs`
+names every feature once, in the parse rules (`RULES`) and the checker's
+hooks (`CHECK_HOOKS`). Where this page says "the top crate",
+"`driver/compile/src/language.rs`", "a feature crate", `L`, `Language`,
+`Grammar` or `Checked`, read that.
 
 Status: **draft for review, 2026-11-13.** Step 17 of
 `middle-cleanup.localplan.md`. No code is written for steps 18-20 until this
@@ -463,8 +466,8 @@ crate (step 19): with none, it cannot fail.
 crates/
   base/       arena, bigint, diagnostics, literal, source, runtime_abi
   kernel/
-    syntax/   token, lexer, tree (the `syntax` crate: the tree and the
-              `Language` trait), parser (the engine and its rule table)
+    syntax/   token, lexer, tree (the `syntax` crate: the tree, every
+              feature's node too), parser (the engine and its rule table)
     semantic  the `check` crate
     model     THIR, MIR, layout, machine
     lower, flow, eval
@@ -490,8 +493,8 @@ nodes to the feature.
 
 A consequence for tests: a crate's own tests cannot use a crate that
 depends on it, so the core's tests cannot write a feature's syntax. Each
-core crate (`parser`, `check`) tests in a language of its own with no
-feature (`Bare`). A feature's file tests its syntax and checking in
+core crate (`parser`, `check`) tests with the core's rules alone
+(`Rules::core()`). A feature's file tests its syntax and checking in
 `Peeper`, naming no other feature (`src/<feature>/tests.rs`). A core test that needs a feature only to
 reach core behaviour (an `extern` function taking a struct, a type's
 functions) moves unchanged to the top crate's tests

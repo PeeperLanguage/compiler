@@ -4,7 +4,6 @@
 use std::sync::Arc;
 
 use check::Checker;
-use features::Peeper;
 use model::ConstArguments;
 use model::DeclarationCopy;
 use model::DefId;
@@ -27,7 +26,7 @@ fn lowered(text: &str) -> String {
 /// MIR and the debug types lowering made.
 fn lower_main(text: &str, target: &str) -> (String, mir::Body, DebugTypes) {
     let file = Arc::new(SourceFile::new("main.peep", text));
-    let (ast, parse) = parser::parse::<Peeper>(&file);
+    let (ast, parse) = parser::parse(&file, &features::RULES);
     assert!(parse.is_empty(), "{parse:?}");
     let modules = [model::program::Module {
         path: "app:main".to_string(),
@@ -35,7 +34,7 @@ fn lower_main(text: &str, target: &str) -> (String, mir::Body, DebugTypes) {
         imports: Vec::new(),
     }];
     let target = Machine::named(target).unwrap();
-    let mut checker = Checker::new(&modules, target, false);
+    let mut checker = Checker::new(&modules, target, false, &features::CHECK_HOOKS);
     let tree = &modules[0].ast;
     let (index, name) = tree
         .declarations()

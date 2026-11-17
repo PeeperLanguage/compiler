@@ -4,7 +4,6 @@ use syntax::ast::StringKind;
 use syntax::ast::Tree;
 
 use super::*;
-use crate::tests::Bare;
 use crate::tests::dump_of;
 use crate::tests::messages;
 use crate::tests::one_error;
@@ -54,7 +53,7 @@ fn operators_are_written_as_their_tokens() {
 }
 
 /// The expression of the first statement of the first function.
-fn first_expression(tree: &Tree<Bare>) -> Id<Expr<Bare>> {
+fn first_expression(tree: &Tree) -> Id<Expr> {
     let decl = tree.declarations().next().unwrap();
     let Decl::Function(f) = tree.decls[decl] else {
         panic!("not a function")
@@ -72,7 +71,7 @@ fn first_expression(tree: &Tree<Bare>) -> Id<Expr<Bare>> {
 }
 
 /// An expression with each binary operation and cast in parentheses.
-fn grouped(t: &Tree<Bare>, id: Id<Expr<Bare>>) -> String {
+fn grouped(t: &Tree, id: Id<Expr>) -> String {
     let text = |span| t.file.slice(span).to_string();
     match t.exprs[id] {
         Expr::Cast { value, ty } => {

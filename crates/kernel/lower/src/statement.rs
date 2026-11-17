@@ -10,14 +10,13 @@ use model::mir::Slot;
 use model::mir::Terminator;
 use model::thir;
 use source::Span;
-use syntax::ast::Language;
 
 use crate::Loop;
 use crate::Lowering;
 use crate::Value;
 use crate::slot_of;
 
-impl<L: Language> Lowering<'_, L> {
+impl Lowering<'_> {
     /// Lowers the statements of the source block `block`, whose debug
     /// scope has the same id and whose slots start at `start` in
     /// `declared`.

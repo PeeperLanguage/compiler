@@ -1,9 +1,8 @@
 //! The real prelude is written in Peeper, with every feature, so it is
-//! read here, not in the parser's own tests (a language with no feature).
+//! read here, not in the parser's own tests (the core's rules alone).
 
 use std::sync::Arc;
 
-use features::Peeper;
 use source::SourceFile;
 use syntax::ast;
 
@@ -16,6 +15,6 @@ fn parses_the_prelude() {
     );
     let text = std::fs::read_to_string(path).unwrap();
     let file = Arc::new(SourceFile::new("global.peep", &text));
-    let (_, errors): (ast::Tree<Peeper>, _) = parser::parse(&file);
+    let (_, errors): (ast::Tree, _) = parser::parse(&file, &features::RULES);
     assert!(errors.is_empty(), "{errors:?}");
 }

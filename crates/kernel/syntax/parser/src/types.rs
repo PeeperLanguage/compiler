@@ -10,12 +10,11 @@ use syntax::ast::Type;
 use token::Token;
 use token::TokenKind;
 
-use crate::Grammar;
 use crate::Parser;
 
 /// Reads the type a token begins, after the token, as one starting at
 /// `start`.
-pub type TypeStartRule<L> = fn(&mut Parser<L>, u32) -> Id<Type<L>>;
+pub type TypeStartRule = fn(&mut Parser, u32) -> Id<Type>;
 
 /// Whether `kind` begins one of the types `Parser::type_expr` has an arm
 /// for, so a new arm there is added here too.
@@ -31,13 +30,13 @@ pub(crate) const fn starts_core_type(kind: TokenKind) -> bool {
 }
 
 /// Whether a type can begin with `kind`.
-pub(crate) fn starts_type<L: Grammar>(kind: TokenKind) -> bool {
-    starts_core_type(kind) || L::rules().type_starts[kind as usize].is_some()
+pub(crate) fn starts_type(p: &Parser, kind: TokenKind) -> bool {
+    starts_core_type(kind) || p.rules.type_starts[kind as usize].is_some()
 }
 
-impl<L: Grammar> Parser<L> {
+impl Parser {
     /// Reads a type.
-    pub fn type_expr(&mut self) -> Id<Type<L>> {
+    pub fn type_expr(&mut self) -> Id<Type> {
         source::grow_stack(|| {
             let t = self.tok();
             match t.kind {
@@ -68,7 +67,7 @@ impl<L: Grammar> Parser<L> {
                     self.add(t.span.start, Type::Type)
                 }
                 _ => {
-                    if let Some(read) = L::rules().type_starts[t.kind as usize] {
+                    if let Some(read) = self.rules.type_starts[t.kind as usize] {
                         self.next();
                         return read(self, t.span.start);
                     }
@@ -92,7 +91,7 @@ impl<L: Grammar> Parser<L> {
     /// Reads what follows a `&` that starts at `start`: `mut`, if written,
     /// then the target type, or `[]T` for a slice, its own type, not a
     /// reference to a `[]T`.
-    pub(crate) fn reference_type(&mut self, start: u32) -> Id<Type<L>> {
+    pub(crate) fn reference_type(&mut self, start: u32) -> Id<Type> {
         let mutable = self.at(TokenKind::Mut);
         if mutable {
             self.next();
@@ -109,7 +108,7 @@ impl<L: Grammar> Parser<L> {
 
     /// Reads a type name with its type arguments, if any (`Box<T>`), or a path
     /// of them (`a::B<T>`).
-    pub(crate) fn named_type(&mut self) -> Id<Type<L>> {
+    pub(crate) fn named_type(&mut self) -> Id<Type> {
         let start = self.tok().span.start;
         let first = self.type_segment();
         if !self.at(TokenKind::ColonColon) {
@@ -126,7 +125,7 @@ impl<L: Grammar> Parser<L> {
         self.add(start, Type::Path(segments))
     }
 
-    fn type_segment(&mut self) -> Id<Type<L>> {
+    fn type_segment(&mut self) -> Id<Type> {
         let start = self.tok().span.start;
         let name = self.name();
         if !self.at(TokenKind::Less) {
@@ -139,7 +138,7 @@ impl<L: Grammar> Parser<L> {
     /// Reads a path in an expression: `a::B`, or with type arguments after
     /// `::`, `Box::<i32>::new`. There a `<` right after a name compares, so
     /// only `::` opens type arguments.
-    pub(crate) fn expression_path(&mut self) -> Id<Type<L>> {
+    pub(crate) fn expression_path(&mut self) -> Id<Type> {
         let start = self.tok().span.start;
         let first = self.expression_segment();
         if !self.at(TokenKind::ColonColon) {
@@ -157,7 +156,7 @@ impl<L: Grammar> Parser<L> {
     }
 
     /// Reads a name of an expression's path and the `::<T>` it may take.
-    fn expression_segment(&mut self) -> Id<Type<L>> {
+    fn expression_segment(&mut self) -> Id<Type> {
         let start = self.tok().span.start;
         let name = self.name();
         if !(self.at(TokenKind::ColonColon) && self.ahead(1).kind == TokenKind::Less) {
@@ -169,11 +168,9 @@ impl<L: Grammar> Parser<L> {
     }
 
     /// Reads `<T, U>`, the types a generic name is given, from its `<`.
-    fn type_arguments(&mut self) -> List<Type<L>> {
+    fn type_arguments(&mut self) -> List<Type> {
         let open = self.next();
-        let arguments = self.items(TokenKind::Greater, false, starts_type::<L>, |p| {
-            p.type_expr()
-        });
+        let arguments = self.items(TokenKind::Greater, false, starts_type, |p| p.type_expr());
         self.close_angle(open);
         arguments
     }
@@ -196,11 +193,11 @@ impl<L: Grammar> Parser<L> {
     }
 
     /// Reads `fn(name: T, U) -> R in name`; parameter names are optional.
-    fn function_type(&mut self) -> Id<Type<L>> {
+    fn function_type(&mut self) -> Id<Type> {
         let start = self.next().span.start;
         let signature = self.signature(
             List::EMPTY,
-            |kind| kind == TokenKind::Underscore || starts_type::<L>(kind),
+            |p, kind| kind == TokenKind::Underscore || starts_type(p, kind),
             |p| {
                 let start = p.tok().span.start;
                 let name = p.parameter_name();

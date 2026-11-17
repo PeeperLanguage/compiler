@@ -3,16 +3,15 @@
 use arena::Id;
 use syntax::ast;
 
-use super::*;
 use crate::testing::Tree;
 use crate::testing::bodies;
 use crate::testing::parse_text;
 use crate::testing::statements;
 
 /// `expr` with each pipe in parentheses.
-fn grouped(tree: &Tree, expr: Id<ast::Expr<Peeper>>) -> String {
+fn grouped(tree: &Tree, expr: Id<ast::Expr>) -> String {
     match tree.exprs[expr] {
-        ast::Expr::Feature(FeatureExpr::Pipe(Pipe { value, target })) => {
+        ast::Expr::Feature(ast::FeatureExpr::Pipe(ast::Pipe { value, target })) => {
             format!("({} |> {})", grouped(tree, value), grouped(tree, target))
         }
         _ => tree.file.slice(tree.exprs.span(expr)).to_string(),
@@ -35,7 +34,12 @@ fn parses_pipes() {
         ["((a |> f(b)) |> g())", "(a + b |> f())", "(a |> b)"]
     );
     let last = (tree.exprs.ids())
-        .filter(|&id| matches!(tree.exprs[id], ast::Expr::Feature(FeatureExpr::Pipe(_))))
+        .filter(|&id| {
+            matches!(
+                tree.exprs[id],
+                ast::Expr::Feature(ast::FeatureExpr::Pipe(_))
+            )
+        })
         .last()
         .unwrap();
     assert_eq!(tree.file.slice(tree.exprs.span(last)), "c |> len()");

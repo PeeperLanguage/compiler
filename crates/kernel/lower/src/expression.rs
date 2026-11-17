@@ -35,7 +35,6 @@ use runtime_abi::messages::SLICE_INDEX_MESSAGE;
 use runtime_abi::messages::array_index_message;
 use runtime_abi::messages::shift_count_message;
 use source::Span;
-use syntax::ast::Language;
 use syntax::operators::BinaryOp;
 use syntax::operators::UnaryOp;
 
@@ -55,7 +54,7 @@ pub(super) enum Length {
     Read(Operand),
 }
 
-impl<L: Language> Lowering<'_, L> {
+impl Lowering<'_> {
     /// The value of `expression`, computed in the block being filled.
     pub(super) fn lower_expr(&mut self, expression: Id<thir::Expr>) -> Option<Value> {
         // A long chain of operators, calls or parentheses is a deep recursion.

@@ -39,8 +39,6 @@ use source::SourceFile;
 use source::Span;
 use syntax::ast;
 
-use features::Peeper;
-
 /// What a compile found, kept for the next compile of the same program.
 #[derive(Default)]
 pub struct Results {
@@ -157,7 +155,7 @@ pub struct Interpreted {
 /// it did. A program that cannot be checked has only loading's errors, and
 /// does not start.
 pub fn interpret(
-    program: &model::program::Program<Peeper>,
+    program: &model::program::Program,
     target: &'static Machine,
 ) -> (Results, Option<Interpreted>) {
     let modules = program.modules.as_slice();
@@ -240,7 +238,7 @@ pub struct Options {
 /// the checking and lowering it runs are built once, here, not again in each
 /// crate that calls it with a closure of its own.
 pub fn run(
-    program: &model::program::Program<Peeper>,
+    program: &model::program::Program,
     target: &'static Machine,
     previous: Results,
     options: Options,
@@ -250,7 +248,12 @@ pub fn run(
         return Results::default();
     }
     let modules = program.modules.as_slice();
-    let mut checker = Checker::new(modules, target, options.record_facts);
+    let mut checker = Checker::new(
+        modules,
+        target,
+        options.record_facts,
+        &features::CHECK_HOOKS,
+    );
     let mut results: Vec<ModuleResults> = modules
         .iter()
         .map(|module| ModuleResults::new(module.ast.file.clone()))
@@ -366,10 +369,7 @@ pub fn run(
 
 /// The `main` of the module `entry` and whether it returns the exit code, or
 /// the error that it has none a program can start at.
-fn find_entry_point(
-    checker: &mut Checker<Peeper>,
-    entry: ModuleId,
-) -> Result<(DefId, bool), Diagnostic> {
+fn find_entry_point(checker: &mut Checker, entry: ModuleId) -> Result<(DefId, bool), Diagnostic> {
     let module = &checker.modules[entry.index()];
     let tree = &module.ast;
     let main = tree
@@ -422,7 +422,7 @@ fn find_entry_point(
 /// or not, and gives each, with its MIR and its own facts for a
 /// function, then the module's remaining facts, to `use_output`.
 fn compile_module(
-    checker: &mut Checker<Peeper>,
+    checker: &mut Checker,
     module: ModuleId,
     thir: &mut thir::Body,
     record_facts: bool,
@@ -496,7 +496,7 @@ fn compile_module(
 /// and its facts to `use_output`; nothing when it has no body
 /// or its signature has an error.
 fn build_function(
-    checker: &mut Checker<Peeper>,
+    checker: &mut Checker,
     module: ModuleId,
     function: DeclarationCopy,
     thir: &mut thir::Body,
@@ -523,7 +523,7 @@ fn build_function(
 /// Feeds `ty` to `hasher` by what it is (`Types::hash`): a declared type
 /// by its module's path and its name. What it holds is in the interface of
 /// the module declaring it (`interface`).
-fn hash_type(checker: &Checker<Peeper>, ty: TypeId, hasher: &mut DefaultHasher) {
+fn hash_type(checker: &Checker, ty: TypeId, hasher: &mut DefaultHasher) {
     let modules = checker.modules;
     checker.types.hash(ty, hasher, |definition, hasher| {
         modules[definition.module.index()].path.hash(hasher);
@@ -537,7 +537,7 @@ fn hash_type(checker: &Checker<Peeper>, ty: TypeId, hasher: &mut DefaultHasher) 
 /// change reaches every module that can see it through a type, and each
 /// declaration's kind, name, and type, value or struct fields. Its bodies are
 /// not part of it.
-fn interface(checker: &Checker<Peeper>, module: ModuleId, done: &[ModuleResults]) -> u64 {
+fn interface(checker: &Checker, module: ModuleId, done: &[ModuleResults]) -> u64 {
     let modules = checker.modules;
     let checked = &checker.module_checks[module.index()];
     let (declared_types, constants) = (&checked.declared_types, &checked.constants);

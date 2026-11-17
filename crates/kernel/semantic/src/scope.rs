@@ -17,7 +17,6 @@ use rustc_hash::FxHashMap;
 use source::SourceFile;
 use source::Span;
 use syntax::ast;
-use syntax::ast::Language;
 
 /// A place that holds declarations, and where each name is written. A module
 /// has one for its top-level declarations, imports and type functions. A name
@@ -51,9 +50,9 @@ impl<'p> Scope<'p> {
     /// (`fn Point::name`, `has_functions`); `None` for any other name. A type
     /// here is always this module's: imports bring in modules, and the
     /// prelude is not copied in.
-    pub(crate) fn owner_named<L: Language>(
+    pub(crate) fn owner_named(
         &self,
-        modules: &[model::program::Module<L>],
+        modules: &[model::program::Module],
         name: &str,
     ) -> Option<DefId> {
         match self.get(None, name) {
@@ -92,10 +91,7 @@ impl<'p> Scope<'p> {
 /// Whether the declaration `definition` can have functions
 /// (`fn Point::name`): any type it declares, not an alias, which names a
 /// type declared elsewhere.
-pub(crate) fn has_functions<L: Language>(
-    modules: &[model::program::Module<L>],
-    definition: DefId,
-) -> bool {
+pub(crate) fn has_functions(modules: &[model::program::Module], definition: DefId) -> bool {
     matches!(
         model::program::declaration(modules, definition),
         ast::Decl::Type(_)
@@ -140,9 +136,9 @@ pub fn report_redeclared(
 /// top-level names, since a type may be declared below its functions; the
 /// type must be one this module declares, so it has the same functions
 /// everywhere.
-pub fn collect<'p, L: Language>(
+pub fn collect<'p>(
     id: ModuleId,
-    modules: &'p [model::program::Module<L>],
+    modules: &'p [model::program::Module],
     diagnostics: &mut Vec<Diagnostic>,
 ) -> Scope<'p> {
     let module = &modules[id.index()];

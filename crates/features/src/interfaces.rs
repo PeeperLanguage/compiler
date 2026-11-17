@@ -4,7 +4,6 @@
 //! struct to an interface are the core's: they read the checked type.
 
 use arena::Id;
-use arena::List;
 use check::Checker;
 use check::functions;
 use check::scope::report_redeclared;
@@ -18,33 +17,21 @@ use source::Span;
 use syntax::ast;
 use token::TokenKind;
 
-use crate::FeatureType;
-use crate::Peeper;
-use crate::TypeNode;
-
-/// `iface { methods }`: `Decl::Function`s without bodies.
-#[derive(Clone, Copy, Debug)]
-pub struct InterfaceType {
-    pub methods: List<ast::Decl<Peeper>>,
-}
-
-impl InterfaceType {
-    /// Adds the rules that read interfaces to `rules`.
-    pub(crate) const fn rows(rules: &mut Rules<Peeper>) {
-        rules.declaration(TokenKind::Iface, type_decl);
-        rules.type_start(TokenKind::Iface, interface_type);
-    }
+/// Adds the rules that read interfaces to `rules`.
+pub(crate) const fn rows(rules: &mut Rules) {
+    rules.declaration(TokenKind::Iface, type_decl);
+    rules.type_start(TokenKind::Iface, interface_type);
 }
 
 /// Reads `{ fn name(parameters) -> Result, ... }`, the methods of an
 /// interface type that starts at `start`: function signatures without
 /// bodies. A method takes no default values.
-fn interface_type(p: &mut Parser<Peeper>, start: u32) -> Id<ast::Type<Peeper>> {
+fn interface_type(p: &mut Parser, start: u32) -> Id<ast::Type> {
     let methods = p.delimited(
         TokenKind::LeftBrace,
         TokenKind::RightBrace,
         true,
-        |kind| kind == TokenKind::Fn,
+        |_, kind| kind == TokenKind::Fn,
         |p| {
             let start = p.next().span.start;
             let (name, signature) = p.named_signature();
@@ -62,74 +49,70 @@ fn interface_type(p: &mut Parser<Peeper>, start: u32) -> Id<ast::Type<Peeper>> {
     );
     p.add(
         start,
-        ast::Type::Feature(FeatureType::Interface(InterfaceType { methods })),
+        ast::Type::Feature(ast::FeatureType::Interface(ast::InterfaceType { methods })),
     )
-}
-
-impl TypeNode for InterfaceType {
-    fn methods(&self) -> Option<List<ast::Decl<Peeper>>> {
-        Some(self.methods)
-    }
-
-    /// The type an interface type written at `span` names: none yet, as only a
-    /// declared interface is checked.
-    fn resolve(&self, checker: &mut Checker<'_, Peeper>, span: Span) -> TypeId {
-        checker.not_supported(span, "interface types")
-    }
-
-    /// The type the module's interface declaration `definition` declares:
-    /// each method's function type, whose `self` is a reference to the
-    /// interface (`Type::InterfaceReference`), or the interface taken whole.
-    /// Invalid when a method has an error or is declared twice, as a struct
-    /// is when a field has an error.
-    fn declare(
-        &self,
-        checker: &mut Checker<'_, Peeper>,
-        definition: DefId,
-        _written: ast::TypeDecl<Peeper>,
-    ) -> TypeId {
-        let modules = checker.modules;
-        let tree = &modules[definition.module.index()].ast;
-        let declared: Vec<&ast::Function<Peeper>> =
-            model::program::interface_methods(modules, definition)
-                .expect("an interface declaration has methods")
-                .collect();
-        let mut methods = Vec::with_capacity(declared.len());
-        for (index, method) in declared.iter().enumerate() {
-            let text = method.name.text(&tree.file);
-            // An interface has few methods, so the ones before are searched.
-            if let Some(first) = declared[..index]
-                .iter()
-                .find(|first| first.name.text(&tree.file) == text)
-            {
-                let diagnostic = report_redeclared(
-                    &tree.file,
-                    text,
-                    "interface",
-                    method.name.span,
-                    first.name.span,
-                );
-                checker.report(diagnostic);
-                methods.push(TypeId::INVALID);
-                continue;
-            }
-            let kind = &functions::FunctionKind::INTERFACE_METHOD;
-            methods.push(checker.signature_type(method.name, method.signature, true, kind));
-        }
-        let invalid = |ty: TypeId| match &checker.types[ty] {
-            Type::Function {
-                parameters, result, ..
-            } => parameters.contains(&TypeId::INVALID) || *result == TypeId::INVALID,
-            _ => true,
-        };
-        if methods.iter().any(|&method| invalid(method)) {
-            return TypeId::INVALID;
-        }
-        let named = checker.declared_name(definition);
-        checker.types.define_interface(named, methods.into());
-        named
-    }
 }
 
 #[cfg(test)]
 mod tests;
+
+/// The type an interface type written at `span` names: none yet, as only a
+/// declared interface is checked.
+pub(crate) fn resolve_interface_type(
+    checker: &mut Checker<'_>,
+    _ty: ast::InterfaceType,
+    span: Span,
+) -> TypeId {
+    checker.not_supported(span, "interface types")
+}
+
+/// The type the module's interface declaration `definition` declares:
+/// each method's function type, whose `self` is a reference to the
+/// interface (`Type::InterfaceReference`), or the interface taken whole.
+/// Invalid when a method has an error or is declared twice, as a struct
+/// is when a field has an error.
+pub(crate) fn declare_interface_type(
+    checker: &mut Checker<'_>,
+    _ty: ast::InterfaceType,
+    definition: DefId,
+) -> TypeId {
+    let modules = checker.modules;
+    let tree = &modules[definition.module.index()].ast;
+    let declared: Vec<&ast::Function> = model::program::interface_methods(modules, definition)
+        .expect("an interface declaration has methods")
+        .collect();
+    let mut methods = Vec::with_capacity(declared.len());
+    for (index, method) in declared.iter().enumerate() {
+        let text = method.name.text(&tree.file);
+        // An interface has few methods, so the ones before are searched.
+        if let Some(first) = declared[..index]
+            .iter()
+            .find(|first| first.name.text(&tree.file) == text)
+        {
+            let diagnostic = report_redeclared(
+                &tree.file,
+                text,
+                "interface",
+                method.name.span,
+                first.name.span,
+            );
+            checker.report(diagnostic);
+            methods.push(TypeId::INVALID);
+            continue;
+        }
+        let kind = &functions::FunctionKind::INTERFACE_METHOD;
+        methods.push(checker.signature_type(method.name, method.signature, true, kind));
+    }
+    let invalid = |ty: TypeId| match &checker.types[ty] {
+        Type::Function {
+            parameters, result, ..
+        } => parameters.contains(&TypeId::INVALID) || *result == TypeId::INVALID,
+        _ => true,
+    };
+    if methods.iter().any(|&method| invalid(method)) {
+        return TypeId::INVALID;
+    }
+    let named = checker.declared_name(definition);
+    checker.types.define_interface(named, methods.into());
+    named
+}

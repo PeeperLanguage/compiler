@@ -7,7 +7,6 @@ use model::layout;
 use model::semantic_types;
 use source::Span;
 
-use crate::Checked;
 use crate::Checker;
 
 /// What a `#[builtin]` function gives of the type it takes, on the target
@@ -51,7 +50,7 @@ pub(crate) fn type_fact(name: &str) -> Option<TypeFact> {
     }
 }
 
-impl<L: Checked> Checker<'_, L> {
+impl Checker<'_> {
     /// What the `#[builtin]` function `function`, a copy for the type it
     /// is given, answers when its call at `span` runs (`evaluate_call`): the
     /// fact of that type its name asks for. `None` for a type the fact is

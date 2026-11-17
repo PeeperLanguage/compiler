@@ -15,10 +15,9 @@ use model::program::Import;
 use model::program::ImportKind;
 use model::program::Module;
 use model::program::default_alias;
-use parser::Grammar;
+use parser::Rules;
 use source::SourceFile;
 use source::Span;
-use syntax::ast::Language;
 use syntax::ast::Tree;
 
 use crate::PRELUDE_PATH;
@@ -28,9 +27,9 @@ use crate::path_text;
 
 /// A module being loaded: its imports are known by path until every module
 /// has its place in the program's order.
-pub(crate) struct Loaded<L: Language> {
+pub(crate) struct Loaded {
     pub(crate) path: String,
-    pub(crate) ast: Tree<L>,
+    pub(crate) ast: Tree,
     pub(crate) imports: Vec<(ImportKind, String)>, // with the imported module's path
     pub(crate) imports_complete: bool, // every written import names a module it brings in
     pub(crate) diagnostics: Vec<Diagnostic>,
@@ -42,15 +41,16 @@ pub(crate) struct Job {
     pub(crate) standalone: bool, // a file in no package, checked on its own: it cannot import
 }
 
-/// Reads, parses and resolves the imports of one module, taking its text from
-/// `open_files` when it is open there. A file that cannot be read, or is not
-/// UTF-8, gets an empty tree and one error.
-pub(crate) fn load_module<L: Grammar>(
+/// Reads, parses with `rules` and resolves the imports of one module, taking
+/// its text from `open_files` when it is open there. A file that cannot be
+/// read, or is not UTF-8, gets an empty tree and one error.
+pub(crate) fn load_module(
     packages: &HashMap<String, PathBuf>,
     open_files: &HashMap<PathBuf, impl AsRef<str>>,
+    rules: &'static Rules,
     job: Job,
     with_prelude: bool,
-) -> Loaded<L> {
+) -> Loaded {
     let path = path_text(&job.file);
     let text = match open_files.get(&job.file) {
         // Copied: every worker shares the map, and a source file owns its text.
@@ -64,7 +64,7 @@ pub(crate) fn load_module<L: Grammar>(
         text => text,
     };
     let (ast, diagnostics) = match text.map(String::from_utf8) {
-        Ok(Ok(text)) => parser::parse(&Arc::new(SourceFile::new(path, text))),
+        Ok(Ok(text)) => parser::parse(&Arc::new(SourceFile::new(path, text)), rules),
         Ok(Err(error)) => {
             // The text up to the bad byte is kept as is, so the error points at it.
             let at = error.utf8_error().valid_up_to();
@@ -94,9 +94,9 @@ pub(crate) fn load_module<L: Grammar>(
     loaded.resolve_imports(packages, open_files, job.standalone, with_prelude);
     loaded
 }
-impl<L: Language> Loaded<L> {
+impl Loaded {
     /// The module, its imports resolved to the places in `ids`.
-    pub(crate) fn into_module(self, ids: &HashMap<String, ModuleId>) -> Module<L> {
+    pub(crate) fn into_module(self, ids: &HashMap<String, ModuleId>) -> Module {
         let imports = self.imports.iter();
         let imports = imports.map(|(kind, path)| Import {
             kind: *kind,

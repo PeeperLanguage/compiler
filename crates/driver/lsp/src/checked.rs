@@ -1,7 +1,6 @@
 //! What the last check found, kept for the next one and for requests: the
 //! compile results, and each module's facts by name.
 
-use features::Peeper;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::path::Path;
@@ -34,7 +33,7 @@ pub(crate) struct Checked {
     /// The program as last compiled, and the facts of each of its modules'
     /// text and the names of its constants, by file: what definition and
     /// hover read.
-    pub(crate) program: Option<model::program::Program<Peeper>>,
+    pub(crate) program: Option<model::program::Program>,
     pub(crate) facts: HashMap<PathBuf, Vec<CachedFact>>,
     pub(crate) fix_all: HashMap<PathBuf, CodeAction>, // each file's sure fixes, as of the last check
 }
@@ -43,7 +42,7 @@ impl Checked {
     /// keeps the facts of each module's text and the names of its
     /// constants: a module the compile reused gave no facts, and the facts
     /// found before still fit it; a module checked again gets its new facts.
-    pub(crate) fn recompile(&mut self, program: &model::program::Program<Peeper>) {
+    pub(crate) fn recompile(&mut self, program: &model::program::Program) {
         let mut found: HashMap<ModuleId, Vec<CachedFact>> = HashMap::new();
         let previous = std::mem::take(&mut self.results);
         let mut cache_facts = |output: compile::Output| match output {
@@ -159,7 +158,7 @@ impl CachedFact {
     /// `fact`, about the text of a module of `program`, whose types are of
     /// `types`; a local's name comes with the `body` it belongs to.
     pub(crate) fn new(
-        program: &model::program::Program<Peeper>,
+        program: &model::program::Program,
         fact: &thir::Fact,
         body: Option<&thir::Body>,
         types: &Types,
@@ -221,7 +220,7 @@ impl CachedFact {
 /// the type the copy takes, a `const` one with what it is given, and no
 /// type parameters.
 fn copy_signature(
-    program: &model::program::Program<Peeper>,
+    program: &model::program::Program,
     copy: DeclarationCopy,
     ty: TypeId,
     types: &Types,
@@ -313,7 +312,7 @@ pub(crate) struct ConstantText {
 impl ConstantText {
     /// `constant`, of `program`, whose type is in `types`.
     pub(crate) fn new(
-        program: &model::program::Program<Peeper>,
+        program: &model::program::Program,
         constant: &Constant,
         types: &Types,
     ) -> ConstantText {

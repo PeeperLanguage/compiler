@@ -25,7 +25,6 @@ use runtime_abi::messages::SLICE_BOUNDS_MESSAGE;
 use runtime_abi::messages::SLICE_ORDER_MESSAGE;
 use runtime_abi::messages::array_parts_message;
 use source::Span;
-use syntax::ast::Language;
 
 use crate::Loop;
 use crate::Lowering;
@@ -66,7 +65,7 @@ enum Part {
     Range(RangeWalk),
 }
 
-impl<L: Language> Lowering<'_, L> {
+impl Lowering<'_> {
     /// A struct value of the type `ty` from `fields`, at `place`
     /// (`lower_into`): each computed in the order written, right at its
     /// offset.

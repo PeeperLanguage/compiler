@@ -1,5 +1,4 @@
 use super::*;
-use features::Peeper;
 use test_programs::Mark;
 use test_programs::Mode;
 use test_programs::TestProgram;
@@ -17,7 +16,7 @@ fn files(entries: &[(&str, &str)]) -> HashMap<String, String> {
 const MANIFEST: &str = manifest::FILE_NAME;
 
 /// What `files` load to, when their peeper.toml gives a project.
-fn loaded(files: HashMap<String, String>) -> model::program::Program<Peeper> {
+fn loaded(files: HashMap<String, String>) -> model::program::Program {
     let project = project_of(&files).expect("the files are a project");
     load(&project, files)
 }

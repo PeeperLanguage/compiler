@@ -24,7 +24,6 @@ use model::thir::Symbol;
 use source::Span;
 use syntax::ast;
 
-use crate::Checked;
 use crate::Checker;
 use crate::Checking;
 use crate::builder::ThirBuilder;
@@ -38,7 +37,7 @@ use crate::scope;
 // lifetime, as Rust does.
 const MOST_HOLDERS: usize = 4_096;
 
-impl<L: Checked> Checker<'_, L> {
+impl Checker<'_> {
     /// The type the module's type declaration or alias `definition` declares:
     /// a feature's (`declare_type`), or the type an alias names. One with
     /// type parameters, `struct Box<T>`, declares a type in each copy
@@ -63,12 +62,12 @@ impl<L: Checked> Checker<'_, L> {
             unreachable!("the parser gives a type declaration only a feature's type")
         };
         if written.type_parameters.is_empty() || self.in_copy() {
-            return L::declare_type(self, definition, written, ty);
+            return (self.hooks.declare_type)(self, definition, written, ty);
         }
         let module = definition.module.index();
         let reported = self.module_checks[module].diagnostics.len();
         // Invalid whenever a field is of a type `T` names, which reports nothing.
-        L::declare_type(self, definition, written, ty);
+        (self.hooks.declare_type)(self, definition, written, ty);
         let found = &self.module_checks[module].diagnostics[reported..];
         if found.iter().any(Diagnostic::is_error) {
             return TypeId::INVALID;
@@ -112,7 +111,7 @@ impl<L: Checked> Checker<'_, L> {
     pub(crate) fn const_value_type(
         &mut self,
         definition: DefId,
-        ty: Id<ast::Type<L>>,
+        ty: Id<ast::Type>,
         used_at: Span,
     ) -> TypeId {
         let checking = Checking {
@@ -136,7 +135,7 @@ impl<L: Checked> Checker<'_, L> {
     /// The type of a value whose type is written `ty`: a named type is the
     /// type its declaration declares, so a value's type is complete (an
     /// alias names a complete type already).
-    pub fn resolve_value_type(&mut self, ty: Id<ast::Type<L>>) -> TypeId {
+    pub fn resolve_value_type(&mut self, ty: Id<ast::Type>) -> TypeId {
         let resolved = self.resolve_type(ty);
         self.value_type(resolved, ty)
     }
@@ -144,7 +143,7 @@ impl<L: Checked> Checker<'_, L> {
     /// `resolve_value_type` of `resolved`, the type written `ty`. An
     /// interface method's `self` taken whole is the interface being checked,
     /// so it stays a name.
-    fn value_type(&mut self, resolved: TypeId, ty: Id<ast::Type<L>>) -> TypeId {
+    fn value_type(&mut self, resolved: TypeId, ty: Id<ast::Type>) -> TypeId {
         let tree = &self.module().ast;
         if let ast::Type::Owner = tree.types[ty]
             && self.is_interface(resolved)
@@ -433,7 +432,7 @@ impl<L: Checked> Checker<'_, L> {
 
     /// `resolve_type_argument` before it is made a value's type, as
     /// `resolve_type` is.
-    pub(crate) fn expression_type(&mut self, expression: Id<ast::Expr<L>>) -> TypeId {
+    pub(crate) fn expression_type(&mut self, expression: Id<ast::Expr>) -> TypeId {
         source::grow_stack(|| {
             let tree = &self.module().ast;
             let span = tree.exprs.span(expression);
@@ -476,13 +475,15 @@ impl<L: Checked> Checker<'_, L> {
     /// its declaration is checked; a value's type is `resolve_value_type`. A
     /// local never names a type
     /// (`ThirBuilder::declare`), so only top-level names are looked up.
-    pub fn resolve_type(&mut self, ty: Id<ast::Type<L>>) -> TypeId {
+    pub fn resolve_type(&mut self, ty: Id<ast::Type>) -> TypeId {
         // Types written in types, `& & ... i32`, are a deep recursion.
         source::grow_stack(|| {
             let tree = &self.module().ast;
             let span = tree.types.span(ty);
             let what = match tree.types[ty] {
-                ast::Type::Feature(feature) => return L::resolve_type(self, feature, span),
+                ast::Type::Feature(feature) => {
+                    return (self.hooks.resolve_type)(self, feature, span);
+                }
                 // `self`'s type: the owner of the function being checked, which
                 // has one (`check_function`). An owner that is not a struct
                 // was reported by `scope::collect`.

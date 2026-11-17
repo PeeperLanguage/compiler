@@ -3,7 +3,6 @@
 use arena::Id;
 use syntax::ast;
 
-use super::*;
 use crate::testing::Tree;
 use crate::testing::bodies;
 use crate::testing::messages;
@@ -11,12 +10,12 @@ use crate::testing::parse_text;
 use crate::testing::statements;
 
 /// `expr` with each `orelse` in parentheses; a block fallback as `{}`.
-fn grouped(tree: &Tree, expr: Id<ast::Expr<Peeper>>) -> String {
+fn grouped(tree: &Tree, expr: Id<ast::Expr>) -> String {
     match tree.exprs[expr] {
-        ast::Expr::Feature(FeatureExpr::OrElse(OrElse { value, fallback })) => {
+        ast::Expr::Feature(ast::FeatureExpr::OrElse(ast::OrElse { value, fallback })) => {
             let fallback = match fallback {
-                Fallback::Value(fallback) => grouped(tree, fallback),
-                Fallback::Block(_) => "{}".to_string(),
+                ast::OrElseFallback::Value(fallback) => grouped(tree, fallback),
+                ast::OrElseFallback::Block(_) => "{}".to_string(),
             };
             format!("({} orelse {fallback})", grouped(tree, value))
         }
@@ -46,7 +45,12 @@ fn parses_or_else() {
     );
     // The last one is a range whose end is the `orelse`.
     let last = (tree.exprs.ids())
-        .filter(|&id| matches!(tree.exprs[id], ast::Expr::Feature(FeatureExpr::OrElse(_))))
+        .filter(|&id| {
+            matches!(
+                tree.exprs[id],
+                ast::Expr::Feature(ast::FeatureExpr::OrElse(_))
+            )
+        })
         .last()
         .unwrap();
     assert_eq!(tree.file.slice(tree.exprs.span(last)), "h orelse i");
@@ -59,7 +63,12 @@ fn parses_types() {
     let (tree, errors) = parse_text("fn f(a: ?i32, b: ??i32, c: ? ??u8);");
     assert!(errors.is_empty(), "{errors:?}");
     let optionals = (tree.types.ids())
-        .filter(|&id| matches!(tree.types[id], ast::Type::Feature(FeatureType::Optional(_))))
+        .filter(|&id| {
+            matches!(
+                tree.types[id],
+                ast::Type::Feature(ast::FeatureType::Optional(_))
+            )
+        })
         .map(|id| tree.file.slice(tree.types.span(id)))
         .collect::<Vec<_>>();
     assert_eq!(optionals.len(), 6, "{optionals:?}");

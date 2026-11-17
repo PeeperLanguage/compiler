@@ -1,13 +1,12 @@
 //! The checker's tests that need a feature to reach core behaviour. The
-//! checker's own tests are written in a language with no feature, as the
-//! `features` crate depends on `check`; these are written in Peeper, through the
-//! checker's public calls.
+//! checker's own tests read the core's rules alone, as the `features` crate
+//! depends on `check`; these are written in Peeper, through the checker's
+//! public calls.
 
 use std::sync::Arc;
 
 use check::Checker;
 use check::scope::collect;
-use features::Peeper;
 use model::ConstArguments;
 use model::DeclarationCopy;
 use model::DefId;
@@ -25,9 +24,9 @@ use syntax::ast;
 
 /// The module `path`, written as `text`, with `imports`; its text must parse
 /// without errors.
-fn module(path: &str, text: &str, imports: Vec<Import>) -> model::program::Module<Peeper> {
+fn module(path: &str, text: &str, imports: Vec<Import>) -> model::program::Module {
     let file = Arc::new(SourceFile::new("main.peep", text));
-    let (ast, parse) = parser::parse(&file);
+    let (ast, parse) = parser::parse(&file, &features::RULES);
     assert!(parse.is_empty(), "{parse:?}");
     model::program::Module {
         path: path.to_string(),
@@ -46,7 +45,7 @@ type Reported = (&'static str, String, String);
 /// the diagnostics.
 fn with_checker<T>(
     text: &str,
-    work: impl FnOnce(&mut Checker<Peeper>, ModuleId) -> T,
+    work: impl FnOnce(&mut Checker, ModuleId) -> T,
 ) -> (T, Types, Vec<Reported>) {
     let (utils_id, main_id) = (ModuleId::from_index(0), ModuleId::from_index(1));
     let imports = vec![Import {
@@ -59,7 +58,12 @@ fn with_checker<T>(
         module("app:main", &text, imports),
     ];
     let file = modules[1].ast.file.clone();
-    let mut checker = Checker::new(&modules, Machine::named("x86_64-linux").unwrap(), false);
+    let mut checker = Checker::new(
+        &modules,
+        Machine::named("x86_64-linux").unwrap(),
+        false,
+        &features::CHECK_HOOKS,
+    );
     let result = work(&mut checker, main_id);
     let reported = checker
         .module_checks

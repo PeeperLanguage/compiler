@@ -1,6 +1,5 @@
 use std::fmt::Write;
 
-use features::Peeper;
 use model::program::Import;
 use model::program::Module;
 
@@ -8,13 +7,13 @@ use super::*;
 use crate::packages::resolve;
 
 /// The module of `program` at the import path `path`.
-fn module_named<'p>(program: &'p Program<Peeper>, path: &str) -> &'p Module<Peeper> {
+fn module_named<'p>(program: &'p Program, path: &str) -> &'p Module {
     let module = program.modules.iter().find(|module| module.path == path);
     module.unwrap_or_else(|| panic!("no module {path}"))
 }
 
 /// The paths of `program`'s modules, in its order.
-fn order(program: &Program<Peeper>) -> Vec<&str> {
+fn order(program: &Program) -> Vec<&str> {
     program
         .modules
         .iter()
@@ -48,7 +47,7 @@ fn write(test: &str, files: &[(&str, &str)]) -> Project {
 /// "module: CODE message" for every diagnostic, sorted.
 /// Each diagnostic as the path of the module its first label is in, its
 /// code and its message, sorted.
-fn messages(program: &Program<Peeper>) -> Vec<String> {
+fn messages(program: &Program) -> Vec<String> {
     let module = |d: &Diagnostic| {
         let file = Path::new(&d.labels.first()?.file.path);
         Some(program.module_of(file)?.path.as_str())
@@ -69,7 +68,7 @@ fn messages(program: &Program<Peeper>) -> Vec<String> {
     out
 }
 
-fn imports(program: &Program<Peeper>, module: &Module<Peeper>) -> Vec<String> {
+fn imports(program: &Program, module: &Module) -> Vec<String> {
     let alias = |import: &Import| {
         let name = import.name(module, &program.modules);
         name.map_or("", |(name, _)| name)
@@ -193,7 +192,11 @@ fn a_library_loads_each_of_its_files() {
     std::os::unix::fs::symlink(&root, root.join("src/back")).unwrap();
     let project = find(&root, &root.join("libs")).unwrap();
     assert_eq!(project.entry, None);
-    let program = load::<Peeper>(&project, &HashMap::<PathBuf, String>::new());
+    let program = load(
+        &project,
+        &HashMap::<PathBuf, String>::new(),
+        &features::RULES,
+    );
     assert_eq!(messages(&program), Vec::<String>::new());
     assert_eq!(order(&program), ["tools:a", "tools:deep/b"]);
     assert_eq!(program.entry, None);
@@ -211,7 +214,7 @@ fn a_library_without_files_is_an_error() {
     .root;
     let project = find(&root, &root.join("libs")).unwrap();
     let none = HashMap::<PathBuf, String>::new();
-    let missing = load::<Peeper>(&project, &none);
+    let missing = load(&project, &none, &features::RULES);
     let got = messages(&missing);
     assert!(
         got.len() == 1 && got[0].starts_with("program: M0001 read library: "),
@@ -220,14 +223,14 @@ fn a_library_without_files_is_an_error() {
     assert!(!missing.checkable);
     std::fs::create_dir(root.join("src")).unwrap();
     let source = path_text(&root.join("src"));
-    let empty = load::<Peeper>(&project, &none);
+    let empty = load(&project, &none, &features::RULES);
     assert_eq!(
         messages(&empty),
         [format!("program: M0001 no source files in {source}")]
     );
     std::fs::remove_dir(root.join("src")).unwrap();
     let open = HashMap::from([(root.join("src/a.peep"), "fn A() {}".to_string())]);
-    let program = load::<Peeper>(&project, &open);
+    let program = load(&project, &open, &features::RULES);
     assert_eq!(messages(&program), Vec::<String>::new());
     assert_eq!(order(&program), ["tools:a"]);
 }
@@ -340,7 +343,11 @@ fn loads_nested_imports() {
             ("libs/core/src/global.peep", "fn Exit(code: i32) {}"),
         ],
     );
-    let program = load::<Peeper>(&project, &HashMap::<PathBuf, String>::new());
+    let program = load(
+        &project,
+        &HashMap::<PathBuf, String>::new(),
+        &features::RULES,
+    );
     assert_eq!(messages(&program), Vec::<String>::new());
     assert_eq!(
         order(&program).join(" "),
@@ -366,7 +373,11 @@ fn loads_a_module_with_a_dot_in_its_name() {
             ("src/a.b.peep", "fn X() {}"),
         ],
     );
-    let program = load::<Peeper>(&project, &HashMap::<PathBuf, String>::new());
+    let program = load(
+        &project,
+        &HashMap::<PathBuf, String>::new(),
+        &features::RULES,
+    );
     assert_eq!(messages(&program), Vec::<String>::new());
     assert_eq!(order(&program).join(" "), "myapp:a.b myapp:main");
 }
@@ -398,7 +409,11 @@ fn import_errors() {
             ("src/c.peep", ""),
         ],
     );
-    let program = load::<Peeper>(&project, &HashMap::<PathBuf, String>::new());
+    let program = load(
+        &project,
+        &HashMap::<PathBuf, String>::new(),
+        &features::RULES,
+    );
     let missing = project.root.join("src/missing.peep");
     let parts =
         "myapp:main: M0003 import path parts cannot be empty, `.` or `..`, or hold `\\` or `:`"
@@ -437,7 +452,11 @@ fn import_errors() {
 fn guesses_a_missing_module_but_not_itself() {
     let main = "import \"myapp:shapez\";\nimport \"myapp:mainn\";\nfn main() {}";
     let project = write("guess", &[("src/main.peep", main), ("src/shapes.peep", "")]);
-    let program = load::<Peeper>(&project, &HashMap::<PathBuf, String>::new());
+    let program = load(
+        &project,
+        &HashMap::<PathBuf, String>::new(),
+        &features::RULES,
+    );
     let guesses: Vec<&str> = program
         .diagnostics
         .iter()
@@ -452,7 +471,11 @@ fn reports_imports_at_their_line() {
         "line",
         &[("src/main.peep", "fn main() {}\nimport \"myapp:missing\";\n")],
     );
-    let program = load::<Peeper>(&project, &HashMap::<PathBuf, String>::new());
+    let program = load(
+        &project,
+        &HashMap::<PathBuf, String>::new(),
+        &features::RULES,
+    );
     let main = module_named(&program, "myapp:main");
     assert_eq!(program.diagnostics.len(), 1, "{:?}", messages(&program));
     let label = &program.diagnostics[0].labels[0];
@@ -461,7 +484,7 @@ fn reports_imports_at_their_line() {
 
 /// Each place of the import cycles `program` found, as the importer's
 /// path and the place's message, then each note.
-fn cycle_steps(program: &Program<Peeper>) -> Vec<String> {
+fn cycle_steps(program: &Program) -> Vec<String> {
     let cycles = program.diagnostics.iter();
     let cycles = cycles.filter(|d| d.code == diagnostics::CYCLIC_IMPORT);
     let steps = |d: &Diagnostic| {
@@ -490,7 +513,11 @@ fn reports_a_cycle_with_each_import() {
             ("src/b.peep", r#"import "myapp:a";"#),
         ],
     );
-    let program = load::<Peeper>(&project, &HashMap::<PathBuf, String>::new());
+    let program = load(
+        &project,
+        &HashMap::<PathBuf, String>::new(),
+        &features::RULES,
+    );
     assert_eq!(
         messages(&program),
         ["myapp:a: M0002 modules import each other in a cycle"]
@@ -516,7 +543,11 @@ fn a_cycle_through_the_prelude_is_reported_once() {
             ("libs/core/src/x.peep", r#"import "core:global";"#),
         ],
     );
-    let program = load::<Peeper>(&project, &HashMap::<PathBuf, String>::new());
+    let program = load(
+        &project,
+        &HashMap::<PathBuf, String>::new(),
+        &features::RULES,
+    );
     assert_eq!(
         cycle_steps(&program),
         [
@@ -537,7 +568,11 @@ fn a_cycle_through_the_implicit_prelude_import_notes_it() {
             ("libs/core/src/x.peep", "fn F() {}"),
         ],
     );
-    let program = load::<Peeper>(&project, &HashMap::<PathBuf, String>::new());
+    let program = load(
+        &project,
+        &HashMap::<PathBuf, String>::new(),
+        &features::RULES,
+    );
     assert_eq!(
         cycle_steps(&program),
         [
@@ -556,7 +591,11 @@ fn redundant_prelude_import() {
             ("libs/core/src/global.peep", ""),
         ],
     );
-    let program = load::<Peeper>(&project, &HashMap::<PathBuf, String>::new());
+    let program = load(
+        &project,
+        &HashMap::<PathBuf, String>::new(),
+        &features::RULES,
+    );
     assert_eq!(
         messages(&program),
         ["myapp:main: S0004 `core:global` is imported automatically"]
@@ -578,7 +617,11 @@ fn a_single_file_cannot_import() {
         ],
     );
     project.entry = Some(project.root.join("tool.peep"));
-    let program = load::<Peeper>(&project, &HashMap::<PathBuf, String>::new());
+    let program = load(
+        &project,
+        &HashMap::<PathBuf, String>::new(),
+        &features::RULES,
+    );
     assert_eq!(
         messages(&program),
         ["tool: M0003 a single file cannot import; check its project folder instead"]
@@ -594,14 +637,22 @@ fn a_single_file_cannot_import() {
 fn unreadable_and_non_utf8_entries() {
     let mut project = write("unreadable", &[("src/bad.peep", "fn \u{0} main")]);
     std::fs::write(project.root.join("src/bad.peep"), b"fn \xff main() {}").unwrap();
-    let program = load::<Peeper>(&project, &HashMap::<PathBuf, String>::new());
+    let program = load(
+        &project,
+        &HashMap::<PathBuf, String>::new(),
+        &features::RULES,
+    );
     let got = messages(&program);
     assert!(
         got.len() == 1 && got[0].starts_with("program: M0001 read module: "),
         "{got:?}"
     );
     project.entry = Some(project.root.join("src/bad.peep"));
-    let program = load::<Peeper>(&project, &HashMap::<PathBuf, String>::new());
+    let program = load(
+        &project,
+        &HashMap::<PathBuf, String>::new(),
+        &features::RULES,
+    );
     assert_eq!(
         messages(&program),
         ["myapp:bad: L0001 file is not valid UTF-8"]
@@ -627,7 +678,7 @@ fn orders_a_long_import_chain() {
         project.root.join("src/main.peep"),
         "import \"myapp:m0\";".to_string(),
     );
-    let program = load::<Peeper>(&project, &open_files);
+    let program = load(&project, &open_files, &features::RULES);
     assert_eq!(messages(&program), Vec::<String>::new());
     assert_eq!(order(&program).last(), Some(&"myapp:main"));
 }
@@ -652,7 +703,11 @@ fn loads_many_modules_in_a_stable_order() {
         .map(|(n, t)| (n.as_str(), t.as_str()))
         .collect();
     let project = write("many", &files);
-    let first = load::<Peeper>(&project, &HashMap::<PathBuf, String>::new());
+    let first = load(
+        &project,
+        &HashMap::<PathBuf, String>::new(),
+        &features::RULES,
+    );
     assert!(messages(&first).is_empty());
     assert_eq!(first.modules.len(), 202);
     for (index, module) in first.modules.iter().enumerate() {
@@ -667,9 +722,10 @@ fn loads_many_modules_in_a_stable_order() {
     }
     for _ in 0..5 {
         assert_eq!(
-            order(&load::<Peeper>(
+            order(&load(
                 &project,
-                &HashMap::<PathBuf, String>::new()
+                &HashMap::<PathBuf, String>::new(),
+                &features::RULES
             )),
             order(&first),
             "order differs between runs"
@@ -693,7 +749,7 @@ fn open_files_win_over_disk() {
         ),
         (project.root.join("src/b.peep"), "fn B() {}".to_string()), // not on disk
     ]);
-    let program = load::<Peeper>(&project, &open_files);
+    let program = load(&project, &open_files, &features::RULES);
     assert_eq!(messages(&program), Vec::<String>::new());
     assert_eq!(module_named(&program, "myapp:b").ast.file.text, "fn B() {}");
 }

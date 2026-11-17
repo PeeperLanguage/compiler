@@ -4,19 +4,18 @@
 use arena::Id;
 use syntax::ast;
 
-use super::*;
 use crate::testing::Tree;
 use crate::testing::parse_text;
 use crate::testing::statements;
 
 /// The written type `ty` as `*` for each pointer to a pointer, then
 /// `rawptr` or the innermost type's text.
-fn shape(tree: &Tree, ty: Id<ast::Type<Peeper>>) -> String {
+fn shape(tree: &Tree, ty: Id<ast::Type>) -> String {
     match tree.types[ty] {
-        ast::Type::Feature(FeatureType::Pointer(PointerType {
+        ast::Type::Feature(ast::FeatureType::Pointer(ast::PointerType {
             target: Some(target),
         })) => format!("*{}", shape(tree, target)),
-        ast::Type::Feature(FeatureType::Pointer(PointerType { target: None })) => {
+        ast::Type::Feature(ast::FeatureType::Pointer(ast::PointerType { target: None })) => {
             "rawptr".to_string()
         }
         ast::Type::Reference { target, .. } => format!("&{}", shape(tree, target)),
@@ -64,7 +63,8 @@ fn parses_expressions() {
         })
         .collect();
     assert_eq!(types, ["*Node", "rawptr"]);
-    let ast::Expr::Feature(FeatureExpr::RawAddress(RawAddress { place })) = tree.exprs[found[1]]
+    let ast::Expr::Feature(ast::FeatureExpr::RawAddress(ast::RawAddress { place })) =
+        tree.exprs[found[1]]
     else {
         panic!("not a raw address: {:?}", tree.exprs[found[1]])
     };

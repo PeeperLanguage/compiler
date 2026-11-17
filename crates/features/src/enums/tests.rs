@@ -3,7 +3,6 @@
 use arena::Id;
 use syntax::ast;
 
-use super::*;
 use crate::testing::Tree;
 use crate::testing::bodies;
 use crate::testing::messages;
@@ -12,7 +11,7 @@ use crate::testing::statements;
 
 /// The pattern `pattern` as written, a case's payload pattern in
 /// parentheses.
-fn shape(tree: &Tree, pattern: Id<ast::Pattern<Peeper>>) -> String {
+fn shape(tree: &Tree, pattern: Id<ast::Pattern>) -> String {
     match tree.patterns[pattern] {
         ast::Pattern::Case { case, inner } => {
             let case = tree.file.slice(tree.types.span(case));
@@ -39,7 +38,8 @@ fn parses_declarations() {
     let ast::Decl::Type(declared) = tree.decls[decl] else {
         panic!("not a type declaration")
     };
-    let ast::Type::Feature(FeatureType::Enum(EnumType { variants })) = tree.types[declared.ty]
+    let ast::Type::Feature(ast::FeatureType::Enum(ast::EnumType { variants })) =
+        tree.types[declared.ty]
     else {
         panic!("not an enum")
     };
@@ -72,7 +72,7 @@ fn parses_expressions() {
     assert!(errors.is_empty(), "{errors:?}");
     let found = statements(&tree);
     let text = |span| tree.file.slice(span);
-    let ast::Expr::Feature(FeatureExpr::VariantLiteral(literal)) = tree.exprs[found[0]] else {
+    let ast::Expr::Feature(ast::FeatureExpr::VariantLiteral(literal)) = tree.exprs[found[0]] else {
         panic!("not a variant literal: {:?}", tree.exprs[found[0]])
     };
     assert_eq!(text(tree.types.span(literal.case)), "Shape::Line");
@@ -80,7 +80,7 @@ fn parses_expressions() {
     let ast::Expr::Binary { left, .. } = tree.exprs[found[1]] else {
         panic!("not a binary operation: {:?}", tree.exprs[found[1]])
     };
-    let ast::Expr::Feature(FeatureExpr::CaseTest(test)) = tree.exprs[left] else {
+    let ast::Expr::Feature(ast::FeatureExpr::CaseTest(test)) = tree.exprs[left] else {
         panic!("not a case test: {:?}", tree.exprs[left])
     };
     assert_eq!(text(tree.exprs.span(test.value)), "a");
@@ -106,7 +106,7 @@ fn parses_matches() {
     assert!(errors.is_empty(), "{errors:?}");
     let arms = (tree.stmts.ids())
         .find_map(|id| match tree.stmts[id] {
-            ast::Stmt::Feature(FeatureStmt::Match(Match { arms, .. })) => Some(arms),
+            ast::Stmt::Feature(ast::FeatureStmt::Match(ast::Match { arms, .. })) => Some(arms),
             _ => None,
         })
         .unwrap();

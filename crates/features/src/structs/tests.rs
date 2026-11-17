@@ -6,7 +6,6 @@ use diagnostics::Diagnostic;
 use source::Span;
 use syntax::ast;
 
-use super::*;
 use crate::testing::Tree;
 use crate::testing::messages;
 use crate::testing::parse_text;
@@ -38,8 +37,9 @@ fn written(tree: &Tree, span: Span) -> &str {
 
 /// The fields of the struct type `ty`: each as `name: type`, the type as
 /// written, and the type.
-fn fields(tree: &Tree, ty: Id<ast::Type<Peeper>>) -> Vec<(String, Id<ast::Type<Peeper>>)> {
-    let ast::Type::Feature(FeatureType::Struct(StructType { fields })) = tree.types[ty] else {
+fn fields(tree: &Tree, ty: Id<ast::Type>) -> Vec<(String, Id<ast::Type>)> {
+    let ast::Type::Feature(ast::FeatureType::Struct(ast::StructType { fields })) = tree.types[ty]
+    else {
         panic!("not a struct type: {:?}", tree.types[ty])
     };
     let field = |id| {
@@ -56,8 +56,8 @@ fn fields(tree: &Tree, ty: Id<ast::Type<Peeper>>) -> Vec<(String, Id<ast::Type<P
 
 /// The struct literal `expr`: its type as written, if any, and each field
 /// as `name = value`, the value as written.
-fn literal(tree: &Tree, expr: Id<ast::Expr<Peeper>>) -> (Option<&str>, Vec<String>) {
-    let ast::Expr::Feature(FeatureExpr::StructLiteral(StructLiteral { ty, fields })) =
+fn literal(tree: &Tree, expr: Id<ast::Expr>) -> (Option<&str>, Vec<String>) {
+    let ast::Expr::Feature(ast::FeatureExpr::StructLiteral(ast::StructLiteral { ty, fields })) =
         tree.exprs[expr]
     else {
         panic!("not a struct literal: {:?}", tree.exprs[expr])

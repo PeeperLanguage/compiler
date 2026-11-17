@@ -61,47 +61,44 @@ use rustc_hash::FxHashMap;
 use scope::Scope;
 use source::Span;
 use syntax::ast;
-use syntax::ast::Language;
 
-/// What the checker asks of a language: how each feature's nodes are
-/// checked (docs/feature-front.md, section 7).
-pub trait Checked: Language {
+/// How the checker checks the nodes of the features, which the `features`
+/// crate gives: one function per kind of node, each a `match` that hands
+/// the node to its feature (docs/structure-mapping.md, step 7).
+pub struct CheckHooks {
     /// The feature expression `expr`, written at `span`, where a value of
     /// the type `expected` is wanted, if one is.
-    fn check_expr(
-        builder: &mut ThirBuilder<'_, '_, Self>,
-        expr: Self::Expr,
+    pub check_expr: fn(
+        builder: &mut ThirBuilder<'_, '_>,
+        expr: ast::FeatureExpr,
         span: Span,
         expected: Option<TypeId>,
-    ) -> thir::Expr;
-
+    ) -> thir::Expr,
     /// The feature statement `stmt`, written at `span`; `None` when it
     /// leaves no statement, after an error.
-    fn check_stmt(
-        builder: &mut ThirBuilder<'_, '_, Self>,
-        stmt: Self::Stmt,
+    pub check_stmt: fn(
+        builder: &mut ThirBuilder<'_, '_>,
+        stmt: ast::FeatureStmt,
         span: Span,
-    ) -> Option<thir::Stmt>;
-
+    ) -> Option<thir::Stmt>,
     /// The type the feature type `ty`, written at `span`, names.
-    fn resolve_type(checker: &mut Checker<'_, Self>, ty: Self::Type, span: Span) -> TypeId;
-
+    pub resolve_type: fn(checker: &mut Checker<'_>, ty: ast::FeatureType, span: Span) -> TypeId,
     /// The type the module's type declaration `definition`, written
     /// `written`, declares with the feature type `ty`.
-    fn declare_type(
-        checker: &mut Checker<'_, Self>,
+    pub declare_type: fn(
+        checker: &mut Checker<'_>,
         definition: DefId,
-        written: ast::TypeDecl<Self>,
-        ty: Self::Type,
-    ) -> TypeId;
+        written: ast::TypeDecl,
+        ty: ast::FeatureType,
+    ) -> TypeId,
 }
 
 /// Checks a program's declarations. Each module-scope declaration (`DefId`)
 /// is checked once, the first time anything asks for it, and its result is
 /// kept in the table of its category: types, functions or constants. A body's
 /// own names (`Symbol::Local`) are checked in place with the body.
-pub struct Checker<'p, L: Language> {
-    pub modules: &'p [model::program::Module<L>], // in the program's order
+pub struct Checker<'p> {
+    pub modules: &'p [model::program::Module], // in the program's order
     /// What checking each module found so far, by `ModuleId`.
     pub module_checks: Vec<ModuleChecks<'p>>,
     pub types: Types, // the program's types, built-in and declared
@@ -111,6 +108,8 @@ pub struct Checker<'p, L: Language> {
     /// The machine the program is for: the width of `isize` and `usize` is
     /// its `pointer_bits`, and a value may take its `largest_object` bytes.
     pub target: &'static Machine,
+    /// How the features' nodes are checked.
+    hooks: &'static CheckHooks,
     internals: CheckerInternals,
 }
 
@@ -230,15 +229,16 @@ pub enum State<T> {
     Done(T),
 }
 
-impl<'p, L: Checked> Checker<'p, L> {
+impl<'p> Checker<'p> {
     /// Nothing checked yet of `modules` but their scopes, whose errors are
     /// each module's first diagnostics, for `target`.
     /// Facts are recorded when `record_facts`, as for an editor.
     pub fn new(
-        modules: &'p [model::program::Module<L>],
+        modules: &'p [model::program::Module],
         target: &'static Machine,
         record_facts: bool,
-    ) -> Checker<'p, L> {
+        hooks: &'static CheckHooks,
+    ) -> Checker<'p> {
         let module_checks = (0..modules.len())
             .map(|index| {
                 let mut diagnostics = Vec::new();
@@ -261,6 +261,7 @@ impl<'p, L: Checked> Checker<'p, L> {
             types: Types::new(target.pointer_bits),
             debug_types: ProgramDebugTypes::default(),
             target,
+            hooks,
             internals: CheckerInternals {
                 known_implementations: FxHashMap::default(),
                 records_editor_facts: record_facts,
@@ -517,7 +518,7 @@ impl<'p, L: Checked> Checker<'p, L> {
     }
 
     /// The module being checked.
-    pub fn module(&self) -> &'p model::program::Module<L> {
+    pub fn module(&self) -> &'p model::program::Module {
         &self.modules[self.current_module().index()]
     }
 
@@ -634,11 +635,11 @@ impl<'p, L: Checked> Checker<'p, L> {
     /// `module::Type::name`. A path that names nothing or is not supported is
     /// reported. Another module's name is reachable only if it starts with an
     /// upper case letter.
-    pub(crate) fn resolve_path(&mut self, path: Id<ast::Type<L>>) -> Option<Symbol> {
+    pub(crate) fn resolve_path(&mut self, path: Id<ast::Type>) -> Option<Symbol> {
         let tree = &self.module().ast;
         let span = tree.types.span(path);
         // A `Type::Generic` alone, as `Box<T>`, is one segment.
-        let segments: Vec<Id<ast::Type<L>>> = match tree.types[path] {
+        let segments: Vec<Id<ast::Type>> = match tree.types[path] {
             ast::Type::Path(segments) => tree.children.lists.items(segments).collect(),
             _ => vec![path],
         };

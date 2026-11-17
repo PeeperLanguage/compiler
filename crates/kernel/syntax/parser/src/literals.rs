@@ -7,10 +7,9 @@ use syntax::ast::StringKind;
 use token::Token;
 use token::TokenKind;
 
-use crate::Grammar;
 use crate::Parser;
 
-impl<L: Grammar> Parser<L> {
+impl Parser {
     /// Checks the type suffix of number literal `t`, the part of a number the
     /// lexer leaves to the parser. Whether the value fits its type is the type
     /// checker's to decide.
@@ -39,18 +38,18 @@ impl<L: Grammar> Parser<L> {
 }
 
 /// Reads `none`.
-pub(crate) fn none_literal<L: Grammar>(p: &mut Parser<L>) -> Id<Expr<L>> {
+pub(crate) fn none_literal(p: &mut Parser) -> Id<Expr> {
     p.leaf(Expr::None)
 }
 
 /// Reads `true` or `false`.
-pub(crate) fn bool_literal<L: Grammar>(p: &mut Parser<L>) -> Id<Expr<L>> {
+pub(crate) fn bool_literal(p: &mut Parser) -> Id<Expr> {
     let value = p.tok().kind == TokenKind::True;
     p.leaf(Expr::Bool(value))
 }
 
 /// Reads `"text"` or `c"text"`.
-pub(crate) fn string_literal<L: Grammar>(p: &mut Parser<L>) -> Id<Expr<L>> {
+pub(crate) fn string_literal(p: &mut Parser) -> Id<Expr> {
     let kind = match p.tok().kind {
         TokenKind::CString => StringKind::C,
         _ => StringKind::Plain,
@@ -59,7 +58,7 @@ pub(crate) fn string_literal<L: Grammar>(p: &mut Parser<L>) -> Id<Expr<L>> {
 }
 
 /// Reads a number and checks its type suffix.
-pub(crate) fn number_literal<L: Grammar>(p: &mut Parser<L>) -> Id<Expr<L>> {
+pub(crate) fn number_literal(p: &mut Parser) -> Id<Expr> {
     p.check_number(p.tok());
     p.leaf(Expr::Number)
 }

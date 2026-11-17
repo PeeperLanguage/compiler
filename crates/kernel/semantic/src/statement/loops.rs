@@ -20,15 +20,14 @@ use source::Span;
 use syntax::ast;
 use syntax::ast::Ident;
 
-use crate::Checked;
 use crate::builder::ThirBuilder;
 
-impl<L: Checked> ThirBuilder<'_, '_, L> {
+impl ThirBuilder<'_, '_> {
     /// `close_block` for a loop's `body`, in which `break` and `continue`
     /// are allowed.
     pub(super) fn check_loop_body(
         &mut self,
-        body: Id<ast::Block<L>>,
+        body: Id<ast::Block>,
         enclosing: (Id<Block>, usize),
         first: Option<Id<Stmt>>,
     ) -> Id<Block> {
@@ -63,7 +62,7 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
         index: Option<Ident>,
         value: Option<Ident>,
         range: Id<Expr>,
-        body: Id<ast::Block<L>>,
+        body: Id<ast::Block>,
     ) -> Stmt {
         let element = match self.checker.types[self.body.exprs[range].ty] {
             Type::Range { element, .. } => element,
@@ -105,7 +104,7 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
         index: Option<Ident>,
         value: Ident,
         iterable: Id<Expr>,
-        body: Id<ast::Block<L>>,
+        body: Id<ast::Block>,
     ) -> Option<Stmt> {
         self.reborrow_in_place(iterable);
         let (items_type, span) = (self.body.exprs[iterable].ty, self.body.exprs.span(iterable));

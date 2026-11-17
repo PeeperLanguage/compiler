@@ -11,7 +11,6 @@ use syntax::operators::BinaryOp;
 use syntax::operators::Precedence;
 use token::TokenKind;
 
-use crate::Grammar;
 use crate::Parser;
 use crate::decl::const_decl;
 use crate::decl::starts_declaration;
@@ -19,11 +18,11 @@ use crate::expr::starts_expression;
 use crate::starts_statement;
 
 /// Reads the statement the current keyword begins.
-pub type StatementRule<L> = fn(&mut Parser<L>) -> Id<Stmt<L>>;
+pub type StatementRule = fn(&mut Parser) -> Id<Stmt>;
 
 /// The reader of each statement a keyword begins, indexed by token kind; any
 /// other token begins an expression statement.
-pub(crate) const fn statement_rows<L: Grammar>(statements: &mut [Option<StatementRule<L>>; 256]) {
+pub(crate) const fn statement_rows(statements: &mut [Option<StatementRule>; 256]) {
     statements[TokenKind::Let as usize] = Some(let_statement);
     statements[TokenKind::Const as usize] = Some(|p| {
         let decl = const_decl(p, Metadata::NONE);
@@ -43,15 +42,15 @@ pub(crate) const fn statement_rows<L: Grammar>(statements: &mut [Option<Statemen
 }
 
 /// Whether `kind` begins a statement other than an expression statement.
-pub(crate) fn is_statement_keyword<L: Grammar>(kind: TokenKind) -> bool {
-    L::rules().statements[kind as usize].is_some()
+pub(crate) fn is_statement_keyword(p: &Parser, kind: TokenKind) -> bool {
+    p.rules.statements[kind as usize].is_some()
 }
 
-impl<L: Grammar> Parser<L> {
+impl Parser {
     /// Reads a block. A keyword that begins a declaration but not a statement
     /// means its `}` is missing: the block ends there and the declaration is
     /// read next.
-    pub fn block(&mut self) -> Id<Block<L>> {
+    pub fn block(&mut self) -> Id<Block> {
         let Some(open) = self.expect(TokenKind::LeftBrace) else {
             return self.add(
                 self.last_end,
@@ -65,7 +64,7 @@ impl<L: Grammar> Parser<L> {
             let kind = self.tok().kind;
             if kind == TokenKind::RightBrace
                 || kind == TokenKind::Eof
-                || starts_declaration::<L>(kind) && !is_statement_keyword::<L>(kind)
+                || starts_declaration(self, kind) && !is_statement_keyword(self, kind)
             {
                 break;
             }
@@ -74,7 +73,7 @@ impl<L: Grammar> Parser<L> {
                 self.next();
                 continue;
             }
-            if starts_statement::<L>(kind) {
+            if starts_statement(self, kind) {
                 self.recovering = false;
             }
             let statement = self.stmt();
@@ -90,9 +89,9 @@ impl<L: Grammar> Parser<L> {
 
     /// Reads a statement: one a keyword begins, or an expression statement, or
     /// an assignment `target = value;`.
-    fn stmt(&mut self) -> Id<Stmt<L>> {
+    fn stmt(&mut self) -> Id<Stmt> {
         source::grow_stack(|| {
-            if let Some(read) = L::rules().statements[self.tok().kind as usize] {
+            if let Some(read) = self.rules.statements[self.tok().kind as usize] {
                 return read(self);
             }
             let start = self.tok().span.start;
@@ -109,14 +108,14 @@ impl<L: Grammar> Parser<L> {
     }
 
     /// Makes `block` a statement: a block inside a block, or an `else` block.
-    fn block_statement(&mut self, block: Id<Block<L>>) -> Id<Stmt<L>> {
+    fn block_statement(&mut self, block: Id<Block>) -> Id<Stmt> {
         let span = self.tree.blocks.span(block);
         self.tree.add(Stmt::Block(block), span)
     }
 
     /// Reads the block of an if, else or for; when it is missing, it reports
     /// "missing <what> body" where the block should start.
-    fn body(&mut self, what: &str) -> Option<Id<Block<L>>> {
+    fn body(&mut self, what: &str) -> Option<Id<Block>> {
         if self.at(TokenKind::LeftBrace) {
             return Some(self.block());
         }
@@ -134,7 +133,7 @@ impl<L: Grammar> Parser<L> {
 
 /// Reads `let mut name: Type = value;`, where `mut`, the type and the value
 /// may be left out, or `let .{ fields } = value;`.
-fn let_statement<L: Grammar>(p: &mut Parser<L>) -> Id<Stmt<L>> {
+fn let_statement(p: &mut Parser) -> Id<Stmt> {
     let start = p.next().span.start;
     if p.at(TokenKind::Dot) {
         let pattern = p.struct_pattern();
@@ -161,7 +160,7 @@ fn let_statement<L: Grammar>(p: &mut Parser<L>) -> Id<Stmt<L>> {
 
 /// Reads `if condition { } else if ... else { }`. A `=` written for `==` in
 /// the condition is read as `==`.
-fn if_statement<L: Grammar>(p: &mut Parser<L>) -> Id<Stmt<L>> {
+fn if_statement(p: &mut Parser) -> Id<Stmt> {
     source::grow_stack(|| {
         let start = p.next().span.start;
         let mut condition = p.expr(Precedence::Lowest);
@@ -212,7 +211,7 @@ fn if_statement<L: Grammar>(p: &mut Parser<L>) -> Id<Stmt<L>> {
 /// Reads `for { }`, `for control { }`, `for value in items { }` or `for
 /// index, value in items { }`. Whether `control` is a condition or a range
 /// to count through is its type's to say, which the checker decides.
-fn for_statement<L: Grammar>(p: &mut Parser<L>) -> Id<Stmt<L>> {
+fn for_statement(p: &mut Parser) -> Id<Stmt> {
     let start = p.next().span.start;
     let unnamed_index = p.at(TokenKind::Underscore) && p.ahead(1).kind == TokenKind::Comma;
     if unnamed_index
@@ -263,7 +262,7 @@ fn for_statement<L: Grammar>(p: &mut Parser<L>) -> Id<Stmt<L>> {
 
 /// Reads `break;` or `continue;`. Loop labels are not part of the language
 /// yet; a label is reported and skipped.
-fn jump_statement<L: Grammar>(p: &mut Parser<L>) -> Id<Stmt<L>> {
+fn jump_statement(p: &mut Parser) -> Id<Stmt> {
     let keyword = p.next();
     let t = p.tok();
     if t.kind == TokenKind::Ident {
@@ -291,15 +290,15 @@ fn jump_statement<L: Grammar>(p: &mut Parser<L>) -> Id<Stmt<L>> {
 
 /// Reads `return value;`; the value may be left out, so a token that cannot
 /// begin one, such as the `}` after a `return` missing its `;`, ends it.
-fn return_statement<L: Grammar>(p: &mut Parser<L>) -> Id<Stmt<L>> {
+fn return_statement(p: &mut Parser) -> Id<Stmt> {
     let start = p.next().span.start;
-    let value = starts_expression::<L>(p.tok().kind).then(|| p.expr(Precedence::Lowest));
+    let value = starts_expression(p, p.tok().kind).then(|| p.expr(Precedence::Lowest));
     p.end();
     p.add(start, Stmt::Return(value))
 }
 
 /// Reads `panic message;`.
-fn panic_statement<L: Grammar>(p: &mut Parser<L>) -> Id<Stmt<L>> {
+fn panic_statement(p: &mut Parser) -> Id<Stmt> {
     let start = p.next().span.start;
     let message = p.expr(Precedence::Lowest);
     p.end();

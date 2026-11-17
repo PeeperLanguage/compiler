@@ -36,7 +36,6 @@ use diagnostics::fix::Fix;
 use source::SourceFile;
 use source::Span;
 use syntax::ast::Ident;
-use syntax::ast::Language;
 use syntax::ast::Tree;
 use syntax::operators::BinaryOp;
 use syntax::operators::Precedence;
@@ -50,37 +49,30 @@ use crate::expr::PrefixRule;
 use crate::stmt::StatementRule;
 use crate::types::TypeStartRule;
 
-/// What the parser asks of a language: the rules of each token
-/// (docs/feature-front.md, section 4.1).
-pub trait Grammar: Language {
-    /// The core's rows (`Rules::core`) and each feature's, built once.
-    fn rules() -> &'static Rules<Self>;
-}
-
 /// The rules of each token, indexed by token kind. A token without a prefix
 /// rule cannot begin an expression; a token without an infix rule never
 /// continues one. `binary` is the operator a token of the `binary` rule
 /// writes. A statement or declaration rule reads what its keyword begins;
 /// any other token begins an expression statement. Two rules for one token
 /// are a build error, not one replacing the other.
-pub struct Rules<L: Language> {
-    prefix: [Option<PrefixRule<L>>; 256],
+pub struct Rules {
+    prefix: [Option<PrefixRule>; 256],
     /// After a path, the rule of the token there when the token after it is
     /// the one paired with it (`Point.{` begins a struct literal).
-    after_path: [Option<(TokenKind, AfterPathRule<L>)>; 256],
-    infix: [Option<(Precedence, InfixRule<L>)>; 256],
+    after_path: [Option<(TokenKind, AfterPathRule)>; 256],
+    infix: [Option<(Precedence, InfixRule)>; 256],
     binary: [Option<BinaryOp>; 256],
-    statements: [Option<StatementRule<L>>; 256],
-    declarations: [Option<DeclarationRule<L>>; 256],
+    statements: [Option<StatementRule>; 256],
+    declarations: [Option<DeclarationRule>; 256],
     /// The type each token begins (`struct { ... }`, `[4]T`), read after the
     /// token; a declaration of one by its keyword (`struct Name { ... }`)
     /// reads it after the name (`type_decl`).
-    type_starts: [Option<TypeStartRule<L>>; 256],
+    type_starts: [Option<TypeStartRule>; 256],
 }
 
-impl<L: Grammar> Rules<L> {
+impl Rules {
     /// The core's rules, which each feature's are added to.
-    pub const fn core() -> Rules<L> {
+    pub const fn core() -> Rules {
         let mut rules = Rules {
             prefix: [None; 256],
             after_path: [None; 256],
@@ -97,7 +89,7 @@ impl<L: Grammar> Rules<L> {
     }
 
     /// Reads the statement the keyword `kind` begins with `read`.
-    pub const fn statement(&mut self, kind: TokenKind, read: StatementRule<L>) {
+    pub const fn statement(&mut self, kind: TokenKind, read: StatementRule) {
         assert!(
             self.statements[kind as usize].is_none(),
             "two rules begin a statement with one token"
@@ -106,7 +98,7 @@ impl<L: Grammar> Rules<L> {
     }
 
     /// Reads the declaration `kind` begins with `read`.
-    pub const fn declaration(&mut self, kind: TokenKind, read: DeclarationRule<L>) {
+    pub const fn declaration(&mut self, kind: TokenKind, read: DeclarationRule) {
         assert!(
             self.declarations[kind as usize].is_none(),
             "two rules begin a declaration with one token"
@@ -117,7 +109,7 @@ impl<L: Grammar> Rules<L> {
     /// Reads the type the token `kind` begins with `read`. A token the
     /// core's types begin with cannot be one: `Parser::type_expr` reads
     /// those first.
-    pub const fn type_start(&mut self, kind: TokenKind, read: TypeStartRule<L>) {
+    pub const fn type_start(&mut self, kind: TokenKind, read: TypeStartRule) {
         assert!(
             !types::starts_core_type(kind) && self.type_starts[kind as usize].is_none(),
             "two rules begin a type with one token"
@@ -127,12 +119,7 @@ impl<L: Grammar> Rules<L> {
 
     /// Reads with `read` what a path continues with when the token after it
     /// is `first` and the next one `second`.
-    pub const fn after_path(
-        &mut self,
-        first: TokenKind,
-        second: TokenKind,
-        read: AfterPathRule<L>,
-    ) {
+    pub const fn after_path(&mut self, first: TokenKind, second: TokenKind, read: AfterPathRule) {
         assert!(
             self.after_path[first as usize].is_none(),
             "two rules continue a path with one token"
@@ -141,10 +128,12 @@ impl<L: Grammar> Rules<L> {
     }
 }
 
-/// Returns the syntax tree of `file` and the lexical and syntax errors in it.
-pub fn parse<L: Grammar>(file: &Arc<SourceFile>) -> (Tree<L>, Vec<Diagnostic>) {
+/// Returns the syntax tree of `file`, read with `rules`, and the lexical and
+/// syntax errors in it.
+pub fn parse(file: &Arc<SourceFile>, rules: &'static Rules) -> (Tree, Vec<Diagnostic>) {
     let (tokens, errors) = lexer::scan(file);
     let mut p = Parser {
+        rules,
         tree: Tree::new(file.clone()),
         tokens,
         pos: 0,
@@ -159,8 +148,10 @@ pub fn parse<L: Grammar>(file: &Arc<SourceFile>) -> (Tree<L>, Vec<Diagnostic>) {
     (p.tree, p.errors)
 }
 
-pub struct Parser<L: Language> {
-    pub tree: Tree<L>, // the tree being built
+pub struct Parser {
+    /// The core's rules and each feature's (`Rules::core`), built once.
+    rules: &'static Rules,
+    pub tree: Tree, // the tree being built
     tokens: Vec<Token>,
     pos: usize,
     last_end: u32, // end of the last token read
@@ -170,7 +161,7 @@ pub struct Parser<L: Language> {
     list_items: Vec<NonZeroU32>, // the items of the lists being read, innermost last
 }
 
-impl<L: Grammar> Parser<L> {
+impl Parser {
     /// The index of the current token: the next one that is not a doc comment.
     /// Doc comments are read only where a declaration may begin (see
     /// `doc_comment`); everywhere else the parser looks past them.
@@ -242,7 +233,7 @@ impl<L: Grammar> Parser<L> {
     /// Adds `node`, spanning from `start`, where the token beginning it was, to
     /// the end of the last token read. A node that read nothing (its start lies
     /// past what was read) is an empty span at the read position.
-    pub fn add<T: Node<Container = Tree<L>>>(&mut self, start: u32, node: T) -> Id<T> {
+    pub fn add<T: Node<Container = Tree>>(&mut self, start: u32, node: T) -> Id<T> {
         let span = Span::new(start.min(self.last_end) as usize, self.last_end as usize);
         self.tree.add(node, span)
     }
@@ -382,7 +373,7 @@ impl<L: Grammar> Parser<L> {
                     self.recovering = false;
                     return;
                 }
-                kind if depth == 0 && starts_statement::<L>(kind) => return,
+                kind if depth == 0 && starts_statement(self, kind) => return,
                 _ => {}
             }
             self.next();
@@ -403,7 +394,7 @@ impl<L: Grammar> Parser<L> {
         &mut self,
         close: TokenKind,
         in_declaration: bool,
-        starts_item: fn(TokenKind) -> bool,
+        starts_item: fn(&Parser, TokenKind) -> bool,
         mut item: impl FnMut(&mut Self) -> Id<T>,
     ) -> List<T> {
         let mark = self.list_items.len();
@@ -413,7 +404,7 @@ impl<L: Grammar> Parser<L> {
             while self.at(TokenKind::Comma) {
                 self.next();
             }
-            if !starts_item(self.tok().kind) {
+            if !starts_item(self, self.tok().kind) {
                 break; // neither the close nor the end of file starts an item
             }
             let id = item(self);
@@ -437,7 +428,7 @@ impl<L: Grammar> Parser<L> {
             }
             // `>` is no bracket the closer scan follows; in `<T U>` the next name
             // can only be another item.
-            if starts_item(t.kind)
+            if starts_item(self, t.kind)
                 && (close == TokenKind::Greater || self.tokens[self.closer_ahead()].kind == close)
             {
                 missing.push(self.fix(self.here(), ","));
@@ -476,7 +467,7 @@ impl<L: Grammar> Parser<L> {
         open: TokenKind,
         close: TokenKind,
         in_declaration: bool,
-        starts_item: fn(TokenKind) -> bool,
+        starts_item: fn(&Parser, TokenKind) -> bool,
         item: impl FnMut(&mut Self) -> Id<T>,
     ) -> List<T> {
         let Some(open) = self.expect(open) else {
@@ -552,7 +543,7 @@ impl<L: Grammar> Parser<L> {
         let next_starts = matches!(
             t.kind,
             TokenKind::RightBrace | TokenKind::Eof | TokenKind::Ident
-        ) || starts_statement::<L>(t.kind);
+        ) || starts_statement(self, t.kind);
         if next_line && next_starts {
             let d = self.missing(TokenKind::Semicolon);
             self.repair(d);
@@ -566,8 +557,8 @@ impl<L: Grammar> Parser<L> {
 
 /// Whether `kind` begins a statement or declaration wherever it appears, so
 /// parsing is in step again there.
-fn starts_statement<L: Grammar>(kind: TokenKind) -> bool {
-    stmt::is_statement_keyword::<L>(kind) || decl::starts_declaration::<L>(kind)
+fn starts_statement(p: &Parser, kind: TokenKind) -> bool {
+    stmt::is_statement_keyword(p, kind) || decl::starts_declaration(p, kind)
 }
 
 pub fn is_name(kind: TokenKind) -> bool {

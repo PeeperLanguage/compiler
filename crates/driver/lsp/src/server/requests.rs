@@ -1,7 +1,6 @@
 //! Answering the editor's requests: hover, go to definition and code
 //! actions.
 
-use features::Peeper;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -143,7 +142,7 @@ impl Server<'_> {
     pub(crate) fn modules_of<'a>(
         &'a self,
         file: &Path,
-    ) -> impl Iterator<Item = (&'a Checked, &'a model::program::Module<Peeper>)> {
+    ) -> impl Iterator<Item = (&'a Checked, &'a model::program::Module)> {
         let open = self.open_files.get(file);
         let mut programs: Vec<(&PathBuf, &Checked)> = self.checked.iter().collect();
         programs.sort_unstable_by_key(|&(entry, _)| entry);
@@ -163,7 +162,7 @@ impl Server<'_> {
     pub(crate) fn name_at(
         &self,
         place: &TextDocumentPositionParams,
-    ) -> Option<(&Checked, &model::program::Module<Peeper>, CachedFact)> {
+    ) -> Option<(&Checked, &model::program::Module, CachedFact)> {
         let file = file_path(&place.text_document.uri)?;
         let holds: [fn(Span, u32) -> bool; 2] = [
             |span, offset| span.start <= offset && offset < span.end,
@@ -252,7 +251,7 @@ impl Server<'_> {
 /// and what hover shows for it. A built-in name has no declaration.
 fn declaration_of<'a>(
     checked: &'a Checked,
-    module: &'a model::program::Module<Peeper>,
+    module: &'a model::program::Module,
     fact: CachedFact,
 ) -> Option<(&'a Arc<SourceFile>, Span, String)> {
     let CachedFact { span, kind } = fact;

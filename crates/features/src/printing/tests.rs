@@ -3,7 +3,6 @@
 
 use syntax::ast;
 
-use super::*;
 use crate::testing::messages;
 use crate::testing::parse_text;
 
@@ -15,7 +14,7 @@ fn parses_prints() {
     assert!(errors.is_empty(), "{errors:?}");
     let prints: Vec<(bool, usize)> = (tree.exprs.ids())
         .filter_map(|id| match tree.exprs[id] {
-            ast::Expr::Feature(FeatureExpr::Print(Print { newline, values })) => {
+            ast::Expr::Feature(ast::FeatureExpr::Print(ast::Print { newline, values })) => {
                 Some((newline, values.len()))
             }
             _ => None,

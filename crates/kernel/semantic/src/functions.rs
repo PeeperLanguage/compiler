@@ -13,7 +13,6 @@ use model::semantic_types;
 use source::Span;
 use syntax::ast;
 
-use crate::Checked;
 use crate::Checker;
 use crate::generics;
 use crate::scope;
@@ -76,7 +75,7 @@ impl FunctionKind {
     };
 }
 
-impl<L: Checked> Checker<'_, L> {
+impl Checker<'_> {
     /// The type of the module's function or method `definition`.
     pub(crate) fn check_function(&mut self, definition: DefId) -> semantic_types::TypeId {
         let tree = &self.module().ast;
@@ -203,7 +202,7 @@ impl<L: Checked> Checker<'_, L> {
     pub fn signature_type(
         &mut self,
         name: ast::Ident,
-        signature: ast::Signature<L>,
+        signature: ast::Signature,
         has_owner: bool,
         kind: &FunctionKind,
     ) -> semantic_types::TypeId {
@@ -324,7 +323,7 @@ impl<L: Checked> Checker<'_, L> {
     /// `None` when an error was reported.
     fn result_origins(
         &mut self,
-        signature: &ast::Signature<L>,
+        signature: &ast::Signature,
         parameters: &[semantic_types::TypeId],
         result: semantic_types::TypeId,
     ) -> Option<Box<[u32]>> {
@@ -445,7 +444,7 @@ impl<L: Checked> Checker<'_, L> {
     /// type when `c_types` (`FunctionKind::c_types`).
     fn resolve_signature_type(
         &mut self,
-        ty: Id<ast::Type<L>>,
+        ty: Id<ast::Type>,
         c_types: bool,
     ) -> semantic_types::TypeId {
         let resolved = self.resolve_value_type(ty);

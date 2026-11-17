@@ -27,14 +27,13 @@ use source::Span;
 use syntax::ast;
 use syntax::ast::Ident;
 
-use crate::Checked;
 use crate::Checker;
 use crate::Checking;
 use crate::builder::Declared;
 use crate::builder::ThirBuilder;
 use crate::scope::report_redeclared;
 
-impl<L: Checked> Checker<'_, L> {
+impl Checker<'_> {
     /// Puts in `body` the THIR of the body of the function `copy`,
     /// asked for at `used_at`, recording its facts when `records_facts`
     /// (`Checking`), with `has_errors` set when it has an error (`Body`);
@@ -107,7 +106,7 @@ impl<L: Checked> Checker<'_, L> {
     }
 }
 
-impl<'a, 'p, L: Checked> ThirBuilder<'a, 'p, L> {
+impl<'a, 'p> ThirBuilder<'a, 'p> {
     /// Declares the parameters of `signature`, of the function being
     /// checked, in `scope`: each one that is not `const` as a variable of
     /// its type in `types`, and each `const` value as a constant, the value
@@ -116,7 +115,7 @@ impl<'a, 'p, L: Checked> ThirBuilder<'a, 'p, L> {
     /// `const T: type`, is a type (`resolve_global`).
     pub(crate) fn declare_parameters(
         &mut self,
-        signature: ast::Signature<L>,
+        signature: ast::Signature,
         arguments: ConstArguments,
         types: &[TypeId],
         scope: Id<Block>,
@@ -166,7 +165,7 @@ impl<'a, 'p, L: Checked> ThirBuilder<'a, 'p, L> {
     fn check_statements(
         &mut self,
         first: Option<Id<Stmt>>,
-        statements: List<ast::Stmt<L>>,
+        statements: List<ast::Stmt>,
     ) -> List<Stmt> {
         let mut checked: Vec<NonZeroU32> = Vec::with_capacity(statements.len() + 1);
         checked.extend(first.map(NonZeroU32::from));
@@ -212,7 +211,7 @@ impl<'a, 'p, L: Checked> ThirBuilder<'a, 'p, L> {
 
     /// The THIR of `block`; the names it declares end with it. It is added
     /// before the blocks inside it.
-    fn check_block(&mut self, block: Id<ast::Block<L>>) -> Id<Block> {
+    fn check_block(&mut self, block: Id<ast::Block>) -> Id<Block> {
         let enclosing = self.open_block(block);
         self.close_block(block, enclosing, None)
     }
@@ -241,7 +240,7 @@ impl<'a, 'p, L: Checked> ThirBuilder<'a, 'p, L> {
     /// Makes `block` the current block, for names declared before its
     /// statements; gives the enclosing block and where its names start, for
     /// `close_block`.
-    fn open_block(&mut self, block: Id<ast::Block<L>>) -> (Id<Block>, usize) {
+    fn open_block(&mut self, block: Id<ast::Block>) -> (Id<Block>, usize) {
         let opened = Block {
             parent: Some(self.block),
             statements: List::EMPTY,
@@ -258,7 +257,7 @@ impl<'a, 'p, L: Checked> ThirBuilder<'a, 'p, L> {
     /// again.
     fn close_block(
         &mut self,
-        block: Id<ast::Block<L>>,
+        block: Id<ast::Block>,
         enclosing: (Id<Block>, usize),
         first: Option<Id<Stmt>>,
     ) -> Id<Block> {
@@ -367,7 +366,7 @@ impl<'a, 'p, L: Checked> ThirBuilder<'a, 'p, L> {
 
     /// The THIR of `statement`; `None` for a `const`, which only declares a
     /// name, and for a statement with an error.
-    fn check_statement(&mut self, statement: Id<ast::Stmt<L>>) -> Option<Id<Stmt>> {
+    fn check_statement(&mut self, statement: Id<ast::Stmt>) -> Option<Id<Stmt>> {
         // Blocks in blocks and long `else if` chains are a deep recursion.
         source::grow_stack(|| {
             let tree = &self.checker.module().ast;
@@ -391,7 +390,7 @@ impl<'a, 'p, L: Checked> ThirBuilder<'a, 'p, L> {
                 }
                 ast::Stmt::Return(value) => Stmt::Return(self.check_return_value(span, value)),
                 ast::Stmt::Panic(message) => self.check_panic(message)?,
-                ast::Stmt::Feature(stmt) => L::check_stmt(self, stmt, span)?,
+                ast::Stmt::Feature(stmt) => (self.checker.hooks.check_stmt)(self, stmt, span)?,
                 ast::Stmt::Expression(value) => Stmt::Expression(self.add_expr(value, None)),
                 ast::Stmt::Assign { target, value } => self.assign(target, value)?,
                 ast::Stmt::If {
@@ -501,7 +500,7 @@ impl<'a, 'p, L: Checked> ThirBuilder<'a, 'p, L> {
     }
 
     /// `panic message;`: the message is a plain string literal.
-    fn check_panic(&mut self, message: Id<ast::Expr<L>>) -> Option<Stmt> {
+    fn check_panic(&mut self, message: Id<ast::Expr>) -> Option<Stmt> {
         let tree = &self.checker.module().ast;
         let message = tree.unparenthesized(message);
         let span = tree.exprs.span(message);

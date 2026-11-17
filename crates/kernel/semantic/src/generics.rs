@@ -16,18 +16,17 @@ use model::thir;
 use source::Span;
 use syntax::ast;
 
-use crate::Checked;
 use crate::Checker;
 use crate::builder;
 
-impl<L: Checked> Checker<'_, L> {
+impl Checker<'_> {
     /// The value type the argument `argument` is read as where a parameter
     /// takes a type: a type the parser read (`ast::Expr::Type`), or a value
     /// spelled like a type, a name, a path, `&x`, `&mut x` or `range[x]`.
     /// Anything else is reported as not a type.
     pub(crate) fn resolve_type_argument(
         &mut self,
-        argument: Id<ast::Expr<L>>,
+        argument: Id<ast::Expr>,
     ) -> semantic_types::TypeId {
         let resolved = self.expression_type(argument);
         let span = self.module().ast.exprs.span(argument);
@@ -49,13 +48,13 @@ impl<L: Checked> Checker<'_, L> {
     }
 }
 
-impl<L: Checked> builder::ThirBuilder<'_, '_, L> {
+impl builder::ThirBuilder<'_, '_> {
     /// The type `argument`, written in the body for a type (a `const T:
     /// type` argument, a constraint's subject), names. A local of its name
     /// is a value, reported; a type of its name elsewhere is still the type.
     pub(crate) fn written_type_argument(
         &mut self,
-        argument: Id<ast::Expr<L>>,
+        argument: Id<ast::Expr>,
     ) -> semantic_types::TypeId {
         let tree = &self.checker.module().ast;
         let written = tree.exprs.span(argument);
@@ -88,8 +87,8 @@ impl<L: Checked> builder::ThirBuilder<'_, '_, L> {
     pub(crate) fn copy_called(
         &mut self,
         definition: DefId,
-        type_arguments: List<ast::Type<L>>,
-        arguments: &[Id<ast::Expr<L>>],
+        type_arguments: List<ast::Type>,
+        arguments: &[Id<ast::Expr>],
         first: usize,
         const_places: &mut Vec<usize>,
         checked_early: &mut Vec<Option<thir::Expr>>,
@@ -100,7 +99,7 @@ impl<L: Checked> builder::ThirBuilder<'_, '_, L> {
         let declared = model::program::function_declaration(modules, definition);
         let parameters = tree.children.lists.items(declared.signature.parameters);
         // The parameters past the receiver, each with its written argument's place.
-        let written_parameters: Vec<(usize, ast::Param<L>)> = (parameters.skip(first))
+        let written_parameters: Vec<(usize, ast::Param)> = (parameters.skip(first))
             .map(|parameter| tree.children.params[parameter])
             .enumerate()
             .collect();
@@ -132,7 +131,7 @@ impl<L: Checked> builder::ThirBuilder<'_, '_, L> {
             .map(|parameter| tree.file.slice(tree.children.names.span(parameter)))
             .collect();
         let calling = &self.checker.module().ast;
-        let written_types: Vec<Id<ast::Type<L>>> =
+        let written_types: Vec<Id<ast::Type>> =
             calling.children.lists.items(type_arguments).collect();
         let function = model::program::declared_path(modules, definition);
         let mut failed = false;
@@ -249,10 +248,7 @@ impl<L: Checked> builder::ThirBuilder<'_, '_, L> {
 /// Where the first parameter of `signature`, in `tree`, that a copy is
 /// made for is written, if it has one: a type parameter, `<T>`, or a
 /// `const` parameter.
-pub fn first_copy_parameter<L: ast::Language>(
-    tree: &ast::Tree<L>,
-    signature: ast::Signature<L>,
-) -> Option<Span> {
+pub fn first_copy_parameter(tree: &ast::Tree, signature: ast::Signature) -> Option<Span> {
     if let Some(parameter) = tree.children.lists.items(signature.type_parameters).next() {
         return Some(tree.children.names.span(parameter));
     }
@@ -266,10 +262,7 @@ pub fn first_copy_parameter<L: ast::Language>(
 /// element of a slice, a `...`, an array or a range. `None` for a name and
 /// for a type not looked into: a path names another module's type, and a
 /// type the checker refuses (`resolve_type`), such as `?T`, is reported.
-fn written_inside<L: ast::Language>(
-    tree: &ast::Tree<L>,
-    ty: Id<ast::Type<L>>,
-) -> Option<Id<ast::Type<L>>> {
+fn written_inside(tree: &ast::Tree, ty: Id<ast::Type>) -> Option<Id<ast::Type>> {
     match tree.types[ty] {
         ast::Type::Bracketed { inner: written, .. }
         | ast::Type::Reference {
@@ -285,7 +278,7 @@ fn written_inside<L: ast::Language>(
         // array's element are looked into; a struct's fields and an
         // interface's methods are taken to name no type parameter, as a
         // written one is not supported yet.
-        ast::Type::Feature(ty) => L::pointee(&ty).or_else(|| L::element(&ty)),
+        ast::Type::Feature(ty) => ty.pointee().or_else(|| ty.element()),
         ast::Type::Name
         | ast::Type::Path(_)
         | ast::Type::Generic { .. }
@@ -303,10 +296,10 @@ fn written_inside<L: ast::Language>(
 /// around the name (`written_inside`) takes the argument's type one step
 /// in; an argument of another shape finds another type, or none, and the
 /// call reports the mismatch.
-pub(crate) fn find_type_argument<L: ast::Language>(
-    tree: &ast::Tree<L>,
+pub(crate) fn find_type_argument(
+    tree: &ast::Tree,
     types: &semantic_types::Types,
-    written: Id<ast::Type<L>>,
+    written: Id<ast::Type>,
     ty: semantic_types::TypeId,
     names: &[&str],
     found: &mut [Option<semantic_types::TypeId>],
@@ -349,9 +342,9 @@ pub(crate) fn find_type_argument<L: ast::Language>(
 /// Whether the type written `ty` in `tree` names one of `parameters`, the
 /// names of a function's type parameters, `<T>` or `const T: type`, which
 /// only its copies know.
-pub(crate) fn names_type_parameter<L: ast::Language>(
-    tree: &ast::Tree<L>,
-    ty: Id<ast::Type<L>>,
+pub(crate) fn names_type_parameter(
+    tree: &ast::Tree,
+    ty: Id<ast::Type>,
     parameters: &[&str],
 ) -> bool {
     let mut ty = ty;

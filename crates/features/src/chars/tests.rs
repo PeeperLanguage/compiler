@@ -2,7 +2,6 @@
 
 use syntax::ast;
 
-use super::*;
 use crate::testing::bodies;
 use crate::testing::parse_text;
 
@@ -13,7 +12,7 @@ fn parses_literals() {
     assert!(errors.is_empty(), "{errors:?}");
     let literals: Vec<(bool, &str)> = (tree.exprs.ids())
         .filter_map(|id| match tree.exprs[id] {
-            ast::Expr::Feature(FeatureExpr::Char(CharLiteral { byte })) => {
+            ast::Expr::Feature(ast::FeatureExpr::Char(ast::CharLiteral { byte })) => {
                 Some((byte, tree.file.slice(tree.exprs.span(id))))
             }
             _ => None,

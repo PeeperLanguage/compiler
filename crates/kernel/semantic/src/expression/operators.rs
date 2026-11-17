@@ -16,11 +16,10 @@ use syntax::ast;
 use syntax::operators::BinaryOp;
 use syntax::operators::UnaryOp;
 
-use crate::Checked;
 use crate::builder::ThirBuilder;
 use crate::expression::unsuffixed_literal;
 
-impl<L: Checked> ThirBuilder<'_, '_, L> {
+impl ThirBuilder<'_, '_> {
     /// The number literal at `number`, or its negation written at `negated`
     /// (`-128`, which fits `i8` where `128` does not). It takes its suffix's
     /// type, else the type `expected` if it can (`takes_type`), else `i32` or
@@ -92,7 +91,7 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
     pub(super) fn check_unary(
         &mut self,
         op: UnaryOp,
-        operand: Id<ast::Expr<L>>,
+        operand: Id<ast::Expr>,
         span: Span,
         expected: Option<TypeId>,
     ) -> Expr {
@@ -141,8 +140,8 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
     pub(super) fn check_binary(
         &mut self,
         op: BinaryOp,
-        left_operand: Id<ast::Expr<L>>,
-        right_operand: Id<ast::Expr<L>>,
+        left_operand: Id<ast::Expr>,
+        right_operand: Id<ast::Expr>,
         span: Span,
         expected: Option<TypeId>,
     ) -> Expr {
@@ -312,7 +311,7 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
         &mut self,
         op: &str,
         ty: TypeId,
-        operand: Id<ast::Expr<L>>,
+        operand: Id<ast::Expr>,
         span: Span,
         fits: impl Fn(&Type) -> bool,
     ) -> Expr {
@@ -339,8 +338,8 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
     /// can, so `300 as u8` is an error.
     pub(super) fn check_cast(
         &mut self,
-        value: Id<ast::Expr<L>>,
-        ty: Id<ast::Type<L>>,
+        value: Id<ast::Expr>,
+        ty: Id<ast::Type>,
         span: Span,
     ) -> Expr {
         let to = self.checker.resolve_value_type(ty);

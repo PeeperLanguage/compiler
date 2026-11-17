@@ -21,29 +21,25 @@ use crate::semantic_types::TypeId;
 use crate::semantic_types::Types;
 use syntax::ast;
 use syntax::ast::Ident;
-use syntax::ast::Language;
 use syntax::ast::Tree;
 
 /// One source file, read and parsed. Its source file is `ast.file`. What
 /// `load` read never changes; what a compile finds, its scope included, is
 /// kept by the compile (`check::Checker`).
-pub struct Module<L: Language> {
+pub struct Module {
     pub path: String, // import path, such as "myapp:utils/file" or "core:global"
-    pub ast: Tree<L>,
+    pub ast: Tree,
     pub imports: Vec<Import>, // in source order; the implicit prelude import last, in every module but the prelude
 }
 
 /// The declaration `definition` of `modules` names.
-pub fn declaration<L: Language>(modules: &[Module<L>], definition: DefId) -> &ast::Decl<L> {
+pub fn declaration(modules: &[Module], definition: DefId) -> &ast::Decl {
     let tree = &modules[definition.module.index()].ast;
     &tree.decls[tree.declaration(definition.index)]
 }
 
 /// The function `definition`, as written.
-pub fn function_declaration<L: Language>(
-    modules: &[Module<L>],
-    definition: DefId,
-) -> &ast::Function<L> {
+pub fn function_declaration(modules: &[Module], definition: DefId) -> &ast::Function {
     match declaration(modules, definition) {
         ast::Decl::Function(function) => function,
         _ => unreachable!("`{definition:?}` is a function"),
@@ -51,7 +47,7 @@ pub fn function_declaration<L: Language>(
 }
 
 /// The text of the name the declaration `definition` of `modules` declares.
-pub fn declared_text<L: Language>(modules: &[Module<L>], definition: DefId) -> &str {
+pub fn declared_text(modules: &[Module], definition: DefId) -> &str {
     let (name, file) = declared_name(modules, definition);
     name.text(file)
 }
@@ -63,7 +59,7 @@ pub fn is_exported(name: &str) -> bool {
 
 /// The name of the declaration `definition` of `modules` as a program calls
 /// it: its own name, or `Owner::name` for a function of the type `Owner`.
-pub fn declared_path<L: Language>(modules: &[Module<L>], definition: DefId) -> String {
+pub fn declared_path(modules: &[Module], definition: DefId) -> String {
     let name = declared_text(modules, definition);
     match declaration(modules, definition) {
         ast::Decl::Function(ast::Function {
@@ -78,16 +74,13 @@ pub fn declared_path<L: Language>(modules: &[Module<L>], definition: DefId) -> S
 
 /// The type `ty` of `types` as a message names it, each declared type by the
 /// name its declaration in `modules` gives it (`Types::text`).
-pub fn type_text<L: Language>(modules: &[Module<L>], types: &Types, ty: TypeId) -> String {
+pub fn type_text(modules: &[Module], types: &Types, ty: TypeId) -> String {
     types.text(ty, |definition| declared_text(modules, definition))
 }
 
 /// The name the declaration `definition` of `modules` declares, and the file
 /// it is in.
-pub fn declared_name<L: Language>(
-    modules: &[Module<L>],
-    definition: DefId,
-) -> (Ident, &Arc<SourceFile>) {
+pub fn declared_name(modules: &[Module], definition: DefId) -> (Ident, &Arc<SourceFile>) {
     (
         declaration(modules, definition).name(),
         &modules[definition.module.index()].ast.file,
@@ -102,10 +95,7 @@ pub const EXTERN_ATTRIBUTE: &str = "extern";
 /// error is where an `extern` attribute of another shape, a second one, or
 /// one whose name no symbol can have is written, which the checker
 /// reports.
-pub fn extern_symbol<L: Language>(
-    modules: &[Module<L>],
-    definition: DefId,
-) -> Result<Option<String>, Span> {
+pub fn extern_symbol(modules: &[Module], definition: DefId) -> Result<Option<String>, Span> {
     let tree = &modules[definition.module.index()].ast;
     let ast::Decl::Function(function) = declaration(modules, definition) else {
         return Ok(None);
@@ -139,8 +129,8 @@ pub fn extern_symbol<L: Language>(
 /// What a copy of the declaration `definition` of `modules` is made for, as
 /// `copy_parameters` says: a function's from its signature, a type's its
 /// `<T>`, as in `struct Box<T>`; none for any other declaration.
-pub fn declaration_copy_parameters<L: Language>(
-    modules: &[Module<L>],
+pub fn declaration_copy_parameters(
+    modules: &[Module],
     definition: DefId,
 ) -> impl Iterator<Item = Option<Span>> {
     let tree = &modules[definition.module.index()].ast;
@@ -160,9 +150,9 @@ pub fn declaration_copy_parameters<L: Language>(
 /// the order its `ConstArguments` hold them: each type parameter, `<T>`,
 /// then each `const` parameter. `Some` is where one that stands for a type
 /// is named, `<T>` or `const T: type`; `None` is a `const` value.
-pub fn copy_parameters<L: Language>(
-    tree: &ast::Tree<L>,
-    signature: ast::Signature<L>,
+pub fn copy_parameters(
+    tree: &ast::Tree,
+    signature: ast::Signature,
 ) -> impl Iterator<Item = Option<Span>> {
     let type_parameters = (tree.children.lists.items(signature.type_parameters))
         .map(|parameter| Some(tree.children.names.span(parameter)));
@@ -182,7 +172,7 @@ pub const BUILTIN_ATTRIBUTE: &str = "builtin";
 /// Whether the declaration `definition` of `modules` is a function with a
 /// `#[builtin]`: it has no body, and a call of it is a constant the checker
 /// works out from the type it is given.
-pub fn is_builtin<L: Language>(modules: &[Module<L>], definition: DefId) -> bool {
+pub fn is_builtin(modules: &[Module], definition: DefId) -> bool {
     let tree = &modules[definition.module.index()].ast;
     let ast::Decl::Function(function) = declaration(modules, definition) else {
         return false;
@@ -194,19 +184,19 @@ pub fn is_builtin<L: Language>(modules: &[Module<L>], definition: DefId) -> bool
 
 /// Whether the function `definition` of `modules` is a C function: it has
 /// an `extern`, well formed or not, so the checker gives it C's rules.
-pub fn is_extern<L: Language>(modules: &[Module<L>], definition: DefId) -> bool {
+pub fn is_extern(modules: &[Module], definition: DefId) -> bool {
     extern_symbol(modules, definition) != Ok(None)
 }
 
 /// The C name of the function `definition` of a program the checker
 /// accepted, if it is a C function (`extern_symbol`).
-pub fn c_symbol<L: Language>(modules: &[Module<L>], definition: DefId) -> Option<String> {
+pub fn c_symbol(modules: &[Module], definition: DefId) -> Option<String> {
     extern_symbol(modules, definition).expect("the checker reported a malformed `extern`")
 }
 
 /// The name the linker knows the function `definition` by: its `#[extern]`
 /// name, else its module's path and its name (`myapp:util.Parse`).
-pub fn symbol<L: Language>(modules: &[Module<L>], definition: DefId) -> String {
+pub fn symbol(modules: &[Module], definition: DefId) -> String {
     c_symbol(modules, definition).unwrap_or_else(|| {
         let path = &modules[definition.module.index()].path;
         let name = declared_path(modules, definition);
@@ -219,11 +209,7 @@ pub fn symbol<L: Language>(modules: &[Module<L>], definition: DefId) -> String {
 /// (`myapp:main.New<myapp:main.Node>`), so two modules' types of one name
 /// make two names, and each float value by its bits, as two NaNs print
 /// alike.
-pub fn copy_symbol<L: Language>(
-    modules: &[Module<L>],
-    types: &Types,
-    copy: DeclarationCopy,
-) -> String {
+pub fn copy_symbol(modules: &[Module], types: &Types, copy: DeclarationCopy) -> String {
     let qualified = |definition: DefId| {
         let path = &modules[definition.module.index()].path;
         format!("{path}.{}", declared_text(modules, definition))
@@ -247,11 +233,7 @@ pub fn copy_symbol<L: Language>(
 /// The copy `copy` as a program names it: its declared path, with its
 /// `const` arguments as Peeper text (`Stack.New<Node>`); what messages,
 /// dumps and a debugger show.
-pub fn copy_name<L: Language>(
-    modules: &[Module<L>],
-    types: &Types,
-    copy: DeclarationCopy,
-) -> String {
+pub fn copy_name(modules: &[Module], types: &Types, copy: DeclarationCopy) -> String {
     let declared = declared_path(modules, copy.definition);
     types.copy_text(declared, copy.arguments, |definition| {
         declared_text(modules, definition)
@@ -260,16 +242,13 @@ pub fn copy_name<L: Language>(
 
 /// The names of the fields of the struct declaration `definition` of
 /// `modules`, in order.
-pub fn field_names<L: Language>(
-    modules: &[Module<L>],
-    definition: DefId,
-) -> impl Iterator<Item = &str> {
+pub fn field_names(modules: &[Module], definition: DefId) -> impl Iterator<Item = &str> {
     let tree = &modules[definition.module.index()].ast;
     let &ast::Decl::Type(written) = declaration(modules, definition) else {
         unreachable!("`{definition:?}` is a type declaration")
     };
     let fields = match tree.types[written.ty] {
-        ast::Type::Feature(ty) => L::fields(&ty),
+        ast::Type::Feature(ty) => ty.fields(),
         _ => None,
     };
     let fields = fields.unwrap_or_else(|| unreachable!("`{definition:?}` declares a struct"));
@@ -279,10 +258,10 @@ pub fn field_names<L: Language>(
 
 /// The method declarations of the interface `definition`, in order; `None`
 /// when it declares something else. The parser puts only functions in one.
-pub fn interface_methods<L: Language>(
-    modules: &[Module<L>],
+pub fn interface_methods(
+    modules: &[Module],
     definition: DefId,
-) -> Option<impl ExactSizeIterator<Item = &ast::Function<L>>> {
+) -> Option<impl ExactSizeIterator<Item = &ast::Function>> {
     let tree = &modules[definition.module.index()].ast;
     let &ast::Decl::Type(written) = declaration(modules, definition) else {
         return None;
@@ -290,7 +269,7 @@ pub fn interface_methods<L: Language>(
     let ast::Type::Feature(ty) = tree.types[written.ty] else {
         return None;
     };
-    let methods = L::methods(&ty)?;
+    let methods = ty.methods()?;
     Some(
         tree.children
             .lists
@@ -319,7 +298,7 @@ pub enum ImportKind {
 
 impl ImportKind {
     /// The import as written in `importer`; `None` for the prelude's.
-    pub fn declaration<L: Language>(self, importer: &Tree<L>) -> Option<&ast::Import> {
+    pub fn declaration(self, importer: &Tree) -> Option<&ast::Import> {
         match self {
             ImportKind::Declared(index) => Some(&importer.imports[index as usize]),
             ImportKind::Prelude => None,
@@ -332,11 +311,7 @@ impl Import {
     /// its alias, else the last segment of the imported module's path (in
     /// `modules`), at the import. `None` for the prelude, whose names are
     /// looked up, not brought in.
-    pub fn name<'a, L: Language>(
-        &self,
-        importer: &'a Module<L>,
-        modules: &'a [Module<L>],
-    ) -> Option<(&'a str, Span)> {
+    pub fn name<'a>(&self, importer: &'a Module, modules: &'a [Module]) -> Option<(&'a str, Span)> {
         let declaration = self.kind.declaration(&importer.ast)?;
         let name = match declaration.alias {
             Some(alias) => alias.text(&importer.ast.file),
@@ -353,10 +328,10 @@ pub fn default_alias(path: &str) -> &str {
 }
 
 /// Every module reachable from an entry file.
-pub struct Program<L: Language> {
+pub struct Program {
     /// Each module after the modules it imports; outside cycles, the same
     /// order every run.
-    pub modules: Vec<Module<L>>,
+    pub modules: Vec<Module>,
     /// What loading found: import cycles first, then each module's errors,
     /// in the program's order. One list for the whole program, because every
     /// load reads every module again; what a compile finds is kept per
@@ -377,9 +352,9 @@ pub struct Program<L: Language> {
     pub entry: Option<ModuleId>,
 }
 
-impl<L: Language> Program<L> {
+impl Program {
     /// The module read from `file`.
-    pub fn module_of(&self, file: &Path) -> Option<&Module<L>> {
+    pub fn module_of(&self, file: &Path) -> Option<&Module> {
         self.modules
             .iter()
             .find(|module| Path::new(&module.ast.file.path) == file)

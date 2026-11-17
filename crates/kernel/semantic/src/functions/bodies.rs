@@ -13,7 +13,6 @@ use model::thir;
 use rustc_hash::FxHashSet;
 use source::Span;
 
-use crate::Checked;
 use crate::Checker;
 
 /// How far the body of a function is built (`Checker::build_function`),
@@ -26,7 +25,7 @@ pub(crate) enum Built {
     Kept(Option<Box<mir::Body>>),
 }
 
-impl<L: Checked> Checker<'_, L> {
+impl Checker<'_> {
     /// Builds the body of the function `copy`, asked for at `used_at`, into
     /// `thir`, recording its facts when `records_facts` (not when it is
     /// built only to run at compile time, `evaluate_call`): checks it

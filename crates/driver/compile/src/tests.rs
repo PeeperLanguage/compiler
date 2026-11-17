@@ -8,7 +8,6 @@ use super::Output;
 use super::Results;
 use super::run;
 use diagnostics::Diagnostic;
-use features::Peeper;
 use model::machine::Machine;
 
 /// The machine the tests check for, but where they test another.
@@ -19,7 +18,7 @@ fn x86_64() -> &'static Machine {
 /// The program of `modules`, each an import path and its text, loaded as
 /// `peeper check` loads it from `app:main`, with every file given as open
 /// editor text so nothing is read from disk. Loading must find no error.
-fn load(modules: &[(&str, &str)]) -> model::program::Program<Peeper> {
+fn load(modules: &[(&str, &str)]) -> model::program::Program {
     let folder = |package: &str| match package {
         "core" => PathBuf::from("/peeper-build-test/libs/core/src"),
         _ => PathBuf::from("/peeper-build-test/src"),
@@ -44,7 +43,7 @@ fn load(modules: &[(&str, &str)]) -> model::program::Program<Peeper> {
         root: PathBuf::from("/peeper-build-test"),
         name: "app".to_string(),
     };
-    let program = project::load(&project, &open_files);
+    let program = project::load(&project, &open_files, &features::RULES);
     let reported: Vec<&str> = program
         .diagnostics
         .iter()
@@ -810,7 +809,7 @@ fn messages(results: &Results) -> Vec<String> {
 
 /// The messages of a first compile of `program` for the machine named
 /// `target`.
-fn messages_on(program: &model::program::Program<Peeper>, target: &str) -> Vec<String> {
+fn messages_on(program: &model::program::Program, target: &str) -> Vec<String> {
     let target = Machine::named(target).unwrap();
     let found = run(
         program,

@@ -4,10 +4,9 @@ use model::semantic_types;
 use model::thir;
 use source::Span;
 
-use crate::Checked;
 use crate::builder;
 
-impl<L: Checked> builder::ThirBuilder<'_, '_, L> {
+impl builder::ThirBuilder<'_, '_> {
     /// The name or path written at `span`, which stands for `symbol`, as a
     /// value. `None` when finding the symbol reported an error.
     pub(super) fn check_symbol_value(

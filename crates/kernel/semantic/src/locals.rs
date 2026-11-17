@@ -9,19 +9,18 @@ use model::thir;
 use source::Span;
 use syntax::ast;
 
-use crate::Checked;
 use crate::builder;
 use crate::functions;
 
-impl<L: Checked> builder::ThirBuilder<'_, '_, L> {
+impl builder::ThirBuilder<'_, '_> {
     /// `let mut name: ty = value;`. The variable is declared after its value is
     /// checked, so the value cannot use it.
     pub(super) fn check_let_statement(
         &mut self,
         mutable: bool,
         name: ast::Ident,
-        ty: Option<Id<ast::Type<L>>>,
-        value: Option<Id<ast::Expr<L>>>,
+        ty: Option<Id<ast::Type>>,
+        value: Option<Id<ast::Expr>>,
     ) -> thir::Stmt {
         let declared = ty.map(|ty| self.checker.resolve_value_type(ty));
         let initialized = value.is_some();
@@ -97,7 +96,7 @@ impl<L: Checked> builder::ThirBuilder<'_, '_, L> {
     /// value, or `None` after an error.
     pub(crate) fn check_const_statement(
         &mut self,
-        declaration: Id<ast::Decl<L>>,
+        declaration: Id<ast::Decl>,
     ) -> Option<semantic_types::Constant> {
         let ast::Decl::Const {
             name, ty, value, ..
@@ -122,7 +121,7 @@ impl<L: Checked> builder::ThirBuilder<'_, '_, L> {
     /// it is known only when the program runs, reported.
     pub(crate) fn check_constant_value(
         &mut self,
-        value: Id<ast::Expr<L>>,
+        value: Id<ast::Expr>,
         declared: Option<semantic_types::TypeId>,
     ) -> Option<semantic_types::Constant> {
         let span = self.checker.module().ast.exprs.span(value);

@@ -4,7 +4,6 @@
 use arena::Id;
 use syntax::ast;
 
-use super::*;
 use crate::testing::Tree;
 use crate::testing::bodies;
 use crate::testing::messages;
@@ -14,9 +13,9 @@ use crate::testing::with_checker;
 /// The messages of the errors in `text`.
 /// The written type `ty` with `[N]` for each array, `&[]` for each slice
 /// and the innermost type's text.
-fn shape(tree: &Tree, ty: Id<ast::Type<Peeper>>) -> String {
+fn shape(tree: &Tree, ty: Id<ast::Type>) -> String {
     match tree.types[ty] {
-        ast::Type::Feature(FeatureType::Array(ArrayType { length, element })) => {
+        ast::Type::Feature(ast::FeatureType::Array(ast::ArrayType { length, element })) => {
             format!("[{}]{}", tree.file.slice(length), shape(tree, element))
         }
         ast::Type::Slice { element, .. } => format!("&[]{}", shape(tree, element)),
@@ -48,10 +47,15 @@ fn parses_types_and_literals() {
     for id in tree.exprs.ids() {
         match tree.exprs[id] {
             ast::Expr::Type(ty) => literals.push(format!("type {}", shape(&tree, ty))),
-            ast::Expr::Feature(FeatureExpr::ArrayLiteral(ArrayLiteral { ty, entries })) => {
+            ast::Expr::Feature(ast::FeatureExpr::ArrayLiteral(ast::ArrayLiteral {
+                ty,
+                entries,
+            })) => {
                 let ty = match ty {
-                    LiteralType::Written(ty) => shape(&tree, ty),
-                    LiteralType::Counted { element } => format!("[_]{}", shape(&tree, element)),
+                    ast::ArrayLiteralType::Written(ty) => shape(&tree, ty),
+                    ast::ArrayLiteralType::Counted { element } => {
+                        format!("[_]{}", shape(&tree, element))
+                    }
                 };
                 let entries: Vec<&str> = (tree.children.lists.items(entries))
                     .map(|entry| match tree.exprs[entry] {

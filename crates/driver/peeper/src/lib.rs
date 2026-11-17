@@ -2,7 +2,6 @@
 //! loading and linking. It is here, not in the command, so the compile
 //! benchmark times the work a build does.
 
-use features::Peeper;
 use llvm::BuildMode;
 use model::DeclarationCopy;
 use model::machine::Machine;
@@ -19,7 +18,7 @@ use model::thir;
 /// written. Gives the modules, which leave out each function with an error,
 /// and what the compile found.
 pub fn write_program<'p>(
-    program: &'p Program<Peeper>,
+    program: &'p Program,
     target: &'static Machine,
     mode: BuildMode,
     require_main: bool,

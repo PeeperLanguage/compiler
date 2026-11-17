@@ -1,58 +1,11 @@
-use std::convert::Infallible;
-
-use syntax::ast::Decl;
-use syntax::ast::Field;
-use syntax::ast::Type;
-use syntax::ast::WrittenRange;
-use syntax::operators::Precedence;
-
 use super::*;
 
-/// The language the parser's tests are written in: the core, with no
-/// feature, since the `features` crate depends on this one.
-#[derive(Clone, Copy, Debug)]
-pub(crate) enum Bare {}
+/// The core's rules alone: the parser's tests read no feature, since the
+/// `features` crate depends on this one.
+static RULES: Rules = Rules::core();
 
-impl Language for Bare {
-    type Expr = Infallible;
-    type Type = Infallible;
-    type Stmt = Infallible;
-
-    fn precedence(expr: &Infallible) -> Precedence {
-        match *expr {}
-    }
-
-    fn fields(ty: &Infallible) -> Option<List<Field<Bare>>> {
-        match *ty {}
-    }
-
-    fn methods(ty: &Infallible) -> Option<List<Decl<Bare>>> {
-        match *ty {}
-    }
-
-    fn pointee(ty: &Infallible) -> Option<Id<Type<Bare>>> {
-        match *ty {}
-    }
-
-    fn element(ty: &Infallible) -> Option<Id<Type<Bare>>> {
-        match *ty {}
-    }
-
-    fn written_range(expr: &Infallible) -> Option<WrittenRange<Bare>> {
-        match *expr {}
-    }
-}
-
-static RULES: Rules<Bare> = Rules::core();
-
-impl Grammar for Bare {
-    fn rules() -> &'static Rules<Bare> {
-        &RULES
-    }
-}
-
-pub(crate) fn parse_text(text: &str) -> (Tree<Bare>, Vec<Diagnostic>) {
-    parse(&Arc::new(SourceFile::new("t.peep", text)))
+pub(crate) fn parse_text(text: &str) -> (Tree, Vec<Diagnostic>) {
+    parse(&Arc::new(SourceFile::new("t.peep", text)), &RULES)
 }
 
 /// The tree of `text` in the dump format.

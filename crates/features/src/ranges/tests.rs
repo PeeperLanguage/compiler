@@ -5,24 +5,23 @@ use arena::Id;
 use syntax::ast;
 use syntax::ast::WrittenRange;
 
-use super::*;
 use crate::testing::Tree;
 use crate::testing::bodies;
 use crate::testing::parse_text;
 
 /// The expression `id` with each range and binary operation in
 /// parentheses, and the rest as written.
-fn grouped(tree: &Tree, id: Id<ast::Expr<Peeper>>) -> String {
+fn grouped(tree: &Tree, id: Id<ast::Expr>) -> String {
     let text = |span| tree.file.slice(span).to_string();
     match tree.exprs[id] {
-        ast::Expr::Feature(FeatureExpr::Range(Range { written })) => {
+        ast::Expr::Feature(ast::FeatureExpr::Range(ast::Range { written })) => {
             let WrittenRange {
                 inclusive,
                 start,
                 end,
                 step,
             } = written;
-            let part = |part: Option<Id<ast::Expr<Peeper>>>| {
+            let part = |part: Option<Id<ast::Expr>>| {
                 part.map_or(String::new(), |part| grouped(tree, part))
             };
             let op = if inclusive { "..=" } else { ".." };

@@ -4,12 +4,11 @@
 use arena::Id;
 use syntax::ast;
 
-use super::*;
 use crate::testing::Tree;
 use crate::testing::parse_text;
 
 /// The written type `ty` in short: `&self`, `&mut self`, or its text.
-fn written_type(tree: &Tree, ty: Id<ast::Type<Peeper>>) -> String {
+fn written_type(tree: &Tree, ty: Id<ast::Type>) -> String {
     match tree.types[ty] {
         ast::Type::Reference { mutable, target }
             if matches!(tree.types[target], ast::Type::Owner) =>
@@ -21,8 +20,9 @@ fn written_type(tree: &Tree, ty: Id<ast::Type<Peeper>>) -> String {
 }
 
 /// Each method of the interface type `ty` as `name<T>(name: type, ...) -> result`.
-fn methods(tree: &Tree, ty: Id<ast::Type<Peeper>>) -> Vec<String> {
-    let ast::Type::Feature(FeatureType::Interface(InterfaceType { methods })) = tree.types[ty]
+fn methods(tree: &Tree, ty: Id<ast::Type>) -> Vec<String> {
+    let ast::Type::Feature(ast::FeatureType::Interface(ast::InterfaceType { methods })) =
+        tree.types[ty]
     else {
         panic!("not an interface type: {:?}", tree.types[ty])
     };

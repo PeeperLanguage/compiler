@@ -15,12 +15,11 @@ use model::thir;
 use source::Span;
 use syntax::ast;
 
-use crate::Checked;
 use crate::builder;
 use crate::generics;
 use crate::scope;
 
-impl<L: Checked> builder::ThirBuilder<'_, '_, L> {
+impl builder::ThirBuilder<'_, '_> {
     /// `callee(arguments)`, written at `span`; a pipe gives its value as the
     /// first of `arguments`. Only a module's function, by
     /// its name or its path, can be called, or with a dot, `x.name(arguments)`,
@@ -31,9 +30,9 @@ impl<L: Checked> builder::ThirBuilder<'_, '_, L> {
     /// (`copy_called`).
     pub fn check_call(
         &mut self,
-        callee: Id<ast::Expr<L>>,
-        type_arguments: List<ast::Type<L>>,
-        arguments: &[Id<ast::Expr<L>>],
+        callee: Id<ast::Expr>,
+        type_arguments: List<ast::Type>,
+        arguments: &[Id<ast::Expr>],
         span: Span,
     ) -> thir::Expr {
         let tree = &self.checker.module().ast;
@@ -92,8 +91,8 @@ impl<L: Checked> builder::ThirBuilder<'_, '_, L> {
         found: Option<(Callee, semantic_types::TypeId)>,
         receiver: Option<Id<thir::Expr>>,
         callee_span: Span,
-        type_arguments: List<ast::Type<L>>,
-        arguments: &[Id<ast::Expr<L>>],
+        type_arguments: List<ast::Type>,
+        arguments: &[Id<ast::Expr>],
         span: Span,
     ) -> thir::Expr {
         let tree = &self.checker.module().ast;
@@ -150,7 +149,7 @@ impl<L: Checked> builder::ThirBuilder<'_, '_, L> {
             }
             found => found,
         };
-        let not_const = |&(place, _): &(usize, Id<ast::Expr<L>>)| !const_places.contains(&place);
+        let not_const = |&(place, _): &(usize, Id<ast::Expr>)| !const_places.contains(&place);
         let signature = found.map(|(callee, ty)| (callee, ty, self.checker.types[ty].clone()));
         let Some((
             callee,
@@ -164,7 +163,7 @@ impl<L: Checked> builder::ThirBuilder<'_, '_, L> {
         )) = signature
         else {
             let written = arguments.iter().copied().enumerate();
-            let unchecked = |&(place, _): &(usize, Id<ast::Expr<L>>)| {
+            let unchecked = |&(place, _): &(usize, Id<ast::Expr>)| {
                 checked_early.get(place).is_none_or(Option::is_none)
             };
             for (_, argument) in written.filter(not_const).filter(unchecked) {
@@ -220,7 +219,7 @@ impl<L: Checked> builder::ThirBuilder<'_, '_, L> {
             checked.push(argument.into());
         }
         if variadic {
-            let rest: Vec<Id<ast::Expr<L>>> = given.map(|(_, argument)| argument).collect();
+            let rest: Vec<Id<ast::Expr>> = given.map(|(_, argument)| argument).collect();
             let slice = self.check_variadic(&rest, parameters[first + fixed], span);
             self.reborrow_in_place(slice);
             checked.push(slice.into());
@@ -316,7 +315,7 @@ impl<L: Checked> builder::ThirBuilder<'_, '_, L> {
     /// cannot be both (`scope::collect`).
     fn method(
         &mut self,
-        value: Id<ast::Expr<L>>,
+        value: Id<ast::Expr>,
         name: ast::Ident,
         span: Span,
     ) -> Option<(Id<thir::Expr>, Callee, semantic_types::TypeId)> {

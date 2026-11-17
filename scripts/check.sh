@@ -43,17 +43,22 @@ check "middle boundary" bash -c "
     ! grep -rnE '\bsyntax::' crates/kernel/model/src/{mir,machine,constant,lib}.rs \
         crates/kernel/{eval,flow} crates/backend/llvm"
 # A phase names no feature: only its tests may use the `features` crate
-# (docs/feature-front.md section 7); Cargo refuses the cycle for the crates
-# `features` depends on, this the others. And a feature's files, nested ones
-# too, name no other feature: of its own crate, only the list's `Peeper` and
-# enums, so no module's path (`crate::structs`, `crate::{structs}`) and no
-# `super` path to another feature (`super::structs`, `super::super::structs`).
+# (docs/structure-mapping.md, step 7); Cargo refuses the cycle for the crates
+# `features` depends on, this the others. The tree lists every feature's node,
+# but only the tree's own shape answers (`ast.rs`) and the `features` crate
+# name one (`FeatureExpr::Range`): elsewhere a node is only `Feature(_)`,
+# handed to its feature. And a feature's files, nested ones too, name no
+# other feature: of their own crate, no module's path (`crate::structs`,
+# `crate::{structs}`) and no `super` path to another feature
+# (`super::structs`, `super::super::structs`).
 feature_boundary() {
     local manifest file own others
     for manifest in crates/{base,backend}/*/Cargo.toml crates/kernel/syntax/*/Cargo.toml \
         crates/kernel/{semantic,model,lower,flow,eval}/Cargo.toml crates/driver/project/Cargo.toml; do
         sed '/^\[dev-dependencies\]/,$d' "$manifest" | grep -H --label="$manifest" '^features\b' && return 1
     done
+    grep -rnE --include='*.rs' '\bFeature(Expr|Stmt|Type)::[A-Z]' crates |
+        grep -vE '^crates/(features/|kernel/syntax/tree/src/ast\.rs:)' && return 1
     for file in $(find crates/features/src -name '*.rs' ! -name lib.rs ! -name testing.rs); do
         own=${file#crates/features/src/}
         own=${own%%[./]*}

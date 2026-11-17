@@ -16,13 +16,11 @@ use source::SourceFile;
 use source::Span;
 use syntax::ast;
 
-use crate::Peeper;
-
-pub(crate) type Tree = ast::Tree<Peeper>;
+pub(crate) type Tree = ast::Tree;
 
 /// The tree of `text` and its syntax errors.
 pub(crate) fn parse_text(text: &str) -> (Tree, Vec<Diagnostic>) {
-    parser::parse(&Arc::new(SourceFile::new("t.peep", text)))
+    parser::parse(&Arc::new(SourceFile::new("t.peep", text)), &crate::RULES)
 }
 
 /// The message of each syntax error of `text`.
@@ -39,10 +37,10 @@ pub(crate) type Reported = (&'static str, String, String);
 /// gives and the diagnostics.
 pub(crate) fn with_checker<T>(
     text: &str,
-    work: impl FnOnce(&mut Checker<Peeper>, &[(DefId, Span)]) -> T,
+    work: impl FnOnce(&mut Checker, &[(DefId, Span)]) -> T,
 ) -> (T, Vec<Reported>) {
     let file = Arc::new(SourceFile::new("main.peep", text));
-    let (ast, parse) = parser::parse::<Peeper>(&file);
+    let (ast, parse) = parser::parse(&file, &crate::RULES);
     assert!(parse.is_empty(), "{parse:?}");
     let modules = [model::program::Module {
         path: "app:main".to_string(),
@@ -60,7 +58,12 @@ pub(crate) fn with_checker<T>(
             _ => None,
         })
         .collect();
-    let mut checker = Checker::new(&modules, Machine::named("x86_64-linux").unwrap(), false);
+    let mut checker = Checker::new(
+        &modules,
+        Machine::named("x86_64-linux").unwrap(),
+        false,
+        &crate::CHECK_HOOKS,
+    );
     let result = work(&mut checker, &functions);
     let reported = (checker.module_checks.iter())
         .flat_map(|module| &module.diagnostics)
@@ -73,7 +76,7 @@ pub(crate) fn with_checker<T>(
 }
 
 /// The expressions of the statements of the first function of `tree`.
-pub(crate) fn statements(tree: &Tree) -> Vec<Id<ast::Expr<Peeper>>> {
+pub(crate) fn statements(tree: &Tree) -> Vec<Id<ast::Expr>> {
     let decl = tree.declarations().next().unwrap();
     let ast::Decl::Function(function) = tree.decls[decl] else {
         panic!("not a function")

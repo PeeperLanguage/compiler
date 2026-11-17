@@ -6,21 +6,20 @@ use syntax::ast::Pattern;
 
 use token::TokenKind;
 
-use crate::Grammar;
 use crate::Parser;
 use crate::is_name;
 
-impl<L: Grammar> Parser<L> {
+impl Parser {
     /// Reads `.{ a, b as c, _ }`: fields to bind, each by its own name or by the
     /// name after `as`, and a `_` for the fields left out, which must come last.
     /// A `=` written for `as` is read as `as`.
-    pub fn struct_pattern(&mut self) -> Id<Pattern<L>> {
+    pub fn struct_pattern(&mut self) -> Id<Pattern> {
         let start = self.next().span.start; // `.`
         let fields = self.delimited(
             TokenKind::LeftBrace,
             TokenKind::RightBrace,
             false,
-            |kind| is_name(kind) || kind == TokenKind::Underscore,
+            |_, kind| is_name(kind) || kind == TokenKind::Underscore,
             |p| {
                 let field_token = p.tok();
                 if field_token.kind == TokenKind::Underscore {

@@ -17,11 +17,10 @@ use source::Span;
 use syntax::ast;
 use syntax::operators::Precedence;
 
-use crate::Checked;
 use crate::builder::ThirBuilder;
 use crate::expression::unsuffixed_literal;
 
-impl<L: Checked> ThirBuilder<'_, '_, L> {
+impl ThirBuilder<'_, '_> {
     /// The string literal at `span`, a `&str` or with its `c` a `&cstr` (`ty`):
     /// its bytes.
     pub(crate) fn string_literal(&mut self, span: Span, ty: TypeId) -> Expr {
@@ -68,7 +67,7 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
     /// Without an element type, each entry is checked for its own errors.
     pub fn check_entries(
         &mut self,
-        entries: impl Iterator<Item = Id<ast::Expr<L>>>,
+        entries: impl Iterator<Item = Id<ast::Expr>>,
         element: TypeId,
         alone_in: Option<TypeId>,
     ) -> (Vec<NonZeroU32>, Option<u128>, Option<(Span, &'static str)>) {
@@ -134,7 +133,7 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
     fn help_spread(
         &self,
         mismatch: Diagnostic,
-        written: Id<ast::Expr<L>>,
+        written: Id<ast::Expr>,
         value: Id<Expr>,
         alone_in: Option<TypeId>,
     ) -> Diagnostic {
@@ -191,7 +190,7 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
     /// reach the variables named.
     pub(crate) fn check_variadic(
         &mut self,
-        values: &[Id<ast::Expr<L>>],
+        values: &[Id<ast::Expr>],
         parameter: TypeId,
         span: Span,
     ) -> Id<Expr> {
@@ -294,7 +293,7 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
     }
 
     /// The written `values` of a spread into `element`s, checked.
-    fn add_spread(&mut self, values: Id<ast::Expr<L>>, element: TypeId) -> Id<Expr> {
+    fn add_spread(&mut self, values: Id<ast::Expr>, element: TypeId) -> Id<Expr> {
         // Only an integer element has ranges, whose ends then take its type.
         let hint = self.checker.types.range(element);
         self.add_expr(values, hint)
@@ -410,8 +409,8 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
     /// such literals.
     pub fn check_range_ends(
         &mut self,
-        start: Id<ast::Expr<L>>,
-        end: Id<ast::Expr<L>>,
+        start: Id<ast::Expr>,
+        end: Id<ast::Expr>,
         hint: Option<TypeId>,
     ) -> (Id<Expr>, Id<Expr>) {
         let tree = &self.checker.module().ast;

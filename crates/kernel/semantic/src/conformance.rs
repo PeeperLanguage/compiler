@@ -7,11 +7,10 @@ use model::semantic_types;
 use model::thir;
 use source::Span;
 
-use crate::Checked;
 use crate::Checker;
 use crate::generics;
 
-impl<L: Checked> Checker<'_, L> {
+impl Checker<'_> {
     /// The functions of the struct `structure` that are the methods of the
     /// interface `interface`, for a reference to the struct used as a
     /// reference to the interface at `span`: for each method, the struct's

@@ -12,11 +12,10 @@ use model::semantic_types;
 use model::thir;
 use syntax::ast;
 
-use crate::Checked;
 use crate::Checker;
 use crate::builder;
 
-impl<L: Checked> Checker<'_, L> {
+impl Checker<'_> {
     /// Whether the constraints of `signature`, after `where`, hold for what
     /// is being checked, whose parameters are of the types `parameters`
     /// (`constraint_value`). Its `const` values are declared as in a body.
@@ -25,7 +24,7 @@ impl<L: Checked> Checker<'_, L> {
     /// for a copy at the call it was made for: each such call has the error.
     pub(crate) fn constraints_hold(
         &mut self,
-        signature: ast::Signature<L>,
+        signature: ast::Signature,
         parameters: &[semantic_types::TypeId],
     ) -> bool {
         let checking = (self.internals.declarations_being_checked.last())
@@ -34,7 +33,7 @@ impl<L: Checked> Checker<'_, L> {
         let known = self.in_copy() || arguments == ConstArguments::NONE;
         let module = copy.definition.module.index();
         let tree = &self.module().ast;
-        let constraints: Vec<Id<ast::Constraint<L>>> =
+        let constraints: Vec<Id<ast::Constraint>> =
             tree.children.lists.items(signature.constraints).collect();
         let span = tree.children.constraints.span(constraints[0]);
         let mut body = thir::Body::default();
@@ -83,13 +82,13 @@ impl<L: Checked> Checker<'_, L> {
     }
 }
 
-impl<L: Checked> builder::ThirBuilder<'_, '_, L> {
+impl builder::ThirBuilder<'_, '_> {
     /// Whether `constraint`, after a function's `where`, holds: its subject,
     /// a type, implements the interface its bound names, or the function its
     /// bound names gives `true` when called at compile time with the subject
     /// first, then the constraint's arguments. `None` when that is not
     /// known: after an error, reported, or for a subject only a copy knows.
-    fn constraint_value(&mut self, constraint: Id<ast::Constraint<L>>) -> Option<bool> {
+    fn constraint_value(&mut self, constraint: Id<ast::Constraint>) -> Option<bool> {
         let tree = &self.checker.module().ast;
         let span = tree.children.constraints.span(constraint);
         let ast::Constraint {
@@ -99,7 +98,7 @@ impl<L: Checked> builder::ThirBuilder<'_, '_, L> {
         } = tree.children.constraints[constraint];
         let bound_span = tree.exprs.span(bound);
         let bound_text = tree.file.slice(bound_span);
-        let given: Vec<Id<ast::Expr<L>>> = std::iter::once(subject)
+        let given: Vec<Id<ast::Expr>> = std::iter::once(subject)
             .chain(tree.children.lists.items(arguments))
             .collect();
         let symbol = match tree.exprs[bound] {

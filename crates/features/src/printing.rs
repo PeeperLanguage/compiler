@@ -5,7 +5,6 @@ use source::Span;
 use std::num::NonZeroU32;
 
 use arena::Id;
-use arena::List;
 use bigint::Limbs;
 use check::builder::ThirBuilder;
 use model::Callee;
@@ -27,36 +26,23 @@ use syntax::ast;
 use syntax::operators::Precedence;
 use token::TokenKind;
 
-use crate::ExprNode;
-use crate::FeatureExpr;
-use crate::Peeper;
-
-/// `print(values)`, or `println(values)` when `newline`
-#[derive(Clone, Copy, Debug)]
-pub struct Print {
-    pub newline: bool,
-    pub values: List<ast::Expr<Peeper>>,
-}
-
-impl Print {
-    /// Adds the rules that read `print` and `println` to `rules`.
-    pub(crate) const fn rows(rules: &mut Rules<Peeper>) {
-        rules.prefix(TokenKind::Print, print);
-        rules.prefix(TokenKind::Println, print);
-    }
+/// Adds the rules that read `print` and `println` to `rules`.
+pub(crate) const fn rows(rules: &mut Rules) {
+    rules.prefix(TokenKind::Print, print);
+    rules.prefix(TokenKind::Println, print);
 }
 
 /// Reads `print(values)` or `println(values)`, which take any number of
 /// values.
-fn print(p: &mut Parser<Peeper>) -> Id<ast::Expr<Peeper>> {
+fn print(p: &mut Parser) -> Id<ast::Expr> {
     let keyword = p.next();
-    let print = FeatureExpr::Print(Print {
+    let print = ast::FeatureExpr::Print(ast::Print {
         newline: keyword.kind == TokenKind::Println,
         values: p.delimited(
             TokenKind::LeftParen,
             TokenKind::RightParen,
             false,
-            starts_expression::<Peeper>,
+            starts_expression,
             |p| p.expr(Precedence::Lowest),
         ),
     });
@@ -68,96 +54,11 @@ fn print(p: &mut Parser<Peeper>) -> Id<ast::Expr<Peeper>> {
 /// literal is printed as a `&cstr`, though it is not one anywhere else.
 // shortcut: a built-in until a library function takes any number of
 // values of any printable type; then delete it.
-impl ExprNode for Print {
-    fn precedence(&self) -> Precedence {
-        Precedence::Call
-    }
-
-    /// A block of calls of the prelude's print functions, one for each
-    /// value by its type, then one that writes out what they kept back.
-    fn check(
-        &self,
-        builder: &mut ThirBuilder<'_, '_, Peeper>,
-        span: Span,
-        _expected: Option<TypeId>,
-    ) -> thir::Expr {
-        let Print { newline, values } = *self;
-        let tree = &builder.checker.module().ast;
-        let mut checked = Vec::with_capacity(values.len());
-        for value in tree.children.lists.items(values) {
-            let span = tree.exprs.span(value);
-            let expr = builder.check_expr(value, None);
-            let ty = expr.ty;
-            let types = &builder.checker.types;
-            // On an error the others are still checked, for their own.
-            if !printable(types, ty) {
-                if ty != TypeId::INVALID {
-                    let message = format!("`{}` cannot be printed", builder.checker.type_text(ty));
-                    (builder.checker).error(diagnostics::INVALID_OPERATION, message, span);
-                }
-                continue;
-            }
-            let mut printed = builder.body.add(expr, span);
-            // Printing reads a value, never takes it: a `&mut` reference in
-            // a place, the one printable value that moves, is lent as `&`.
-            if let Type::Reference {
-                mutable: true,
-                target,
-            } = types[ty]
-                && builder
-                    .start_variable(builder.place_root(printed).0)
-                    .is_some()
-            {
-                let reference = builder.body.exprs[printed].clone();
-                let shared = builder.checker.reference_type(false, target);
-                let lent = builder.reborrow(reference, span, shared);
-                printed = builder.body.add(lent, span);
-            }
-            checked.push(printed);
-        }
-        if checked.len() < values.len() {
-            return thir::Expr::INVALID;
-        }
-        let mut written = None;
-        let block = builder.add_block(span, |builder| {
-            let mut statements = Vec::new();
-            // Every value is worked out, in order, before any is written:
-            // a value's code may print too, and a reference among them is
-            // in use until it is written. So each is kept in a hidden
-            // variable; one value alone, or a constant, is as good as it is.
-            let alone = checked.len() == 1;
-            for value in &mut checked {
-                let thir::Expr { ty, kind } = &builder.body.exprs[*value];
-                if matches!(kind, thir::ExprKind::Constant(_)) {
-                    continue;
-                }
-                // An integer is kept even alone, as the runtime reads it:
-                // from memory, which must not be the program's own variable.
-                if let Type::Integer(integer) = builder.checker.types[*ty] {
-                    *value = widened(builder, *value, integer);
-                } else if alone {
-                    continue;
-                }
-                *value = kept(builder, &mut statements, *value, span);
-            }
-            written = print_values(builder, &mut statements, &checked, newline, span);
-            statements
-        });
-        if written.is_none() {
-            return thir::Expr::INVALID; // reported
-        }
-        thir::Expr {
-            ty: TypeId::VOID,
-            kind: thir::ExprKind::Block(block),
-        }
-    }
-}
-
 /// The calls that print `values`, a space between each, then a newline
 /// when `newline`, then the one that writes out what they kept back, added
 /// to `statements`. `None` at the first that cannot be made, reported.
 fn print_values(
-    builder: &mut ThirBuilder<'_, '_, Peeper>,
+    builder: &mut ThirBuilder<'_, '_>,
     statements: &mut Vec<Id<thir::Stmt>>,
     values: &[Id<thir::Expr>],
     newline: bool,
@@ -179,7 +80,7 @@ fn print_values(
 /// The calls that print `value`, added to `statements`; `None` when one
 /// cannot be made, reported.
 fn print_value(
-    builder: &mut ThirBuilder<'_, '_, Peeper>,
+    builder: &mut ThirBuilder<'_, '_>,
     statements: &mut Vec<Id<thir::Stmt>>,
     mut value: Id<thir::Expr>,
     span: Span,
@@ -194,7 +95,7 @@ fn print_value(
         ty: TypeId::I32,
         kind: thir::ExprKind::Constant(Value::Integer(Limbs::new(32, &[u64::from(value)]))),
     };
-    let read = |builder: &ThirBuilder<'_, '_, Peeper>| builder.body.exprs[value].clone();
+    let read = |builder: &ThirBuilder<'_, '_>| builder.body.exprs[value].clone();
     match builder.checker.types[ty] {
         // The runtime reads an integer from memory (`widened`): where it
         // is kept or referred to, else a temporary.
@@ -275,7 +176,7 @@ fn print_value(
 /// every target, all little-endian. So it is widened to a multiple of 64
 /// bits.
 fn widened(
-    builder: &mut ThirBuilder<'_, '_, Peeper>,
+    builder: &mut ThirBuilder<'_, '_>,
     value: Id<thir::Expr>,
     integer: Integer,
 ) -> Id<thir::Expr> {
@@ -297,7 +198,7 @@ fn widened(
 
 /// A hidden variable set to `value` by a statement added to `statements`.
 fn kept(
-    builder: &mut ThirBuilder<'_, '_, Peeper>,
+    builder: &mut ThirBuilder<'_, '_>,
     statements: &mut Vec<Id<thir::Stmt>>,
     value: Id<thir::Expr>,
     span: Span,
@@ -318,7 +219,7 @@ fn kept(
 
 /// The statement that prints `text` (`library_call`).
 fn print_text(
-    builder: &mut ThirBuilder<'_, '_, Peeper>,
+    builder: &mut ThirBuilder<'_, '_>,
     text: &[u8],
     span: Span,
 ) -> Option<Id<thir::Stmt>> {
@@ -334,7 +235,7 @@ fn print_text(
 /// it with a parameter of each argument's type and no result, or when its
 /// declaration has an error, reported there.
 fn library_call(
-    builder: &mut ThirBuilder<'_, '_, Peeper>,
+    builder: &mut ThirBuilder<'_, '_>,
     name: &str,
     arguments: Vec<thir::Expr>,
     span: Span,
@@ -410,3 +311,81 @@ fn printable(types: &Types, mut ty: TypeId) -> bool {
 
 #[cfg(test)]
 mod tests;
+
+/// A block of calls of the prelude's print functions, one for each
+/// value by its type, then one that writes out what they kept back.
+pub(crate) fn check_print(
+    builder: &mut ThirBuilder<'_, '_>,
+    print: ast::Print,
+    span: Span,
+) -> thir::Expr {
+    let ast::Print { newline, values } = print;
+    let tree = &builder.checker.module().ast;
+    let mut checked = Vec::with_capacity(values.len());
+    for value in tree.children.lists.items(values) {
+        let span = tree.exprs.span(value);
+        let expr = builder.check_expr(value, None);
+        let ty = expr.ty;
+        let types = &builder.checker.types;
+        // On an error the others are still checked, for their own.
+        if !printable(types, ty) {
+            if ty != TypeId::INVALID {
+                let message = format!("`{}` cannot be printed", builder.checker.type_text(ty));
+                (builder.checker).error(diagnostics::INVALID_OPERATION, message, span);
+            }
+            continue;
+        }
+        let mut printed = builder.body.add(expr, span);
+        // Printing reads a value, never takes it: a `&mut` reference in
+        // a place, the one printable value that moves, is lent as `&`.
+        if let Type::Reference {
+            mutable: true,
+            target,
+        } = types[ty]
+            && builder
+                .start_variable(builder.place_root(printed).0)
+                .is_some()
+        {
+            let reference = builder.body.exprs[printed].clone();
+            let shared = builder.checker.reference_type(false, target);
+            let lent = builder.reborrow(reference, span, shared);
+            printed = builder.body.add(lent, span);
+        }
+        checked.push(printed);
+    }
+    if checked.len() < values.len() {
+        return thir::Expr::INVALID;
+    }
+    let mut written = None;
+    let block = builder.add_block(span, |builder| {
+        let mut statements = Vec::new();
+        // Every value is worked out, in order, before any is written:
+        // a value's code may print too, and a reference among them is
+        // in use until it is written. So each is kept in a hidden
+        // variable; one value alone, or a constant, is as good as it is.
+        let alone = checked.len() == 1;
+        for value in &mut checked {
+            let thir::Expr { ty, kind } = &builder.body.exprs[*value];
+            if matches!(kind, thir::ExprKind::Constant(_)) {
+                continue;
+            }
+            // An integer is kept even alone, as the runtime reads it:
+            // from memory, which must not be the program's own variable.
+            if let Type::Integer(integer) = builder.checker.types[*ty] {
+                *value = widened(builder, *value, integer);
+            } else if alone {
+                continue;
+            }
+            *value = kept(builder, &mut statements, *value, span);
+        }
+        written = print_values(builder, &mut statements, &checked, newline, span);
+        statements
+    });
+    if written.is_none() {
+        return thir::Expr::INVALID; // reported
+    }
+    thir::Expr {
+        ty: TypeId::VOID,
+        kind: thir::ExprKind::Block(block),
+    }
+}

@@ -27,7 +27,7 @@ use packages::SOURCE_EXTENSION;
 use packages::file_of;
 use packages::import_path_of;
 use packages::is_source_file;
-use parser::Grammar;
+use parser::Rules;
 
 use crate::loading::Job;
 use crate::loading::load_module;
@@ -257,11 +257,13 @@ pub fn library_packages(
 /// reads as text, such as a `String`), read instead of what is on disk. Its
 /// keys, like `project`'s paths, are spelled as `canonical_path` spells them.
 /// Each `.peep` file of a package in it is loaded too, imported or not, so an
-/// editor checks the file it has open.
-pub fn load<L: Grammar>(
+/// editor checks the file it has open. `rules` are the core's and each
+/// feature's, which every module is parsed with.
+pub fn load(
     project: &Project,
     open_files: &HashMap<PathBuf, impl AsRef<str> + Sync>,
-) -> Program<L> {
+    rules: &'static Rules,
+) -> Program {
     let with_prelude = file_of(&project.packages, PRELUDE_PATH)
         .is_some_and(|file| file.is_file() || open_files.contains_key(&file));
     let workers = if cfg!(target_family = "wasm") {
@@ -311,7 +313,7 @@ pub fn load<L: Grammar>(
                     // A panic goes to the main thread, which would
                     // otherwise wait for this module forever.
                     let loaded = std::panic::catch_unwind(AssertUnwindSafe(|| {
-                        load_module(&project.packages, open_files, job, with_prelude)
+                        load_module(&project.packages, open_files, rules, job, with_prelude)
                     }));
                     _ = send_module.send(loaded);
                 }
@@ -346,7 +348,7 @@ pub fn load<L: Grammar>(
             let loaded = if workers == 0 {
                 let job = jobs.lock().expect("no worker holds the lock").try_recv();
                 let job = job.expect("each pending module has a job");
-                load_module(&project.packages, open_files, job, with_prelude)
+                load_module(&project.packages, open_files, rules, job, with_prelude)
             } else {
                 // This thread holds `send_module`, so a receive always ends.
                 let loaded = done.recv().expect("this thread holds a sender");

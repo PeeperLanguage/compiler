@@ -7,9 +7,7 @@ use model::thir::Block;
 use model::thir::Body;
 use model::thir::Local;
 use rustc_hash::FxHashMap;
-use syntax::ast::Language;
 
-use crate::Checked;
 use crate::Checker;
 
 /// A name declared in a block, and what it stands for.
@@ -23,10 +21,10 @@ pub(crate) struct Declared<'p> {
 
 /// Building the THIR of one piece of code: a function's body, or a
 /// constant's value. It checks the code as it builds it.
-pub struct ThirBuilder<'a, 'p, L: Language> {
+pub struct ThirBuilder<'a, 'p> {
     /// The checker, borrowed for the build: its module, tables and
     /// diagnostics.
-    pub checker: &'a mut Checker<'p, L>,
+    pub checker: &'a mut Checker<'p>,
     pub body: &'a mut Body,
     /// The names declared in the enclosing blocks so far, innermost last.
     pub(crate) names: Vec<Declared<'p>>,
@@ -44,13 +42,13 @@ pub struct ThirBuilder<'a, 'p, L: Language> {
     pub(crate) in_constant: bool,
 }
 
-impl<'a, 'p, L: Checked> ThirBuilder<'a, 'p, L> {
+impl<'a, 'p> ThirBuilder<'a, 'p> {
     /// Building code into `body` whose `return` gives `result`.
     pub(crate) fn new(
-        checker: &'a mut Checker<'p, L>,
+        checker: &'a mut Checker<'p>,
         body: &'a mut Body,
         result: TypeId,
-    ) -> ThirBuilder<'a, 'p, L> {
+    ) -> ThirBuilder<'a, 'p> {
         ThirBuilder {
             checker,
             body,

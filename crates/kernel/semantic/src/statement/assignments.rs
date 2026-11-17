@@ -13,15 +13,14 @@ use model::thir::Variable;
 use source::Span;
 use syntax::ast;
 
-use crate::Checked;
 use crate::builder::ThirBuilder;
 
-impl<L: Checked> ThirBuilder<'_, '_, L> {
+impl ThirBuilder<'_, '_> {
     /// The value of `return value;`, checked against the function's result.
     pub(super) fn check_return_value(
         &mut self,
         span: Span,
-        value: Option<Id<ast::Expr<L>>>,
+        value: Option<Id<ast::Expr>>,
     ) -> Option<Id<Expr>> {
         match value {
             Some(value) if self.result == TypeId::VOID => {
@@ -81,11 +80,7 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
     /// temporaries of its value as long as that variable, as a `let` does;
     /// one behind a reference or slice is in storage the variable does not
     /// own.
-    pub(super) fn assign(
-        &mut self,
-        target: Id<ast::Expr<L>>,
-        value: Id<ast::Expr<L>>,
-    ) -> Option<Stmt> {
+    pub(super) fn assign(&mut self, target: Id<ast::Expr>, value: Id<ast::Expr>) -> Option<Stmt> {
         let Some(target) = self.assigned_place(target) else {
             self.add_expr(value, None); // for its own errors
             return None;
@@ -102,7 +97,7 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
     /// The variable, field, element or referred value that `target` names,
     /// reporting one that cannot be set (`report_unwritable`). One that cannot
     /// be set is still given, so the value is checked against its type.
-    pub(super) fn assigned_place(&mut self, target: Id<ast::Expr<L>>) -> Option<Id<Expr>> {
+    pub(super) fn assigned_place(&mut self, target: Id<ast::Expr>) -> Option<Id<Expr>> {
         let tree = &self.checker.module().ast;
         let place = match tree.exprs[target] {
             ast::Expr::Selector { .. } | ast::Expr::Dereference(_) | ast::Expr::Index { .. } => {
@@ -160,7 +155,7 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
 
     /// The variable that `target` names, reporting a target that is not a
     /// variable.
-    pub(super) fn assigned_variable(&mut self, target: Id<ast::Expr<L>>) -> Option<Id<Variable>> {
+    pub(super) fn assigned_variable(&mut self, target: Id<ast::Expr>) -> Option<Id<Variable>> {
         let tree = &self.checker.module().ast;
         let span = tree.exprs.span(target);
         let symbol = match tree.exprs[target] {

@@ -1,104 +1,29 @@
 //! What the checking tests share: a one-module program read from text, whose
 //! declarations are checked one at a time.
 
-use arena::Id;
-use arena::List;
-use model::DefId;
-use model::semantic_types::TypeId;
-use model::thir;
-use parser::Grammar;
-use parser::Rules;
-use source::Span;
-use std::convert::Infallible;
 use std::sync::Arc;
-use syntax::ast;
-use syntax::ast::Language;
-use syntax::operators::Precedence;
 
 use model::ModuleId;
 use model::machine::Machine;
 use model::program::ImportKind;
 use model::semantic_types::Types;
+use parser::Rules;
 use source::SourceFile;
 
-use crate::Checked;
+use crate::CheckHooks;
 use crate::Checker;
-use crate::builder::ThirBuilder;
 
-/// The language the checking tests are written in: the core, with no
-/// feature, since the `features` crate depends on this one.
-#[derive(Clone, Copy, Debug)]
-pub(crate) enum Bare {}
+/// The core's rules alone: the checking tests read no feature, since the
+/// `features` crate depends on this one.
+static RULES: Rules = Rules::core();
 
-impl Language for Bare {
-    type Expr = Infallible;
-    type Type = Infallible;
-    type Stmt = Infallible;
-
-    fn precedence(expr: &Infallible) -> Precedence {
-        match *expr {}
-    }
-
-    fn fields(ty: &Infallible) -> Option<List<ast::Field<Bare>>> {
-        match *ty {}
-    }
-
-    fn methods(ty: &Infallible) -> Option<List<ast::Decl<Bare>>> {
-        match *ty {}
-    }
-
-    fn pointee(ty: &Infallible) -> Option<Id<ast::Type<Bare>>> {
-        match *ty {}
-    }
-
-    fn element(ty: &Infallible) -> Option<Id<ast::Type<Bare>>> {
-        match *ty {}
-    }
-
-    fn written_range(expr: &Infallible) -> Option<ast::WrittenRange<Bare>> {
-        match *expr {}
-    }
-}
-
-static RULES: Rules<Bare> = Rules::core();
-
-impl Grammar for Bare {
-    fn rules() -> &'static Rules<Bare> {
-        &RULES
-    }
-}
-
-impl Checked for Bare {
-    fn check_expr(
-        _: &mut ThirBuilder<'_, '_, Bare>,
-        expr: Infallible,
-        _: Span,
-        _: Option<TypeId>,
-    ) -> thir::Expr {
-        match expr {}
-    }
-
-    fn check_stmt(
-        _: &mut ThirBuilder<'_, '_, Bare>,
-        stmt: Infallible,
-        _: Span,
-    ) -> Option<thir::Stmt> {
-        match stmt {}
-    }
-
-    fn resolve_type(_: &mut Checker<'_, Bare>, ty: Infallible, _: Span) -> TypeId {
-        match ty {}
-    }
-
-    fn declare_type(
-        _: &mut Checker<'_, Bare>,
-        _: DefId,
-        _: ast::TypeDecl<Bare>,
-        ty: Infallible,
-    ) -> TypeId {
-        match ty {}
-    }
-}
+/// The core's rules make no feature node, so no hook is ever asked.
+static HOOKS: CheckHooks = CheckHooks {
+    check_expr: |_, _, _, _| unreachable!("the core rules read no feature expression"),
+    check_stmt: |_, _, _| unreachable!("the core rules read no feature statement"),
+    resolve_type: |_, _, _| unreachable!("the core rules read no feature type"),
+    declare_type: |_, _, _, _| unreachable!("the core rules read no feature type"),
+};
 
 /// The module `path`, written as `text`, with `imports`; its text must parse
 /// without errors.
@@ -106,9 +31,9 @@ pub(crate) fn module(
     path: &str,
     text: &str,
     imports: Vec<model::program::Import>,
-) -> model::program::Module<Bare> {
+) -> model::program::Module {
     let file = Arc::new(SourceFile::new("main.peep", text));
-    let (ast, parse) = parser::parse(&file);
+    let (ast, parse) = parser::parse(&file, &RULES);
     assert!(parse.is_empty(), "{parse:?}");
     model::program::Module {
         path: path.to_string(),
@@ -128,7 +53,7 @@ pub(crate) type Reported = (&'static str, String, String);
 /// types and the diagnostics.
 pub(crate) fn with_checker<T>(
     text: &str,
-    work: impl FnOnce(&mut Checker<Bare>, ModuleId) -> T,
+    work: impl FnOnce(&mut Checker, ModuleId) -> T,
 ) -> (T, Types, Vec<Reported>) {
     let (utils_id, main_id) = (ModuleId::from_index(0), ModuleId::from_index(1));
     let imports = vec![model::program::Import {
@@ -141,7 +66,12 @@ pub(crate) fn with_checker<T>(
         module("app:main", &text, imports),
     ];
     let file = modules[1].ast.file.clone();
-    let mut checker = Checker::new(&modules, Machine::named("x86_64-linux").unwrap(), false);
+    let mut checker = Checker::new(
+        &modules,
+        Machine::named("x86_64-linux").unwrap(),
+        false,
+        &HOOKS,
+    );
     let result = work(&mut checker, main_id);
     let reported = checker
         .module_checks

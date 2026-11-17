@@ -19,12 +19,11 @@ use source::Span;
 use syntax::ast;
 
 use crate::COPY_DEPTH_LIMIT;
-use crate::Checked;
 use crate::Checker;
 use crate::Checking;
 use crate::Copied;
 
-impl<L: Checked> Checker<'_, L> {
+impl Checker<'_> {
     /// The type of `copy`, asked for at `used_at`: given nothing, its
     /// declaration's own (`function_type`, `declared_type`); else the type
     /// of its copy for what it is given, made the first time it is asked
@@ -196,12 +195,11 @@ impl<L: Checked> Checker<'_, L> {
         &mut self,
         definition: DefId,
         name: &str,
-        written: List<ast::Type<L>>,
+        written: List<ast::Type>,
         span: Span,
-    ) -> Option<Vec<Id<ast::Type<L>>>> {
+    ) -> Option<Vec<Id<ast::Type>>> {
         let count = model::program::declaration_copy_parameters(self.modules, definition).count();
-        let written: Vec<Id<ast::Type<L>>> =
-            self.module().ast.children.lists.items(written).collect();
+        let written: Vec<Id<ast::Type>> = self.module().ast.children.lists.items(written).collect();
         if written.len() == count {
             return Some(written);
         }
@@ -255,7 +253,7 @@ impl<L: Checked> Checker<'_, L> {
     }
 }
 
-impl<L: Checked> Checker<'_, L> {
+impl Checker<'_> {
     /// Makes the fact that the name ending at `name_end` is a function
     /// (`record`) the fact that its call there made `copy`, of the type
     /// `ty`. Only a body checked once has it: a copy has no facts, and a

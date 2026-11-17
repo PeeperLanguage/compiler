@@ -1,6 +1,7 @@
 # Structure mapping: from today's crates to `kernel/` and `features/`
 
-Status: final, agreed by Fuad, GPT and Claude. Nothing has moved yet.
+Status: agreed by Fuad, GPT and Claude. Steps 1 to 4, 6 and 7 are done;
+step 5 waits for enums.
 
 Each line says what kind of change it is:
 
@@ -154,6 +155,35 @@ stays `INVALID`: every place that meets it stays silent, as for a reported
 error, so a second marker would have no reader. Its real split, an abstract
 type that checks a generic body once against its `T`, changes what an
 uncalled generic function reports, and waits for a language decision.
+
+## Step 7: no `L` (closed tree, static feature dispatch)
+
+Peeper is one language, so the phases stop being generic over a language
+type. The tree lists every node, feature nodes too; a feature's file keeps
+its parse rules and its checks. Decided by Fuad and GPT; it replaces the
+`Language`, `Grammar` and `Checked` traits, so it adds no hook (rule 6).
+
+| Today | Kind | New |
+| --- | --- | --- |
+| `<L: Language>` on `Tree`, `Expr`, `Type`, `Stmt`, `WrittenRange`, `Parser`, `Rules`, `Module`, `Program`, `Checker`, `ThirBuilder` (about 480 uses: tree 143, parser 124, semantic 146, model 41, project 13, lower 8, lsp 2, peeper 1) | API | no type parameter |
+| `features/src/lib.rs`: `FeatureExpr`, `FeatureStmt`, `FeatureType` (built by `nodes!`) | API | closed enums in `syntax/tree` |
+| the node data in each feature file (`ArrayLiteral`, `StructLiteral`, `Range`, `Pipe`, `Print`, `CaseTest`, `VariantLiteral`, `OrElse`, `RawAddress`, `CharLiteral`, `Match`, `ArrayType`, `StructType`, `EnumType`, `InterfaceType`, `OptionalType`, `PointerType`) | extract | `syntax/tree`, beside the enums that hold them |
+| `Language::{precedence, written_range, fields, methods, pointee, element}`, answered per feature through `ExprNode` and `TypeNode` | API | exhaustive `match` methods on the closed enums in `syntax/tree` |
+| `Grammar::rules()`, read as `L::rules()` (14 places) | API | `Parser` holds `rules: &'static Rules`; `parser::parse(file, rules)` |
+| `starts_expression`, `starts_type`, `starts_declaration`, `is_statement_keyword`, `starts_statement` (`fn(TokenKind) -> bool`, passed to `Parser::delimited`) | API | read the parser's rules: `fn(&Parser, TokenKind) -> bool` |
+| `project::load::<Peeper>(...)` (4 callers: `peeper` driver, its bench, `lsp`, `browser`) | API | `project::load(..., rules)`; `project` keeps `features` as a dev-dependency only |
+| `Checked::{check_expr, check_stmt, resolve_type, declare_type}` | API | `check::CheckHooks`, four plain functions; `Checker::new(..., hooks)` |
+| `features/src/lib.rs`: `impl Checked for Peeper`, the `dyn` dispatch in `nodes!` | extract | four functions with one exhaustive `match` each, delegating to the feature's file; `features::RULES` and `features::CHECK_HOOKS` handed over by the driver |
+| `Peeper`, `Bare` (parser tests, checker tests) | API | removed; core tests use `Rules::core()` and hooks that are `unreachable!` (the core rules make no feature node) |
+| parser `dump.rs`: `match feature {}` | API | `unreachable!`, for the same reason |
+| `ExprNode`, `StmtNode`, `TypeNode` and each feature's `impl Node { rows }` (the tree's types cannot have impls outside `syntax`) | API | free functions in the feature's file: one `rows`, and `check_*`, `resolve_*`, `declare_*` taking only what each node uses |
+| (new) `scripts/check.sh`, "feature boundary" | API | only `ast.rs` and the `features` crate name a feature node's variant (`FeatureExpr::Range`); elsewhere a node is `Feature(_)`, handed to its feature |
+
+Kept: no kernel crate depends on `features`; no registry or global
+state; the parser's static rule table; every diagnostic and LSP answer.
+Done when no `Language`, `Grammar`, `Checked`, `Peeper` or `Bare` is left,
+and the full `scripts/check.sh` passes with no fixture output changed.
+Separate from enums and the pattern engine.
 
 ## Features after the restructuring
 

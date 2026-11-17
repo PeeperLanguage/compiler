@@ -27,9 +27,7 @@ use syntax::ast::Type;
 
 use token::TokenKind;
 
-use crate::tests::Bare;
-
-pub(crate) fn dump(tree: &Tree<Bare>, spans: bool) -> String {
+pub(crate) fn dump(tree: &Tree, spans: bool) -> String {
     let mut d = Dumper {
         tree,
         spans,
@@ -46,21 +44,21 @@ pub(crate) fn dump(tree: &Tree<Bare>, spans: bool) -> String {
 #[derive(Clone, Copy)]
 enum Item {
     Import(Import),
-    Metadata(Metadata<Bare>),
-    Attribute(Id<Attribute<Bare>>),
-    Decl(Id<Decl<Bare>>),
-    Param(Id<Param<Bare>>),
-    Constraint(Id<Constraint<Bare>>),
-    Type(Id<Type<Bare>>),
-    Block(Id<Block<Bare>>),
-    Stmt(Id<Stmt<Bare>>),
-    Pattern(Id<Pattern<Bare>>),
-    Expr(Id<Expr<Bare>>),
+    Metadata(Metadata),
+    Attribute(Id<Attribute>),
+    Decl(Id<Decl>),
+    Param(Id<Param>),
+    Constraint(Id<Constraint>),
+    Type(Id<Type>),
+    Block(Id<Block>),
+    Stmt(Id<Stmt>),
+    Pattern(Id<Pattern>),
+    Expr(Id<Expr>),
     Leaf(&'static str, Span),
 }
 
 struct Dumper<'t> {
-    tree: &'t Tree<Bare>,
+    tree: &'t Tree,
     spans: bool,
     out: String,
 }
@@ -110,7 +108,7 @@ impl<'t> Dumper<'t> {
         }
     }
 
-    fn metadata(&self, metadata: Metadata<Bare>) -> Option<Item> {
+    fn metadata(&self, metadata: Metadata) -> Option<Item> {
         (metadata.doc_comment.is_some() || !metadata.attributes.is_empty())
             .then_some(Item::Metadata(metadata))
     }
@@ -250,7 +248,7 @@ impl<'t> Dumper<'t> {
 
     /// A signature's parts, with the function's `name`, if any, in source
     /// order.
-    fn signature(&self, name: Option<Ident>, signature: Signature<Bare>) -> Vec<Item> {
+    fn signature(&self, name: Option<Ident>, signature: Signature) -> Vec<Item> {
         let mut nested: Vec<Item> = name.map(declared).into_iter().collect();
         nested.extend(self.names("declared name", signature.type_parameters));
         let parameters = self.tree.children.lists.items(signature.parameters);
@@ -262,15 +260,12 @@ impl<'t> Dumper<'t> {
         nested
     }
 
-    fn type_node(
-        &self,
-        id: Id<Type<Bare>>,
-    ) -> (&'static str, Option<&'static str>, Span, Vec<Item>) {
+    fn type_node(&self, id: Id<Type>) -> (&'static str, Option<&'static str>, Span, Vec<Item>) {
         let t = self.tree;
         let span = t.types.span(id);
-        let one = |ty: Id<Type<Bare>>| vec![Item::Type(ty)];
+        let one = |ty: Id<Type>| vec![Item::Type(ty)];
         let (kind, op, nested) = match t.types[id] {
-            Type::Feature(feature) => match feature {},
+            Type::Feature(_) => unreachable!("the core rules read no feature type"),
             Type::Name => ("type name", None, vec![]),
             Type::Path(segments) => (
                 "path",
@@ -304,7 +299,7 @@ impl<'t> Dumper<'t> {
         (kind, op, span, nested)
     }
 
-    fn stmt(&self, id: Id<Stmt<Bare>>) -> (&'static str, Option<&'static str>, Span, Vec<Item>) {
+    fn stmt(&self, id: Id<Stmt>) -> (&'static str, Option<&'static str>, Span, Vec<Item>) {
         let t = self.tree;
         let (kind, op, nested) = match t.stmts[id] {
             Stmt::Let {
@@ -324,7 +319,7 @@ impl<'t> Dumper<'t> {
                 value.map(Item::Expr).into_iter().collect(),
             ),
             Stmt::Panic(message) => ("panic statement", None, vec![Item::Expr(message)]),
-            Stmt::Feature(feature) => match feature {},
+            Stmt::Feature(_) => unreachable!("the core rules read no feature statement"),
             Stmt::Expression(e) => ("expression statement", None, vec![Item::Expr(e)]),
             Stmt::Assign { target, value } => (
                 "assign statement",
@@ -372,10 +367,7 @@ impl<'t> Dumper<'t> {
         (kind, op, t.stmts.span(id), nested)
     }
 
-    fn pattern(
-        &self,
-        id: Id<Pattern<Bare>>,
-    ) -> (&'static str, Option<&'static str>, Span, Vec<Item>) {
+    fn pattern(&self, id: Id<Pattern>) -> (&'static str, Option<&'static str>, Span, Vec<Item>) {
         let t = self.tree;
         let (kind, nested) = match t.patterns[id] {
             Pattern::Wildcard => ("wildcard pattern", vec![]),
@@ -401,12 +393,12 @@ impl<'t> Dumper<'t> {
         (kind, None, t.patterns.span(id), nested)
     }
 
-    fn expr(&self, id: Id<Expr<Bare>>) -> (&'static str, Option<&'static str>, Span, Vec<Item>) {
+    fn expr(&self, id: Id<Expr>) -> (&'static str, Option<&'static str>, Span, Vec<Item>) {
         let t = self.tree;
-        let one = |e: Id<Expr<Bare>>| vec![Item::Expr(e)];
-        let two = |a: Id<Expr<Bare>>, b: Item| vec![Item::Expr(a), b];
+        let one = |e: Id<Expr>| vec![Item::Expr(e)];
+        let two = |a: Id<Expr>, b: Item| vec![Item::Expr(a), b];
         let (kind, op, nested) = match t.exprs[id] {
-            Expr::Feature(feature) => match feature {},
+            Expr::Feature(_) => unreachable!("the core rules read no feature expression"),
             Expr::Name => ("name reference", None, vec![]),
             Expr::Number => ("number literal", None, vec![]),
             Expr::None => ("none literal", None, vec![]),

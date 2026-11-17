@@ -1,240 +1,135 @@
-//! Peeper: the core and the list of its features (docs/feature-front.md,
-//! section 7). This is the one place that names every feature: a phase
-//! sees only `L`, and asks this list through `Language`, `Grammar` and
-//! `Checked`. Each node is listed once (`nodes!`); a feature answers for
-//! its own nodes, in its own file (`ExprNode`, `StmtNode`, `TypeNode`).
+//! Peeper's features, one file each: a feature reads its own nodes (the
+//! tree's `FeatureExpr`, `FeatureStmt` and `FeatureType`) and checks them.
+//! This is the one place that names every feature: its parse rules
+//! (`RULES`) and how the checker checks its nodes (`CHECK_HOOKS`), which
+//! the driver hands to the phases (docs/structure-mapping.md, step 7).
 
-use arena::Id;
-use arena::List;
-use check::Checked;
+use check::CheckHooks;
 use check::Checker;
-use check::builder::ThirBuilder;
+use check::builder;
 use model::DefId;
-use model::semantic_types::TypeId;
+use model::semantic_types;
 use model::thir;
-use parser::Grammar;
 use parser::Rules;
 use source::Span;
 use syntax::ast;
-use syntax::ast::Language;
-use syntax::ast::WrittenRange;
-use syntax::operators::Precedence;
 
-pub mod arrays;
-pub mod chars;
-pub mod enums;
-pub mod interfaces;
-pub mod optionals;
-pub mod pipes;
-pub mod printing;
-pub mod ranges;
-pub mod raw_pointers;
-pub mod structs;
+mod arrays;
+mod chars;
+mod enums;
+mod interfaces;
+mod optionals;
+mod pipes;
+mod printing;
+mod ranges;
+mod raw_pointers;
+mod structs;
 
 #[cfg(test)]
 mod testing;
 
-/// The language this compiler compiles.
-#[derive(Clone, Copy, Debug)]
-pub enum Peeper {}
-
-/// What a feature says of an expression of its own, in its own file.
-pub(crate) trait ExprNode {
-    /// The precedence the expression has where it is an operand.
-    fn precedence(&self) -> Precedence;
-
-    /// The range it writes, if it is one.
-    fn written_range(&self) -> Option<WrittenRange<Peeper>> {
-        None
-    }
-
-    /// The expression, written at `span`, checked; `expected` is the type
-    /// its place asks for.
-    fn check(
-        &self,
-        builder: &mut ThirBuilder<'_, '_, Peeper>,
-        span: Span,
-        expected: Option<TypeId>,
-    ) -> thir::Expr;
-}
-
-/// What a feature says of a statement of its own, in its own file.
-pub(crate) trait StmtNode {
-    /// The statement, written at `span`, checked; `None` after an error.
-    fn check(&self, builder: &mut ThirBuilder<'_, '_, Peeper>, span: Span) -> Option<thir::Stmt>;
-}
-
-/// What a feature says of a written type of its own, in its own file.
-pub(crate) trait TypeNode {
-    /// Its fields, if it has fields.
-    fn fields(&self) -> Option<List<ast::Field<Peeper>>> {
-        None
-    }
-
-    /// Its methods, if it declares methods.
-    fn methods(&self) -> Option<List<ast::Decl<Peeper>>> {
-        None
-    }
-
-    /// The type it points to, if it is a pointer to one.
-    fn pointee(&self) -> Option<Id<ast::Type<Peeper>>> {
-        None
-    }
-
-    /// The type of its elements, if it has elements.
-    fn element(&self) -> Option<Id<ast::Type<Peeper>>> {
-        None
-    }
-
-    /// The type it names, written at `span`.
-    fn resolve(&self, checker: &mut Checker<'_, Peeper>, span: Span) -> TypeId;
-
-    /// The type that `definition`, written `written`, declares with it.
-    fn declare(
-        &self,
-        _checker: &mut Checker<'_, Peeper>,
-        _definition: DefId,
-        _written: ast::TypeDecl<Peeper>,
-    ) -> TypeId {
-        unreachable!("only `struct`, `iface` and `enum` begin a type declaration")
-    }
-}
-
-/// Declares `$name`, the nodes of one kind with a variant per listed node;
-/// its `node`, which gives a node as what its feature says of it; and its
-/// `rows`, the parse rules of every node.
-macro_rules! nodes {
-    ($(#[$doc:meta])* $name:ident: $says:ident { $($variant:ident($node:ty)),* $(,)? }) => {
-        $(#[$doc])*
-        #[derive(Clone, Copy, Debug)]
-        pub enum $name {
-            $($variant($node)),*
-        }
-
-        impl $name {
-            /// The node, to ask what its feature says of it.
-            fn node(&self) -> &dyn $says {
-                match self {
-                    $($name::$variant(node) => node),*
-                }
-            }
-
-            /// Adds the rules that read each node to `rules`.
-            const fn rows(rules: &mut Rules<Peeper>) {
-                $(<$node>::rows(rules);)*
-            }
-        }
-    };
-}
-
-nodes! {
-    /// An expression of a feature's, by feature.
-    FeatureExpr: ExprNode {
-        ArrayLiteral(arrays::ArrayLiteral),
-        CaseTest(enums::CaseTest),
-        Char(chars::CharLiteral),
-        OrElse(optionals::OrElse),
-        Pipe(pipes::Pipe),
-        Print(printing::Print),
-        Range(ranges::Range),
-        RawAddress(raw_pointers::RawAddress),
-        StructLiteral(structs::StructLiteral),
-        VariantLiteral(enums::VariantLiteral),
-    }
-}
-
-nodes! {
-    /// A statement of a feature's, by feature.
-    FeatureStmt: StmtNode {
-        Match(enums::Match),
-    }
-}
-
-nodes! {
-    /// A written type of a feature's, by feature.
-    FeatureType: TypeNode {
-        Array(arrays::ArrayType),
-        Enum(enums::EnumType),
-        Interface(interfaces::InterfaceType),
-        Optional(optionals::OptionalType),
-        Pointer(raw_pointers::PointerType),
-        Struct(structs::StructType),
-    }
-}
-
 /// Built once, when the compiler is: two rules for one token fail the build.
-static RULES: Rules<Peeper> = {
+pub static RULES: Rules = {
     let mut rules = Rules::core();
-    FeatureExpr::rows(&mut rules);
-    FeatureStmt::rows(&mut rules);
-    FeatureType::rows(&mut rules);
+    arrays::rows(&mut rules);
+    chars::rows(&mut rules);
+    enums::rows(&mut rules);
+    interfaces::rows(&mut rules);
+    optionals::rows(&mut rules);
+    pipes::rows(&mut rules);
+    printing::rows(&mut rules);
+    ranges::rows(&mut rules);
+    raw_pointers::rows(&mut rules);
+    structs::rows(&mut rules);
     rules
 };
 
-impl Language for Peeper {
-    type Expr = FeatureExpr;
-    type Type = FeatureType;
-    type Stmt = FeatureStmt;
+/// How the checker checks each feature's nodes: by its feature's file.
+pub static CHECK_HOOKS: CheckHooks = CheckHooks {
+    check_expr,
+    check_stmt,
+    resolve_type,
+    declare_type,
+};
 
-    fn precedence(expr: &FeatureExpr) -> Precedence {
-        expr.node().precedence()
-    }
-
-    fn written_range(expr: &FeatureExpr) -> Option<WrittenRange<Peeper>> {
-        expr.node().written_range()
-    }
-
-    fn fields(ty: &FeatureType) -> Option<List<ast::Field<Peeper>>> {
-        ty.node().fields()
-    }
-
-    fn methods(ty: &FeatureType) -> Option<List<ast::Decl<Peeper>>> {
-        ty.node().methods()
-    }
-
-    fn pointee(ty: &FeatureType) -> Option<Id<ast::Type<Peeper>>> {
-        ty.node().pointee()
-    }
-
-    fn element(ty: &FeatureType) -> Option<Id<ast::Type<Peeper>>> {
-        ty.node().element()
+/// The feature expression `expr`, written at `span`, where a value of the
+/// type `expected` is wanted, if one is.
+fn check_expr(
+    builder: &mut builder::ThirBuilder<'_, '_>,
+    expr: ast::FeatureExpr,
+    span: Span,
+    expected: Option<semantic_types::TypeId>,
+) -> thir::Expr {
+    match expr {
+        ast::FeatureExpr::ArrayLiteral(literal) => {
+            arrays::check_array_literal(builder, literal, span)
+        }
+        ast::FeatureExpr::CaseTest(test) => enums::check_case_test(builder, test, span),
+        ast::FeatureExpr::Char(literal) => chars::check_char_literal(builder, literal, span),
+        ast::FeatureExpr::OrElse(or_else) => optionals::check_or_else(builder, or_else, span),
+        ast::FeatureExpr::Pipe(pipe) => pipes::check_pipe(builder, pipe, span),
+        ast::FeatureExpr::Print(print) => printing::check_print(builder, print, span),
+        ast::FeatureExpr::Range(range) => ranges::check_range(builder, range, span, expected),
+        ast::FeatureExpr::RawAddress(address) => {
+            raw_pointers::check_raw_address(builder, address, span)
+        }
+        ast::FeatureExpr::StructLiteral(literal) => {
+            structs::check_struct_literal(builder, literal, span, expected)
+        }
+        ast::FeatureExpr::VariantLiteral(literal) => {
+            enums::check_variant_literal(builder, literal, span)
+        }
     }
 }
 
-impl Grammar for Peeper {
-    fn rules() -> &'static Rules<Peeper> {
-        &RULES
+/// The feature statement `stmt`, written at `span`; `None` when it leaves
+/// no statement, after an error.
+fn check_stmt(
+    builder: &mut builder::ThirBuilder<'_, '_>,
+    stmt: ast::FeatureStmt,
+    span: Span,
+) -> Option<thir::Stmt> {
+    match stmt {
+        ast::FeatureStmt::Match(statement) => enums::check_match(builder, statement, span),
     }
 }
 
-impl Checked for Peeper {
-    fn check_expr(
-        builder: &mut ThirBuilder<'_, '_, Peeper>,
-        expr: FeatureExpr,
-        span: Span,
-        expected: Option<TypeId>,
-    ) -> thir::Expr {
-        expr.node().check(builder, span, expected)
+/// The type the feature type `ty`, written at `span`, names.
+fn resolve_type(
+    checker: &mut Checker<'_>,
+    ty: ast::FeatureType,
+    span: Span,
+) -> semantic_types::TypeId {
+    match ty {
+        ast::FeatureType::Array(ty) => arrays::resolve_array_type(checker, ty, span),
+        ast::FeatureType::Enum(ty) => enums::resolve_enum_type(checker, ty, span),
+        ast::FeatureType::Interface(ty) => interfaces::resolve_interface_type(checker, ty, span),
+        ast::FeatureType::Optional(ty) => optionals::resolve_optional_type(checker, ty, span),
+        ast::FeatureType::Pointer(ty) => raw_pointers::resolve_pointer_type(checker, ty, span),
+        ast::FeatureType::Struct(ty) => structs::resolve_struct_type(checker, ty, span),
     }
+}
 
-    fn check_stmt(
-        builder: &mut ThirBuilder<'_, '_, Peeper>,
-        stmt: FeatureStmt,
-        span: Span,
-    ) -> Option<thir::Stmt> {
-        stmt.node().check(builder, span)
-    }
-
-    fn resolve_type(checker: &mut Checker<'_, Peeper>, ty: FeatureType, span: Span) -> TypeId {
-        ty.node().resolve(checker, span)
-    }
-
-    fn declare_type(
-        checker: &mut Checker<'_, Peeper>,
-        definition: DefId,
-        written: ast::TypeDecl<Peeper>,
-        ty: FeatureType,
-    ) -> TypeId {
-        ty.node().declare(checker, definition, written)
+/// The type the module's type declaration `definition`, written `written`,
+/// declares with the feature type `ty`.
+fn declare_type(
+    checker: &mut Checker<'_>,
+    definition: DefId,
+    written: ast::TypeDecl,
+    ty: ast::FeatureType,
+) -> semantic_types::TypeId {
+    match ty {
+        ast::FeatureType::Enum(ty) => enums::declare_enum_type(checker, ty, written),
+        ast::FeatureType::Interface(ty) => {
+            interfaces::declare_interface_type(checker, ty, definition)
+        }
+        ast::FeatureType::Struct(ty) => {
+            structs::declare_struct_type(checker, ty, definition, written)
+        }
+        ast::FeatureType::Array(_)
+        | ast::FeatureType::Optional(_)
+        | ast::FeatureType::Pointer(_) => {
+            unreachable!("only `struct`, `iface` and `enum` begin a type declaration")
+        }
     }
 }
