@@ -145,9 +145,9 @@ struct CheckerInternals {
 /// A copy of a declaration with type or `const` parameters
 /// (`CheckerInternals::copies`).
 struct Copied {
-    /// A function copy's function type, or a type copy's type; invalid
-    /// while it is checked, as one with an error is removed (`copy_type`).
-    ty: TypeId,
+    /// A function copy's function type, or a type copy's type; `None`
+    /// while it is checked. One with an error is removed (`copy_type`).
+    ty: Option<TypeId>,
     /// The copies it is made inside, each in the one before, counting
     /// itself: 1 for one a declaration given nothing makes.
     depth: u32,

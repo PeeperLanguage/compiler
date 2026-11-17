@@ -147,9 +147,13 @@ The check that a feature's file names no other feature also refuses
 
 ## Step 6 (separate job)
 
-`TypeId::INVALID` today means "error reported", "no type for `T` yet" and
-"copy being checked". The last two become explicit states; `INVALID` stays
-for real errors.
+`TypeId::INVALID` meant "error reported", "no type for `T` yet" and
+"copy being checked". The copy being checked is now its own state:
+`Copied::ty` is `None` while the copy is checked. "No type for `T` yet"
+stays `INVALID`: every place that meets it stays silent, as for a reported
+error, so a second marker would have no reader. Its real split, an abstract
+type that checks a generic body once against its `T`, changes what an
+uncalled generic function reports, and waits for a language decision.
 
 ## Features after the restructuring
 

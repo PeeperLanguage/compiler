@@ -58,15 +58,15 @@ impl<L: Checked> Checker<'_, L> {
             return semantic_types::TypeId::INVALID;
         }
         if let Some(&Copied { ty, .. }) = self.internals.copies.get(&copy) {
-            // Invalid only while it is checked, as one with an error is not
-            // kept: asked for again there, as a `where` or a field can.
-            if ty == semantic_types::TypeId::INVALID {
+            // No type yet: asked for again inside its own check, as a
+            // `where` or a field can.
+            return ty.unwrap_or_else(|| {
                 let mut checking = self.internals.declarations_being_checked.iter();
                 let start = (checking.position(|checking| checking.copy() == copy))
                     .expect("a copy without a type is being checked");
                 self.report_cycle(start, used_at);
-            }
-            return ty;
+                semantic_types::TypeId::INVALID
+            });
         }
         let made_inside = self
             .internals
@@ -106,7 +106,7 @@ impl<L: Checked> Checker<'_, L> {
         self.internals.copies.insert(
             copy,
             Copied {
-                ty: semantic_types::TypeId::INVALID,
+                ty: None,
                 depth,
                 reported_in,
                 used_in: self.current_module(),
@@ -133,7 +133,7 @@ impl<L: Checked> Checker<'_, L> {
             return ty;
         }
         let copied = (self.internals.copies.get_mut(&copy)).expect("the copy was just made");
-        copied.ty = ty;
+        copied.ty = Some(ty);
         if has_body {
             self.internals.copies_to_build.push(copy);
         }
