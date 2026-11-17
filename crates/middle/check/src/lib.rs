@@ -127,7 +127,9 @@ struct CheckerInternals {
 
 /// A copy of a function with `const T: type` parameters (`CheckerInternals::function_copies`).
 struct Copied {
-    signature: TypeId, // its function type, invalid when it has an error
+    /// Its function type; invalid while it is checked, as one with an error
+    /// is removed (`copy_type`).
+    signature: TypeId,
     /// The copies it is made inside, each in the body of the one before,
     /// counting itself: 1 for one a plain function's body makes.
     depth: u32,

@@ -141,7 +141,20 @@ where
     return value;
 }
 
+// A constraint that calls the copy it is asked for closes a cycle.
+fn CallsBack(const T: type) -> bool {
+    return Loop(1) == 1;
+}
+
+fn Loop<T>(value: T) -> T //~ error[T0013]: `Loop` depends on itself
+where
+    T: CallsBack
+{
+    return value;
+}
+
 fn main() {
+    Loop(1); //~ label: in `Loop<i32>`, the copy made for this call
     Max(true, false); //~ error[T0004]: `T: Number` is false for `Max<bool>`
     Whole(Point.{ x = 1 }); //~ error[T0004]: `T: is_int` is false for `Whole<Point>`
     Eight(1); //~ error[T0004]: `T: Sized(8)` is false for `Eight<i32>`
