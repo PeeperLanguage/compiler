@@ -11,6 +11,7 @@ use arena::Id;
 use diagnostics::Code;
 use diagnostics::Diagnostic;
 use diagnostics::fix::Fix;
+use model::constant::Value;
 use model::semantic_types::Conversion;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
@@ -278,6 +279,18 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
                     self.check_reference(mutable, value, span, expected)
                 }
                 ast::Expr::None => self.check_none(span, expected),
+                ast::Expr::Bool(value) => Expr {
+                    ty: TypeId::BOOL,
+                    kind: ExprKind::Constant(Value::Bool(value)),
+                },
+                ast::Expr::String(kind) => {
+                    let ty = match kind {
+                        ast::StringKind::Plain => TypeId::STR,
+                        ast::StringKind::C => TypeId::CSTR,
+                    };
+                    self.string_literal(span, ty)
+                }
+                ast::Expr::Cast { value, ty } => self.check_cast(value, ty, span),
             }
         })
     }
@@ -347,7 +360,7 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
     /// reference to a value of a type `accepts` takes, it helps to read that
     /// value with `.*`. An error that a value's type is not one its place
     /// takes is made here, so each such error gets the same help.
-    pub fn type_error(
+    pub(crate) fn type_error(
         &self,
         code: Code,
         message: String,

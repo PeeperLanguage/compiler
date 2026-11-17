@@ -51,10 +51,6 @@ pub trait Language: Copy + Debug + 'static {
     /// array type (`[N]T`).
     fn element(ty: &Self::Type) -> Option<Id<Type<Self>>>;
 
-    /// The kind of string literal the feature expression `expr` is, if it
-    /// is one.
-    fn string_kind(expr: &Self::Expr) -> Option<StringKind>;
-
     /// The parts of the feature expression `expr`, if it is a written range.
     fn written_range(expr: &Self::Expr) -> Option<WrittenRange<Self>>;
 }
@@ -420,6 +416,8 @@ pub enum Stmt<L: Language> {
     /// a `Decl::Const`
     Const(Id<Decl<L>>),
     Return(Option<Id<Expr<L>>>),
+    /// `panic message;`
+    Panic(Id<Expr<L>>),
     /// a feature's statement
     Feature(L::Stmt),
     /// an expression followed by `;`
@@ -504,6 +502,13 @@ pub enum Expr<L: Language> {
     Number,
     /// `none`
     None,
+    /// `true` or `false`
+    Bool(bool),
+    /// `"..."` or `c"..."`; its text is its span, which `literal::value`
+    /// decodes
+    String(StringKind),
+    /// `value as ty`
+    Cast { value: Id<Expr<L>>, ty: Id<Type<L>> },
     /// `left op right`
     Binary {
         op: BinaryOp,
@@ -553,10 +558,13 @@ impl<L: Language> Expr<L> {
         match self {
             Expr::Binary { op, .. } => op.precedence(),
             Expr::Unary { .. } | Expr::Reference { .. } => Precedence::Prefix,
+            Expr::Cast { .. } => Precedence::Cast,
             Expr::Name
             | Expr::Path(_)
             | Expr::Number
             | Expr::None
+            | Expr::Bool(_)
+            | Expr::String(_)
             | Expr::Call { .. }
             | Expr::Selector { .. }
             | Expr::Dereference(_)

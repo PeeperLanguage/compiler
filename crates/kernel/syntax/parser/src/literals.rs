@@ -1,9 +1,11 @@
-//! Literals: numbers, characters and `none`.
+//! Literals: numbers, characters, bools, strings and `none`.
 
 use arena::Id;
 use diagnostics::Diagnostic;
 use syntax::ast::Expr;
+use syntax::ast::StringKind;
 use token::Token;
+use token::TokenKind;
 
 use crate::Grammar;
 use crate::Parser;
@@ -39,6 +41,21 @@ impl<L: Grammar> Parser<L> {
 /// Reads `none`.
 pub(crate) fn none_literal<L: Grammar>(p: &mut Parser<L>) -> Id<Expr<L>> {
     p.leaf(Expr::None)
+}
+
+/// Reads `true` or `false`.
+pub(crate) fn bool_literal<L: Grammar>(p: &mut Parser<L>) -> Id<Expr<L>> {
+    let value = p.tok().kind == TokenKind::True;
+    p.leaf(Expr::Bool(value))
+}
+
+/// Reads `"text"` or `c"text"`.
+pub(crate) fn string_literal<L: Grammar>(p: &mut Parser<L>) -> Id<Expr<L>> {
+    let kind = match p.tok().kind {
+        TokenKind::CString => StringKind::C,
+        _ => StringKind::Plain,
+    };
+    p.leaf(Expr::String(kind))
 }
 
 /// Reads a number and checks its type suffix.

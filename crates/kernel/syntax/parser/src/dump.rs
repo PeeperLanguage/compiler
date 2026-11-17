@@ -21,6 +21,7 @@ use syntax::ast::Param;
 use syntax::ast::Pattern;
 use syntax::ast::Signature;
 use syntax::ast::Stmt;
+use syntax::ast::StringKind;
 use syntax::ast::Tree;
 use syntax::ast::Type;
 
@@ -322,6 +323,7 @@ impl<'t> Dumper<'t> {
                 None,
                 value.map(Item::Expr).into_iter().collect(),
             ),
+            Stmt::Panic(message) => ("panic statement", None, vec![Item::Expr(message)]),
             Stmt::Feature(feature) => match feature {},
             Stmt::Expression(e) => ("expression statement", None, vec![Item::Expr(e)]),
             Stmt::Assign { target, value } => (
@@ -408,6 +410,13 @@ impl<'t> Dumper<'t> {
             Expr::Name => ("name reference", None, vec![]),
             Expr::Number => ("number literal", None, vec![]),
             Expr::None => ("none literal", None, vec![]),
+            Expr::Bool(_) => ("bool literal", None, vec![]),
+            Expr::String(kind) => (
+                "string literal",
+                (kind == StringKind::C).then_some(TokenKind::CString.text()),
+                vec![],
+            ),
+            Expr::Cast { value, ty } => ("cast expression", None, two(value, Item::Type(ty))),
             Expr::Binary { op, left, right } => (
                 "binary expression",
                 Some(op.symbol()),

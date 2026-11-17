@@ -523,3 +523,39 @@ fn a_constant_cannot_be_lent_as_writable() {
     ]);
     assert_eq!(found, expected);
 }
+
+/// A `panic` message is a plain string literal, in parentheses or not; any
+/// other value is refused, once.
+#[test]
+fn a_panic_message_is_a_string_literal() {
+    let (bodies, found) = bodies(
+        "fn f(a: i32) { panic (\"stop\"); }
+         fn g(a: i32) { panic a; }
+         fn h() { panic c\"stop\"; }
+         fn i() { panic missing; }",
+    );
+    assert_eq!(bodies, ["    panic \"stop\"\n"]);
+    let refused = "`panic` messages other than string literals are not supported yet";
+    let found: Vec<(&str, &str)> = (found.iter())
+        .map(|(_, message, text)| (message.as_str(), text.as_str()))
+        .collect();
+    assert_eq!(found.len(), 3, "{found:?}");
+    assert_eq!(found[0], (refused, "a"));
+    assert_eq!(found[1], (refused, "c\"stop\""));
+    assert_eq!(found[2].1, "missing");
+}
+
+/// A C string a compile-time run gives back is its text, read up to the
+/// zero byte that ends it, as C reads it.
+#[test]
+fn a_run_gives_back_a_c_string_without_its_end() {
+    let (bodies, found) = bodies(
+        "fn hello() -> &cstr { return c\"hello\"; }
+         fn g() {
+             const Greeting = hello();
+             let greeting = Greeting;
+         }",
+    );
+    assert!(found.is_empty(), "{found:?}");
+    assert_eq!(bodies[1], "    let greeting.0 = c\"hello\"\n");
+}

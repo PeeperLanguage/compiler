@@ -1,6 +1,9 @@
+use syntax::ast::Stmt;
+
 use crate::tests::dump_of;
 use crate::tests::messages;
 use crate::tests::one_error;
+use crate::tests::parse_text;
 
 /// A `return` without a value needs only its `;`: one missing at a line
 /// end is read past with a fix, one missing inside a line is reported.
@@ -146,4 +149,19 @@ fn statement_errors() {
         let fixed = fixed.map(|f| format!("fn f() {{ {f} }}"));
         one_error(&format!("fn f() {{ {text} }}"), message, fixed.as_deref());
     }
+}
+
+/// `panic` takes one expression and ends with `;`.
+#[test]
+fn panics() {
+    let (tree, errors) = parse_text("fn f() { panic \"stop\"; panic (message); }");
+    assert!(errors.is_empty(), "{errors:?}");
+    let found: Vec<&str> = (tree.stmts.ids())
+        .filter_map(|id| match tree.stmts[id] {
+            Stmt::Panic(message) => Some(tree.file.slice(tree.exprs.span(message))),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(found, ["\"stop\"", "(message)"]);
+    assert_eq!(messages("fn f() { panic ; }").len(), 1);
 }

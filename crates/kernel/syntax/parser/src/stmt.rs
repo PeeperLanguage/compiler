@@ -31,6 +31,7 @@ pub(crate) const fn statement_rows<L: Grammar>(statements: &mut [Option<Statemen
         p.tree.add(Stmt::Const(decl), span)
     });
     statements[TokenKind::Return as usize] = Some(return_statement);
+    statements[TokenKind::Panic as usize] = Some(panic_statement);
     statements[TokenKind::If as usize] = Some(if_statement);
     statements[TokenKind::For as usize] = Some(for_statement);
     statements[TokenKind::Break as usize] = Some(jump_statement);
@@ -295,6 +296,14 @@ fn return_statement<L: Grammar>(p: &mut Parser<L>) -> Id<Stmt<L>> {
     let value = starts_expression::<L>(p.tok().kind).then(|| p.expr(Precedence::Lowest));
     p.end();
     p.add(start, Stmt::Return(value))
+}
+
+/// Reads `panic message;`.
+fn panic_statement<L: Grammar>(p: &mut Parser<L>) -> Id<Stmt<L>> {
+    let start = p.next().span.start;
+    let message = p.expr(Precedence::Lowest);
+    p.end();
+    p.add(start, Stmt::Panic(message))
 }
 
 #[cfg(test)]

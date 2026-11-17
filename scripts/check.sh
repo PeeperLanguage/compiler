@@ -46,7 +46,7 @@ check "middle boundary" bash -c "
 # (docs/feature-front.md section 7); Cargo refuses the cycle for the crates
 # `features` depends on, this the others. And a feature's file names no
 # other feature: of its own crate, only the list's `Peeper` and enums, so
-# no module's path (`crate::bools`).
+# no module's path (`crate::structs`).
 check "feature boundary" bash -c "
     for manifest in crates/{base,backend}/*/Cargo.toml crates/kernel/syntax/*/Cargo.toml \\
         crates/kernel/{semantic,model,lower,flow,eval}/Cargo.toml crates/driver/project/Cargo.toml; do

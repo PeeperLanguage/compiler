@@ -1379,4 +1379,20 @@ mod tests {
         assert_eq!(found[1], format!("fn[] -> {void}"));
         assert_eq!(found[2], format!("fn[{:?}] -> {void}", TypeId::CSTR));
     }
+
+    /// An `extern` function is C's, so it has no body here, and any other
+    /// function has one.
+    #[test]
+    fn only_an_extern_function_has_no_body() {
+        let (found, reported) =
+            declared_types("#[extern(\"f\")]\nfn f(a: i8) -> i8 { return a; }\nfn g();\n");
+        let invalid = format!("{:?}", Type::Invalid);
+        assert_eq!(found, [invalid.clone(), invalid]);
+        let body = "a function needs a body, or `#[extern(\"name\")]` when C defines it";
+        let extern_body = "an `extern` function has no body: C gives its code";
+        assert_eq!(
+            reported,
+            crate::testing::reported(&[("P0005", extern_body, "f"), ("P0005", body, "g")])
+        );
+    }
 }

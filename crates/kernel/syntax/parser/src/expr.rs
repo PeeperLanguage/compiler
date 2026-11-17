@@ -19,8 +19,7 @@ use token::TokenKind;
 use crate::Grammar;
 use crate::Parser;
 use crate::Rules;
-use crate::literals::none_literal;
-use crate::literals::number_literal;
+use crate::literals;
 
 /// Reads the expression the current token begins.
 pub type PrefixRule<L> = fn(&mut Parser<L>) -> Id<Expr<L>>;
@@ -67,8 +66,12 @@ pub(crate) const fn expression_rows<L: Grammar>(rules: &mut Rules<L>) {
     // values
     rules.prefix(TokenKind::Ident, name_or_path);
     rules.prefix(TokenKind::SelfValue, self_name);
-    rules.prefix(TokenKind::Number, number_literal);
-    rules.prefix(TokenKind::None, none_literal);
+    rules.prefix(TokenKind::Number, literals::number_literal);
+    rules.prefix(TokenKind::None, literals::none_literal);
+    rules.prefix(TokenKind::True, literals::bool_literal);
+    rules.prefix(TokenKind::False, literals::bool_literal);
+    rules.prefix(TokenKind::String, literals::string_literal);
+    rules.prefix(TokenKind::CString, literals::string_literal);
     rules.prefix(TokenKind::LeftParen, parentheses);
 
     // prefix operators
@@ -108,6 +111,8 @@ pub(crate) const fn expression_rows<L: Grammar>(rules: &mut Rules<L>) {
     rules.infix(TokenKind::LeftParen, Precedence::Call, call);
     rules.infix(TokenKind::LeftBracket, Precedence::Call, index);
     rules.infix(TokenKind::Dot, Precedence::Call, selector);
+
+    rules.infix(TokenKind::As, Precedence::Cast, cast);
 }
 
 /// Whether an expression can begin with `kind`.
@@ -186,6 +191,13 @@ pub(crate) fn name_or_path<L: Grammar>(p: &mut Parser<L>) -> Id<Expr<L>> {
         return read(p, path);
     }
     p.add(start, Expr::Path(path))
+}
+
+/// Reads `as Type` after `value`.
+fn cast<L: Grammar>(p: &mut Parser<L>, value: Id<Expr<L>>) -> Id<Expr<L>> {
+    p.next();
+    let ty = p.type_expr();
+    p.add(p.start_of(value), Expr::Cast { value, ty })
 }
 
 /// Reads `( expression )`.

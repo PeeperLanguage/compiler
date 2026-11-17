@@ -2,7 +2,6 @@ use std::convert::Infallible;
 
 use syntax::ast::Decl;
 use syntax::ast::Field;
-use syntax::ast::StringKind;
 use syntax::ast::Type;
 use syntax::ast::WrittenRange;
 use syntax::operators::Precedence;
@@ -37,10 +36,6 @@ impl Language for Bare {
 
     fn element(ty: &Infallible) -> Option<Id<Type<Bare>>> {
         match *ty {}
-    }
-
-    fn string_kind(expr: &Infallible) -> Option<StringKind> {
-        match *expr {}
     }
 
     fn written_range(expr: &Infallible) -> Option<WrittenRange<Bare>> {

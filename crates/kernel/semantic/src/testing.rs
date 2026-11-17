@@ -55,10 +55,6 @@ impl Language for Bare {
         match *ty {}
     }
 
-    fn string_kind(expr: &Infallible) -> Option<ast::StringKind> {
-        match *expr {}
-    }
-
     fn written_range(expr: &Infallible) -> Option<ast::WrittenRange<Bare>> {
         match *expr {}
     }

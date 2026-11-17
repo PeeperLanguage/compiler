@@ -1,5 +1,6 @@
 use syntax::ast::Decl;
 use syntax::ast::Stmt;
+use syntax::ast::StringKind;
 use syntax::ast::Tree;
 
 use super::*;
@@ -70,10 +71,13 @@ fn first_expression(tree: &Tree<Bare>) -> Id<Expr<Bare>> {
     e
 }
 
-/// An expression with each binary operation in parentheses.
+/// An expression with each binary operation and cast in parentheses.
 fn grouped(t: &Tree<Bare>, id: Id<Expr<Bare>>) -> String {
     let text = |span| t.file.slice(span).to_string();
     match t.exprs[id] {
+        Expr::Cast { value, ty } => {
+            format!("({} as {})", grouped(t, value), text(t.types.span(ty)))
+        }
         Expr::Binary { op, left, right } => {
             format!(
                 "({} {} {})",
@@ -115,7 +119,8 @@ fn grouped(t: &Tree<Bare>, id: Id<Expr<Bare>>) -> String {
 }
 
 /// How operators group, from loosest to tightest, and that operators of
-/// one precedence group to the left.
+/// one precedence group to the left. A cast binds tighter than every binary
+/// operator.
 #[test]
 fn precedence() {
     for (text, want) in [
@@ -137,6 +142,8 @@ fn precedence() {
         ("x.y.z[0][i]", "x.y.z[0][i]"),
         ("-r.* * r.x.*", "(-r.* * r.x.*)"),
         ("&mut r.*.x", "&mut r.*.x"),
+        ("a + b as i64", "(a + (b as i64))"),
+        ("a as i32 * b", "((a as i32) * b)"),
     ] {
         let (tree, errors) = parse_text(&format!("fn f() {{ {text}; }}"));
         assert!(errors.is_empty(), "{text}: {errors:?}");
@@ -309,4 +316,45 @@ fn number_checks() {
             "{literal}: {errors:?}"
         );
     }
+}
+
+/// `true` and `false` are bool literals, each spanning its word, and an
+/// operand like any value.
+#[test]
+fn bool_literals() {
+    let (tree, errors) = parse_text("fn f() { true; false; !true == false; }");
+    assert!(errors.is_empty(), "{errors:?}");
+    let literals: Vec<(bool, &str)> = (tree.exprs.ids())
+        .filter_map(|id| match tree.exprs[id] {
+            Expr::Bool(value) => Some((value, tree.file.slice(tree.exprs.span(id)))),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        literals,
+        [
+            (true, "true"),
+            (false, "false"),
+            (true, "true"),
+            (false, "false")
+        ]
+    );
+}
+
+/// `"..."` is a plain string literal and `c"..."` a C one, each spanning
+/// its quotes.
+#[test]
+fn string_literals() {
+    let (tree, errors) = parse_text(r#"fn f() { g("a", c"b"); }"#);
+    assert!(errors.is_empty(), "{errors:?}");
+    let literals: Vec<(StringKind, &str)> = (tree.exprs.ids())
+        .filter_map(|id| match tree.exprs[id] {
+            Expr::String(kind) => Some((kind, tree.file.slice(tree.exprs.span(id)))),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        literals,
+        [(StringKind::Plain, "\"a\""), (StringKind::C, "c\"b\"")]
+    );
 }

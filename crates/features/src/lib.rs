@@ -17,24 +17,19 @@ use parser::Rules;
 use source::Span;
 use syntax::ast;
 use syntax::ast::Language;
-use syntax::ast::StringKind;
 use syntax::ast::WrittenRange;
 use syntax::operators::Precedence;
 
 pub mod arrays;
-pub mod bools;
-pub mod casts;
 pub mod chars;
 pub mod enums;
 pub mod interfaces;
 pub mod optionals;
-pub mod panics;
 pub mod pipes;
 pub mod printing;
 pub mod ranges;
 pub mod raw_pointers;
 pub mod structs;
-pub mod text;
 
 #[cfg(test)]
 mod testing;
@@ -47,11 +42,6 @@ pub enum Peeper {}
 pub(crate) trait ExprNode {
     /// The precedence the expression has where it is an operand.
     fn precedence(&self) -> Precedence;
-
-    /// What kind of string literal it is, if it is one.
-    fn string_kind(&self) -> Option<StringKind> {
-        None
-    }
 
     /// The range it writes, if it is one.
     fn written_range(&self) -> Option<WrittenRange<Peeper>> {
@@ -141,16 +131,13 @@ nodes! {
     /// An expression of a feature's, by feature.
     FeatureExpr: ExprNode {
         ArrayLiteral(arrays::ArrayLiteral),
-        Bool(bools::BoolLiteral),
         CaseTest(enums::CaseTest),
-        Cast(casts::Cast),
         Char(chars::CharLiteral),
         OrElse(optionals::OrElse),
         Pipe(pipes::Pipe),
         Print(printing::Print),
         Range(ranges::Range),
         RawAddress(raw_pointers::RawAddress),
-        String(text::StringLiteral),
         StructLiteral(structs::StructLiteral),
         VariantLiteral(enums::VariantLiteral),
     }
@@ -160,7 +147,6 @@ nodes! {
     /// A statement of a feature's, by feature.
     FeatureStmt: StmtNode {
         Match(enums::Match),
-        Panic(panics::Panic),
     }
 }
 
@@ -192,10 +178,6 @@ impl Language for Peeper {
 
     fn precedence(expr: &FeatureExpr) -> Precedence {
         expr.node().precedence()
-    }
-
-    fn string_kind(expr: &FeatureExpr) -> Option<StringKind> {
-        expr.node().string_kind()
     }
 
     fn written_range(expr: &FeatureExpr) -> Option<WrittenRange<Peeper>> {

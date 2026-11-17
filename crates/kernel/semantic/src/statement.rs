@@ -392,6 +392,7 @@ impl<'a, 'p, L: Checked> ThirBuilder<'a, 'p, L> {
                     return None;
                 }
                 ast::Stmt::Return(value) => Stmt::Return(self.check_return_value(span, value)),
+                ast::Stmt::Panic(message) => self.check_panic(message)?,
                 ast::Stmt::Feature(stmt) => L::check_stmt(self, stmt, span)?,
                 ast::Stmt::Expression(value) => Stmt::Expression(self.add_expr(value, None)),
                 ast::Stmt::Assign { target, value } => self.assign(target, value)?,
@@ -499,6 +500,28 @@ impl<'a, 'p, L: Checked> ThirBuilder<'a, 'p, L> {
             };
             Some(self.body.add(checked, span))
         })
+    }
+
+    /// `panic message;`: the message is a plain string literal.
+    fn check_panic(&mut self, message: Id<ast::Expr<L>>) -> Option<Stmt> {
+        let tree = &self.checker.module().ast;
+        let message = tree.unparenthesized(message);
+        let span = tree.exprs.span(message);
+        // shortcut: a plain string literal only, as there are no run-time
+        // strings; take a string value once there are.
+        if !matches!(
+            tree.exprs[message],
+            ast::Expr::String(ast::StringKind::Plain)
+        ) {
+            let checked = self.add_expr(message, None);
+            if self.body.exprs[checked].ty != TypeId::INVALID {
+                let what = "`panic` messages other than string literals";
+                self.checker.not_supported(span, what);
+            }
+            return None;
+        }
+        let message = self.string_literal(span, TypeId::STR);
+        Some(Stmt::Panic(self.body.add(message, span)))
     }
 }
 
