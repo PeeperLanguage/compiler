@@ -90,6 +90,9 @@ fn main() {
     let big: i64 = 9;
     // The first argument that says what `T` is decides; the next converts.
     println(Max(3, 7), Max(big, 2), Max(1.5, 0.5));
+    let small: u8 = 3;
+    // A literal after it takes the type found, as in a plain call.
+    println(Max(small, 1), Max(small, 200));
     // Types written at the call, after `::`, decide; each argument converts.
     println(Max::<f64>(1, 2.5), Zero::<u8>(), Zero::<f64>(), Second::<i8, f32>(1, 2));
     // Without `::`, `<` and `>` compare.

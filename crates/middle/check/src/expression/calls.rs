@@ -418,8 +418,8 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
     /// takes no argument: its type is written at the call, in
     /// `type_arguments`, or found from the arguments of the parameters
     /// whose types name it (`find_type_argument`), each checked here, once,
-    /// and left in `checked_early` at its place for
-    /// `check_call` to take. When a `const` one is missing, the
+    /// until every type parameter is found, and left in `checked_early` at
+    /// its place for `check_call` to take. When a `const` one is missing, the
     /// function itself and its own type, for `check_call` to report the
     /// count. `None` when one has an error, or the function's signature
     /// has one, reported.
@@ -492,6 +492,11 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
         } else if !names.is_empty() {
             checked_early.resize(arguments.len(), None);
             for &(place, parameter) in &written_parameters {
+                // The rest are checked as the copy's parameters, so a
+                // literal takes the found type: `Max(small, 1)`.
+                if types_found.iter().all(Option::is_some) {
+                    break;
+                }
                 // shortcut: the arguments of a `...T` do not say what `T` is,
                 // as `check_variadic` checks them; find it from them when a
                 // function needs it.
