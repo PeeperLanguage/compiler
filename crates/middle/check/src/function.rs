@@ -1,16 +1,13 @@
 //! A function's body built to checked MIR (THIR, lowering, the path checks),
 //! and calls run at compile time on it (`evaluate_call`).
 
-use std::sync::Arc;
-
 use diagnostics::Diagnostic;
 use eval::interpreter::ADDRESS_NOT_KNOWN;
 use eval::interpreter::ConstantShape;
 use eval::interpreter::Failure;
 use model::ConstArguments;
+use model::DeclarationCopy;
 use model::DefId;
-use model::FunctionCopy;
-use model::ModuleId;
 use model::constant::Value;
 use model::mir;
 use model::semantic_types::Type;
@@ -21,11 +18,8 @@ use source::Span;
 use syntax::ast;
 use syntax::ast::Language;
 
-use crate::COPY_DEPTH_LIMIT;
 use crate::Checked;
 use crate::Checker;
-use crate::Checking;
-use crate::Copied;
 
 /// How far the body of a function is built (`Checker::build_function`),
 /// once it is.
@@ -49,7 +43,7 @@ impl<L: Checked> Checker<'_, L> {
     /// way round) finds the same and drops it.
     pub fn build_function(
         &mut self,
-        copy: FunctionCopy,
+        copy: DeclarationCopy,
         used_at: Span,
         thir: &mut thir::Body,
         records_facts: bool,
@@ -69,147 +63,10 @@ impl<L: Checked> Checker<'_, L> {
         if !first {
             found.truncate(reported);
         } else if copy.arguments != ConstArguments::NONE {
-            let into = self.internals.function_copies[&copy].reported_in;
+            let into = self.internals.copies[&copy].reported_in;
             self.report_from_copy(copy, reported, into);
         }
         mir.map(|mir| mir.filter(|_| !failed))
-    }
-
-    /// The type of `copy`, asked for at `used_at`: a plain function's
-    /// (`function_type`), or, for a function with `const T: type`
-    /// parameters, the type of its copy for the types it is given, made the
-    /// first time a call asks for it and kept for the compile to build its
-    /// body (`next_copy`). Invalid when the function's own signature, or
-    /// the copy's, has an error, or when copies are made inside each other
-    /// too deep (`COPY_DEPTH_LIMIT`), reported at `used_at`.
-    pub fn copy_type(&mut self, copy: FunctionCopy, used_at: Span) -> TypeId {
-        let pattern = self.function_type(copy.definition, used_at);
-        if copy.arguments == ConstArguments::NONE || pattern == TypeId::INVALID {
-            return pattern;
-        }
-        if let Some(&Copied { signature, .. }) = self.internals.function_copies.get(&copy) {
-            // Invalid only while its signature is checked, as one with an
-            // error is not kept: asked for again there, as a `where` can.
-            if signature == TypeId::INVALID {
-                let mut checking = self.internals.declarations_being_checked.iter();
-                let start = (checking.position(|checking| checking.copy() == copy))
-                    .expect("a copy without a signature is being checked");
-                self.report_cycle(start, used_at);
-            }
-            return signature;
-        }
-        let made_inside = self
-            .internals
-            .declarations_being_checked
-            .last()
-            .expect("a call is being checked")
-            .copy();
-        // A function's own body (`check_body`) is checked for its names
-        // only, so it makes no copy.
-        if made_inside.arguments != ConstArguments::NONE
-            && !self.internals.function_copies.contains_key(&made_inside)
-        {
-            return TypeId::INVALID;
-        }
-        let (depth, reported_in) = match self.internals.function_copies.get(&made_inside) {
-            Some(inside) => (inside.depth + 1, inside.reported_in),
-            None => (1, self.current_module()),
-        };
-        if depth > COPY_DEPTH_LIMIT {
-            // Reported once: the body that made the copy has the error.
-            if std::mem::replace(&mut self.internals.copies_too_deep, true) {
-                return TypeId::INVALID;
-            }
-            let name = model::program::declared_path(self.modules, copy.definition);
-            let message = format!(
-                "`{name}` makes a new copy of itself inside each copy, without end: \
-                 copies nest {COPY_DEPTH_LIMIT} deep here"
-            );
-            return self.error(diagnostics::CIRCULAR_DEPENDENCY, message, used_at);
-        }
-        self.internals.function_copies.insert(
-            copy,
-            Copied {
-                signature: TypeId::INVALID,
-                depth,
-                reported_in,
-                called_in: self.current_module(),
-                called_at: used_at,
-            },
-        );
-        let module = copy.definition.module.index();
-        let reported = self.module_checks[module].diagnostics.len();
-        let checking = Checking {
-            definition: copy.definition,
-            arguments: copy.arguments,
-            used_at,
-            records_facts: true,
-        };
-        let signature =
-            self.checking_in(checking, |checker| checker.check_function(copy.definition));
-        let caller = self.current_module();
-        self.report_from_copy(copy, reported, caller);
-        if signature == TypeId::INVALID {
-            // Not kept: another call that asks for it is told why as well.
-            self.internals.function_copies.remove(&copy);
-            return signature;
-        }
-        let copied = self
-            .internals
-            .function_copies
-            .get_mut(&copy)
-            .expect("the copy was just made");
-        copied.signature = signature;
-        self.internals.copies_to_build.push(copy);
-        signature
-    }
-
-    /// A copy of a function with `const T: type` parameters whose body the
-    /// compile has not built (`build_function`), the newest first; building
-    /// one may make more. None once copies nested too deep.
-    pub fn next_copy(&mut self) -> Option<FunctionCopy> {
-        self.internals
-            .copies_to_build
-            .pop()
-            .filter(|_| !self.internals.copies_too_deep)
-    }
-
-    /// Moves what checking `copy` reported in its function's module, past
-    /// the first `reported` diagnostics, to the module `into`, each marking
-    /// the call it was made for. Another copy's check may find the same in
-    /// the function's text: the module keeps the first.
-    fn report_from_copy(&mut self, copy: FunctionCopy, reported: usize, into: ModuleId) {
-        let modules = self.modules;
-        let definition = copy.definition;
-        let found = &mut self.module_checks[definition.module.index()].diagnostics;
-        if found.len() == reported {
-            return;
-        }
-        let found: Vec<Diagnostic> = found.drain(reported..).collect();
-        let Copied {
-            called_in,
-            called_at,
-            ..
-        } = self.internals.function_copies[&copy];
-        let name = model::program::copy_name(modules, &self.types, copy);
-        let file = &modules[called_in.index()].ast.file;
-        let into = &mut self.module_checks[into.index()].diagnostics;
-        for diagnostic in found {
-            if into.iter().any(|earlier| earlier.reports_same(&diagnostic)) {
-                continue;
-            }
-            // One about the call itself (`constraints_hold`) already marks it.
-            let at_call = diagnostic
-                .labels
-                .first()
-                .is_some_and(|label| Arc::ptr_eq(&label.file, file) && label.span == called_at);
-            into.push(if at_call {
-                diagnostic
-            } else {
-                let message = format!("in `{name}`, the copy made for this call");
-                diagnostic.label(file, called_at, message)
-            });
-        }
     }
 
     /// The MIR of the checked THIR `thir` of the function `definition`, of
@@ -252,7 +109,7 @@ impl<L: Checked> Checker<'_, L> {
     /// error, which was.
     pub(crate) fn evaluate_call(
         &mut self,
-        function: FunctionCopy,
+        function: DeclarationCopy,
         arguments: &[Value],
         span: Span,
     ) -> Option<Value> {
@@ -322,7 +179,7 @@ impl<L: Checked> Checker<'_, L> {
             .map(|(argument, &ty)| (argument, shape(ty)))
             .collect();
         let result = shape(*result);
-        let mir_of = |copy: FunctionCopy| match self.internals.built_bodies.get(&copy) {
+        let mir_of = |copy: DeclarationCopy| match self.internals.built_bodies.get(&copy) {
             Some(Built::Kept(mir)) => mir.as_deref(),
             None | Some(Built::Reported) => None,
         };

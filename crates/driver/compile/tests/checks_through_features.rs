@@ -9,8 +9,8 @@ use check::Checker;
 use check::scope::collect;
 use features::Peeper;
 use model::ConstArguments;
+use model::DeclarationCopy;
 use model::DefId;
-use model::FunctionCopy;
 use model::ModuleId;
 use model::machine::Machine;
 use model::program::Import;
@@ -313,7 +313,7 @@ fn body_reports(text: &str) -> Vec<Reported> {
                 index: index as u32,
             };
             checker.check_body(
-                FunctionCopy {
+                DeclarationCopy {
                     definition,
                     arguments: ConstArguments::NONE,
                 },

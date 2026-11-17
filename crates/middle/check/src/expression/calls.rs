@@ -7,8 +7,8 @@ use arena::Id;
 use arena::List;
 use model::Callee;
 use model::ConstArguments;
+use model::DeclarationCopy;
 use model::DefId;
-use model::FunctionCopy;
 use model::constant::Value;
 use model::semantic_types::ConstArgument;
 use model::semantic_types::Constant;
@@ -347,7 +347,7 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
         match symbol {
             Some(Symbol::Function(definition)) => {
                 let ty = self.checker.function_type(definition, span);
-                let function = FunctionCopy {
+                let function = DeclarationCopy {
                     definition,
                     arguments: ConstArguments::NONE,
                 };
@@ -458,7 +458,7 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
             })
             .count();
         if arguments.len() < required {
-            let function = FunctionCopy {
+            let function = DeclarationCopy {
                 definition,
                 arguments: ConstArguments::NONE,
             };
@@ -574,7 +574,7 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
         if failed {
             return None;
         }
-        let copy = FunctionCopy {
+        let copy = DeclarationCopy {
             definition,
             arguments: self.checker.types.const_arguments(&given),
         };
@@ -592,7 +592,7 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
         interface: TypeId,
         name: Ident,
     ) -> Option<(Id<Expr>, Callee, TypeId)> {
-        let (Type::Named(definition) | Type::Interface { definition, .. }) =
+        let (Type::Named { definition, .. } | Type::Interface { definition, .. }) =
             self.checker.types[interface]
         else {
             unreachable!("an interface reference refers to an interface")
@@ -678,7 +678,7 @@ fn constant_expr(constant: Option<Constant>) -> Expr {
 
 /// Why a call of `callee` with `given` arguments is wrong, when it takes
 /// `fixed` of them, or at least that many when `variadic`.
-fn argument_count_message(
+pub(crate) fn argument_count_message(
     callee: &str,
     what: &str,
     fixed: usize,

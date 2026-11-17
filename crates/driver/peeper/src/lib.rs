@@ -4,7 +4,7 @@
 
 use features::Peeper;
 use llvm::BuildMode;
-use model::FunctionCopy;
+use model::DeclarationCopy;
 use model::machine::Machine;
 use model::mir;
 use model::program::Program;
@@ -23,7 +23,7 @@ pub fn write_program<'p>(
     target: &'static Machine,
     mode: BuildMode,
     require_main: bool,
-    mut each_function: impl FnMut(FunctionCopy, &thir::Body, &mir::Body, &Types),
+    mut each_function: impl FnMut(DeclarationCopy, &thir::Body, &mir::Body, &Types),
 ) -> (Vec<llvm::Module<'p>>, compile::Results) {
     let files: Vec<_> = (program.modules.iter())
         .map(|module| module.ast.file.clone())

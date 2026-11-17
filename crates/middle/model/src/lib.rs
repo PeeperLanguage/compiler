@@ -50,11 +50,11 @@ impl ConstArguments {
     pub const NONE: ConstArguments = ConstArguments(0);
 }
 
-/// A function as a call names it: its declaration, and what its `const`
-/// parameters are given, which makes this copy of it
-/// (`ConstArguments::NONE` for a function without them).
+/// A declaration as it is named: a function at a call, or a type, with
+/// what its type and `const` parameters are given, which makes this copy
+/// of it (`ConstArguments::NONE` for one without them).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct FunctionCopy {
+pub struct DeclarationCopy {
     pub definition: DefId,
     pub arguments: ConstArguments,
 }
@@ -64,6 +64,6 @@ pub struct FunctionCopy {
 /// argument, which the call gives as its `self` (THIR's and MIR's `Call`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Callee {
-    Function(FunctionCopy),
+    Function(DeclarationCopy),
     Method(u32),
 }

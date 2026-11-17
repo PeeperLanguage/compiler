@@ -125,7 +125,7 @@ impl TypeNode for InterfaceType {
         if methods.iter().any(|&method| invalid(method)) {
             return TypeId::INVALID;
         }
-        let named = checker.types.intern(Type::Named(definition));
+        let named = checker.declared_name(definition);
         checker.types.define_interface(named, methods.into());
         named
     }

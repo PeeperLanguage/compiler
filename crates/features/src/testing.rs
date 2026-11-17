@@ -7,8 +7,8 @@ use arena::Id;
 use check::Checker;
 use diagnostics::Diagnostic;
 use model::ConstArguments;
+use model::DeclarationCopy;
 use model::DefId;
-use model::FunctionCopy;
 use model::ModuleId;
 use model::machine::Machine;
 use model::thir::Body;
@@ -101,7 +101,7 @@ pub(crate) fn bodies(text: &str) -> (Vec<String>, Vec<Reported>) {
         let name = |function: DefId| names[function.index as usize].as_str();
         (functions.iter())
             .map(|&(definition, span)| {
-                let copy = FunctionCopy {
+                let copy = DeclarationCopy {
                     definition,
                     arguments: ConstArguments::NONE,
                 };

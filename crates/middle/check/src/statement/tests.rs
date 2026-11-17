@@ -1,6 +1,6 @@
 use model::ConstArguments;
+use model::DeclarationCopy;
 use model::DefId;
-use model::FunctionCopy;
 use model::thir::Body;
 use source::SourceFile;
 use syntax::ast;
@@ -27,7 +27,7 @@ fn bodies(text: &str) -> (Vec<String>, Vec<Reported>) {
             };
             let mut body = Body::default();
             let checked = checker.check_body(
-                FunctionCopy {
+                DeclarationCopy {
                     definition,
                     arguments: ConstArguments::NONE,
                 },
@@ -378,7 +378,7 @@ fn notes(text: &str) -> Vec<(String, Option<String>)> {
             index: 0,
         };
         checker.check_body(
-            FunctionCopy {
+            DeclarationCopy {
                 definition,
                 arguments: ConstArguments::NONE,
             },

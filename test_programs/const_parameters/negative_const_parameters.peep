@@ -57,7 +57,7 @@ fn main() {
     let f = Size; //~ error[T0043]: functions as values are not supported yet
     let b = Box.{ x = 1 };
     let n: &Named = &b; //~ error[T0001]: `Box` does not implement `Named`: its `Name` takes a `const` parameter, so it is not one function an interface reference can call
-    println(Double(i32, 2), Double(bool, true)); //~ label: in `Double<bool>`, the copy made for this call
+    println(Double(i32, 2), Double(bool, true)); //~ label: in `Double<bool>`, the copy made here
     println(Value(i32));
     let x: i64 = 3; //~ label: `x` gets its value only when the program runs
     println(Scaled(x, 1)); //~ error[T0004]: the value of a constant must be known at compile time

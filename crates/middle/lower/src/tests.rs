@@ -6,8 +6,8 @@ use std::sync::Arc;
 use check::Checker;
 use features::Peeper;
 use model::ConstArguments;
+use model::DeclarationCopy;
 use model::DefId;
-use model::FunctionCopy;
 use model::ModuleId;
 use model::machine::Machine;
 use model::mir;
@@ -47,7 +47,7 @@ fn lower_main(text: &str, target: &str) -> (String, mir::Body, DebugTypes) {
             _ => None,
         })
         .expect("the program has a `main`");
-    let main = FunctionCopy {
+    let main = DeclarationCopy {
         definition: DefId {
             module: ModuleId::from_index(0),
             index: index as u32,
@@ -73,7 +73,7 @@ fn lower_main(text: &str, target: &str) -> (String, mir::Body, DebugTypes) {
     )
     .expect("the body lowers");
     let name_of =
-        |function: FunctionCopy| model::program::declared_path(&modules, function.definition);
+        |function: DeclarationCopy| model::program::declared_path(&modules, function.definition);
     (mir.text(&file, name_of), mir, debug_types.table)
 }
 

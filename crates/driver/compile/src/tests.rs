@@ -1260,7 +1260,7 @@ fn copies_report_once_to_the_calling_module() {
             "operator `+` cannot be applied to `bool`".to_string(),
             vec![
                 "x + x ".to_string(),
-                "add(T, x) in `add<bool>`, the copy made for this call".to_string(),
+                "add(T, x) in `add<bool>`, the copy made here".to_string(),
             ]
         ),]
     );

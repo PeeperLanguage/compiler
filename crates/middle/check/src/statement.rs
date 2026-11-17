@@ -11,7 +11,7 @@ use arena::Id;
 use arena::List;
 use diagnostics::Diagnostic;
 use model::ConstArguments;
-use model::FunctionCopy;
+use model::DeclarationCopy;
 use model::constant::Value;
 use model::semantic_types::ConstArgument;
 use model::semantic_types::Type;
@@ -33,7 +33,6 @@ use crate::Checker;
 use crate::Checking;
 use crate::builder::Declared;
 use crate::builder::ThirBuilder;
-use crate::declaration::first_copy_parameter;
 use crate::function::function_declaration;
 use crate::scope::report_redeclared;
 
@@ -49,12 +48,12 @@ impl<L: Checked> Checker<'_, L> {
     /// and it reports what is wrong whatever those are.
     pub fn check_body(
         &mut self,
-        copy: FunctionCopy,
+        copy: DeclarationCopy,
         used_at: Span,
         body: &mut Body,
         records_facts: bool,
     ) -> bool {
-        let FunctionCopy {
+        let DeclarationCopy {
             definition,
             arguments,
         } = copy;
@@ -73,11 +72,9 @@ impl<L: Checked> Checker<'_, L> {
         };
         let (parameters, result) = (parameters.clone(), *result);
         let tree = &self.modules[module].ast;
-        let arguments = match first_copy_parameter(tree, function.signature) {
-            Some(_) if arguments == ConstArguments::NONE => {
-                self.own_arguments(tree, function.signature)
-            }
-            _ => arguments,
+        let arguments = match arguments {
+            ConstArguments::NONE => self.own_arguments(definition),
+            copy => copy,
         };
         let checking = Checking {
             definition,

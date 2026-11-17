@@ -56,7 +56,7 @@ pub fn layout(types: &Types, ty: TypeId, target: &Machine) -> (u64, u64) {
             let (size, align) = layout(types, internals.base, target);
             (size.saturating_mul(internals.count), align)
         }
-        Type::Invalid | Type::Void | Type::Function { .. } | Type::Named(_) => {
+        Type::Invalid | Type::Void | Type::Function { .. } | Type::Named { .. } => {
             unreachable!("no value is laid out with this type")
         }
         Type::Alias { .. } => unreachable!("indexing looks through aliases"),

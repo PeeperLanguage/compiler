@@ -5,6 +5,7 @@
 pub mod builder;
 pub mod builtin;
 mod constraints;
+mod copies;
 pub mod declaration;
 mod expression;
 pub mod fold;
@@ -23,11 +24,10 @@ use diagnostics::Code;
 use diagnostics::Diagnostic;
 use diagnostics::fix::Fix;
 use function::Built;
-use function::function_declaration;
 use lower::ProgramDebugTypes;
 use model::ConstArguments;
+use model::DeclarationCopy;
 use model::DefId;
-use model::FunctionCopy;
 use model::ModuleId;
 use model::machine::Machine;
 use model::semantic_types::ConstArgument;
@@ -112,47 +112,50 @@ struct CheckerInternals {
     declarations_being_checked: Vec<Checking>,
     /// How far the body of each function, or each copy of one, is built
     /// (`build_function`).
-    built_bodies: FxHashMap<FunctionCopy, Built>,
-    /// Each copy of a function with `const T: type` parameters made so far
-    /// (`copy_type`).
-    function_copies: FxHashMap<FunctionCopy, Copied>,
+    built_bodies: FxHashMap<DeclarationCopy, Built>,
+    /// Each copy of a function or type with type or `const` parameters
+    /// made so far (`copy_type`).
+    copies: FxHashMap<DeclarationCopy, Copied>,
     /// The copies made whose bodies the compile has not built yet, in the
     /// order made; it takes them (`next_copy`).
-    copies_to_build: Vec<FunctionCopy>,
+    copies_to_build: Vec<DeclarationCopy>,
     /// Whether copies nested too deep (`COPY_DEPTH_LIMIT`): then no copy's
     /// body is built any more, as a function that makes two copies inside
     /// each would make twice as many at each depth.
     copies_too_deep: bool,
 }
 
-/// A copy of a function with `const T: type` parameters (`CheckerInternals::function_copies`).
+/// A copy of a declaration with type or `const` parameters
+/// (`CheckerInternals::copies`).
 struct Copied {
-    /// Its function type; invalid while it is checked, as one with an error
-    /// is removed (`copy_type`).
-    signature: TypeId,
-    /// The copies it is made inside, each in the body of the one before,
-    /// counting itself: 1 for one a plain function's body makes.
+    /// A function copy's function type, or a type copy's type; invalid
+    /// while it is checked, as one with an error is removed (`copy_type`).
+    ty: TypeId,
+    /// The copies it is made inside, each in the one before, counting
+    /// itself: 1 for one a declaration given nothing makes.
     depth: u32,
     /// The module whose check made it, or the copy it is made inside: what
-    /// the check of its body finds is reported there. Its signature's
-    /// errors go to the call's module, as the call's.
+    /// the check of a function copy's body finds is reported there. Its own
+    /// check's errors go to the use's module, as the use's.
     reported_in: ModuleId,
-    /// The call it was made for, in the module `called_in`.
-    called_in: ModuleId,
-    called_at: Span,
+    /// The use it was made for, a call or a type, in the module `used_in`.
+    used_in: ModuleId,
+    used_at: Span,
 }
 
-/// How deep copies may be made inside each other's bodies (`Copied::depth`):
-/// a function whose copy calls a copy for a new type each time would make
-/// copies without end.
+/// How deep copies may be made inside each other (`Copied::depth`): a
+/// function whose copy calls a copy for a new type each time would make
+/// copies without end. A type cannot: one that holds a new copy of itself,
+/// `struct S<T> { next: S<[2]T> }`, holds itself, found in its own check
+/// (`resolve_type`).
 const COPY_DEPTH_LIMIT: u32 = 64;
 
 /// A declaration being checked (`CheckerInternals::declarations_being_checked`).
 struct Checking {
     definition: DefId,
-    /// What its `const` parameters are given, when it is a function that
-    /// has them: a copy's, or invalid types in its own signature
-    /// (`own_arguments`); else `ConstArguments::NONE`.
+    /// What its type and `const` parameters are given, when it is a
+    /// function or a struct that has them: a copy's, or invalid types in
+    /// its own check (`own_arguments`); else `ConstArguments::NONE`.
     arguments: ConstArguments,
     /// Where its asker wrote its name (its own name, when checked for its
     /// own sake).
@@ -168,10 +171,9 @@ struct Checking {
 }
 
 impl Checking {
-    /// The function, or copy of one, it is; a declaration of another kind
-    /// with no arguments.
-    fn copy(&self) -> FunctionCopy {
-        FunctionCopy {
+    /// The declaration, or copy of one, it is.
+    fn copy(&self) -> DeclarationCopy {
+        DeclarationCopy {
             definition: self.definition,
             arguments: self.arguments,
         }
@@ -247,7 +249,7 @@ impl<'p, L: Checked> Checker<'p, L> {
                 records_editor_facts: record_facts,
                 declarations_being_checked: Vec::new(),
                 built_bodies: FxHashMap::default(),
-                function_copies: FxHashMap::default(),
+                copies: FxHashMap::default(),
                 copies_to_build: Vec::new(),
                 copies_too_deep: false,
             },
@@ -266,13 +268,30 @@ impl<'p, L: Checked> Checker<'p, L> {
         )
     }
 
+    /// The name the type declaration `definition`, being checked, gives its
+    /// type: with what its copy is given, for a type with type parameters
+    /// (`copy_type`).
+    pub fn declared_name(&mut self, definition: DefId) -> TypeId {
+        let checking = (self.internals.declarations_being_checked.last())
+            .expect("a declaration is being checked");
+        debug_assert_eq!(checking.definition, definition);
+        let arguments = checking.arguments;
+        self.types.intern(Type::Named {
+            definition,
+            arguments,
+        })
+    }
+
     /// The type the name of the type declaration or alias `definition` stands
     /// for, named at `used_at`. A type declaration makes its type
     /// (`Type::Named`, a struct's once checked), so naming it checks nothing;
     /// an alias names its declared type (`Type::Alias`).
     pub fn named_type(&mut self, definition: DefId, used_at: Span) -> TypeId {
         if let ast::Decl::Type(_) = model::program::declaration(self.modules, definition) {
-            return self.types.intern(Type::Named(definition));
+            return self.types.intern(Type::Named {
+                definition,
+                arguments: ConstArguments::NONE,
+            });
         }
         let target = self.declared_type(definition, used_at);
         if target == TypeId::INVALID {
@@ -331,7 +350,7 @@ impl<'p, L: Checked> Checker<'p, L> {
         }
         let checking = Checking {
             definition,
-            arguments: ConstArguments::NONE,
+            arguments: self.own_arguments(definition),
             used_at,
             records_facts: true,
         };
@@ -356,9 +375,8 @@ impl<'p, L: Checked> Checker<'p, L> {
         result
     }
 
-    /// Whether the declaration being checked is a copy of a function with
-    /// `const T: type` parameters (`copy_type`). A function's own signature
-    /// and its own body, checked with invalid types (`own_arguments`), are
+    /// Whether the declaration being checked is a copy (`copy_type`). A
+    /// declaration's own check, with invalid types (`own_arguments`), is
     /// none.
     pub(crate) fn in_copy(&self) -> bool {
         let checking = self
@@ -366,9 +384,7 @@ impl<'p, L: Checked> Checker<'p, L> {
             .declarations_being_checked
             .last()
             .expect("a declaration is being checked");
-        self.internals
-            .function_copies
-            .contains_key(&checking.copy())
+        self.internals.copies.contains_key(&checking.copy())
     }
 
     /// The type `ty` as a message names it (`Types::text`).
@@ -535,7 +551,7 @@ impl<'p, L: Checked> Checker<'p, L> {
     /// `ty`. Only a body checked once has it: a copy has no facts, and a
     /// function's own body (`check_body`) makes no copy, so it would have
     /// only those that other calls happened to make.
-    pub(crate) fn record_copy(&mut self, name_end: u32, copy: FunctionCopy, ty: TypeId) {
+    pub(crate) fn record_copy(&mut self, name_end: u32, copy: DeclarationCopy, ty: TypeId) {
         let checking = self
             .internals
             .declarations_being_checked
@@ -561,7 +577,7 @@ impl<'p, L: Checked> Checker<'p, L> {
     /// body's, which declares each local they name, as its `where` does
     /// (`constraints_hold`); none for a copy, which records none and whose
     /// body is not the one they name.
-    pub fn function_facts(&mut self, function: FunctionCopy) -> Vec<Fact> {
+    pub fn function_facts(&mut self, function: DeclarationCopy) -> Vec<Fact> {
         let definition = function.definition;
         let facts = &mut self.module_checks[definition.module.index()].facts;
         (function.arguments == ConstArguments::NONE)
@@ -586,10 +602,10 @@ impl<'p, L: Checked> Checker<'p, L> {
             .collect()
     }
 
-    /// What `name` stands for at the top level: a `const T: type` parameter
-    /// of the function being checked, the type it is given
-    /// (`Checking::arguments`; a `const` value is a local of the body);
-    /// else a built-in type, which no declaration
+    /// What `name` stands for at the top level: a type parameter of the
+    /// function or struct being checked, `<T>` or `const T: type`, the type
+    /// it is given (`Checking::arguments`; a `const` value is a local of the
+    /// body); else a built-in type, which no declaration
     /// hides; else a name in the module's scope; else an exported name of
     /// the prelude.
     pub(crate) fn resolve_global(&mut self, name: &str) -> Option<Symbol> {
@@ -599,14 +615,14 @@ impl<'p, L: Checked> Checker<'p, L> {
             .last()
             .expect("a declaration is being checked");
         if checking.arguments != ConstArguments::NONE {
-            // Only a function is given `const` arguments.
-            let function = function_declaration(self.modules, checking.definition);
-            let tree = &self.module().ast;
-            let parameters = model::program::copy_parameters(tree, function.signature);
-            let names_it = |(_, parameter): &(usize, Option<Span>)| {
-                parameter.is_some_and(|written| tree.file.slice(written) == name)
-            };
-            if let Some((place, Some(declared))) = parameters.enumerate().find(names_it)
+            let file = &self.module().ast.file;
+            let found =
+                model::program::declaration_copy_parameters(self.modules, checking.definition)
+                    .enumerate()
+                    .find(|(_, parameter)| {
+                        parameter.is_some_and(|written| file.slice(written) == name)
+                    });
+            if let Some((place, Some(declared))) = found
                 && let ConstArgument::Type(ty) = self.types.arguments(checking.arguments)[place]
             {
                 return Some(Symbol::TypeArgument { ty, declared });

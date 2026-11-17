@@ -3,8 +3,10 @@
 //! value.
 
 use arena::Id;
+use arena::List;
 use diagnostics::Diagnostic;
 use model::ConstArguments;
+use model::DeclarationCopy;
 use model::DefId;
 use model::layout::layout;
 use model::program::BUILTIN_ATTRIBUTE;
@@ -104,8 +106,12 @@ impl FunctionKind {
 
 impl<L: Checked> Checker<'_, L> {
     /// The type the module's type declaration or alias `definition` declares:
-    /// a feature's (`declare_type`), or the type an alias names. Type
-    /// parameters are not supported yet.
+    /// a feature's (`declare_type`), or the type an alias names. One with
+    /// type parameters, `struct Box<T>`, declares a type in each copy
+    /// (`copy_type`); its own check, with no type for its `T`
+    /// (`own_arguments`), reports what is wrong whatever its types are and
+    /// gives its name given nothing (`Type::Named`), which no value has;
+    /// invalid when that check reported an error.
     pub(crate) fn check_type_declaration(&mut self, definition: DefId) -> TypeId {
         let tree = &self.module().ast;
         let (written, is_alias) = match tree.decls[tree.declaration(definition.index)] {
@@ -113,16 +119,30 @@ impl<L: Checked> Checker<'_, L> {
             ast::Decl::Alias(written) => (written, true),
             _ => unreachable!("`{definition:?}` is a type declaration"),
         };
-        if !written.type_parameters.is_empty() {
-            return self.not_supported(written.name.span, "generic types");
-        }
         if is_alias {
+            if !written.type_parameters.is_empty() {
+                return self.not_supported(written.name.span, "generic aliases");
+            }
             return self.resolve_value_type(written.ty);
         }
         let ast::Type::Feature(ty) = tree.types[written.ty] else {
             unreachable!("the parser gives a type declaration only a feature's type")
         };
-        L::declare_type(self, definition, written, ty)
+        if written.type_parameters.is_empty() || self.in_copy() {
+            return L::declare_type(self, definition, written, ty);
+        }
+        let module = definition.module.index();
+        let reported = self.module_checks[module].diagnostics.len();
+        // Invalid whenever a field is of a type `T` names, which reports nothing.
+        L::declare_type(self, definition, written, ty);
+        let found = &self.module_checks[module].diagnostics[reported..];
+        if found.iter().any(Diagnostic::is_error) {
+            return TypeId::INVALID;
+        }
+        self.types.intern(Type::Named {
+            definition,
+            arguments: ConstArguments::NONE,
+        })
     }
 
     /// Reports each attribute of the declaration `definition` but an
@@ -150,21 +170,6 @@ impl<L: Checked> Checker<'_, L> {
         }
     }
 
-    /// What the function of `signature`, in `tree`, is checked with outside
-    /// any copy: an invalid type for each type parameter, `<T>`, which come
-    /// first, then for each `const` parameter. Only a type one
-    /// is read as one (`resolve_global`), and an invalid type reports
-    /// nothing.
-    pub(crate) fn own_arguments(
-        &mut self,
-        tree: &ast::Tree<L>,
-        signature: ast::Signature<L>,
-    ) -> ConstArguments {
-        let count = model::program::copy_parameters(tree, signature).count();
-        let invalid = ConstArgument::Type(TypeId::INVALID);
-        self.types.const_arguments(&vec![invalid; count])
-    }
-
     /// The type of the `const` value parameter written `ty` of the function
     /// `definition`, for its call at `used_at`. The function's own signature
     /// read it with no error and no type parameter (`signature_type`), so
@@ -176,11 +181,9 @@ impl<L: Checked> Checker<'_, L> {
         ty: Id<ast::Type<L>>,
         used_at: Span,
     ) -> TypeId {
-        let tree = &self.modules[definition.module.index()].ast;
-        let signature = function_declaration(self.modules, definition).signature;
         let checking = Checking {
             definition,
-            arguments: self.own_arguments(tree, signature),
+            arguments: self.own_arguments(definition),
             used_at,
             records_facts: false,
         };
@@ -197,6 +200,14 @@ impl<L: Checked> Checker<'_, L> {
             body,
             ..
         } = function_declaration(self.modules, definition);
+        // shortcut: a generic struct's functions are refused until a copy of
+        // one takes its owner's type arguments.
+        if let Some(written) = owner
+            && let Some(owner) = (self.scope()).struct_named(self.modules, written.text(&tree.file))
+            && (model::program::declaration_copy_parameters(self.modules, owner).next()).is_some()
+        {
+            return self.not_supported(written.span, "functions of generic types");
+        }
         let symbol = model::program::extern_symbol(self.modules, definition);
         if let Err(span) = symbol {
             let message = "write `#[extern(\"name\")]` once, with the C function's name";
@@ -215,19 +226,6 @@ impl<L: Checked> Checker<'_, L> {
         let first_const = first_copy_parameter(tree, signature);
         let module = definition.module.index();
         let reported = self.module_checks[module].diagnostics.len();
-        let checking = self
-            .internals
-            .declarations_being_checked
-            .last()
-            .expect("the function is being checked");
-        if first_const.is_some() && checking.arguments == ConstArguments::NONE {
-            let own = self.own_arguments(tree, signature);
-            self.internals
-                .declarations_being_checked
-                .last_mut()
-                .expect("the function is being checked")
-                .arguments = own;
-        }
         let ty = self.signature_type(name, signature, owner.is_some(), kind);
         // A copy's signature differs only by what it is given: an error in
         // the function's own is in each copy's.
@@ -460,7 +458,8 @@ impl<L: Checked> Checker<'_, L> {
                 "only a reference to a type with members converts to an interface reference"
             )
         };
-        let (Type::Named(definition) | Type::Interface { definition, .. }) = self.types[interface]
+        let (Type::Named { definition, .. } | Type::Interface { definition, .. }) =
+            self.types[interface]
         else {
             unreachable!("an interface reference refers to an interface")
         };
@@ -708,11 +707,20 @@ impl<L: Checked> Checker<'_, L> {
         self.value_type_at(resolved, span)
     }
 
-    /// `resolved`, written at `span`, as a value's type: a named type is
-    /// checked.
-    fn value_type_at(&mut self, resolved: TypeId, span: Span) -> TypeId {
+    /// `resolved`, written at `span`, as a value's type: a named type, or
+    /// copy of one, is checked (`copy_type`).
+    pub(crate) fn value_type_at(&mut self, resolved: TypeId, span: Span) -> TypeId {
         match self.types[resolved] {
-            Type::Named(definition) => self.declared_type(definition, span),
+            Type::Named {
+                definition,
+                arguments,
+            } => self.copy_type(
+                DeclarationCopy {
+                    definition,
+                    arguments,
+                },
+                span,
+            ),
             _ => resolved,
         }
     }
@@ -721,7 +729,7 @@ impl<L: Checked> Checker<'_, L> {
     pub(crate) fn is_interface(&self, ty: TypeId) -> bool {
         match self.types[ty] {
             Type::Interface { .. } => true,
-            Type::Named(definition) => {
+            Type::Named { definition, .. } => {
                 model::program::interface_methods(self.modules, definition).is_some()
             }
             _ => false,
@@ -912,11 +920,18 @@ impl<L: Checked> Checker<'_, L> {
 
     /// The type `symbol`, written at `span`, stands for, however it was
     /// reached: every kind of type declaration is `Symbol::Type`, in this
-    /// module or another. An error when it is not a type.
+    /// module or another. An error when it is not a type, or a generic
+    /// struct named without what it is given (`resolve_type` reads `Box<T>`).
     pub(crate) fn type_named_by(&mut self, symbol: Symbol, span: Span) -> TypeId {
         let what = match symbol {
             Symbol::Builtin(ty) | Symbol::TypeArgument { ty, .. } => return ty,
-            Symbol::Type(definition) => return self.named_type(definition, span),
+            Symbol::Type(definition) => {
+                let name = self.module().ast.file.slice(span);
+                return match self.written_type_arguments(definition, name, List::EMPTY, span) {
+                    Some(_) => self.named_type(definition, span),
+                    None => TypeId::INVALID, // reported
+                };
+            }
             Symbol::Function(_) | Symbol::Constant(_) | Symbol::Local(_) => "a value",
             Symbol::Module(_) => "a module",
         };
@@ -1100,7 +1115,10 @@ impl<L: Checked> Checker<'_, L> {
                         }) => owner,
                         // An interface's method: `self` is the interface.
                         ast::Decl::Type(_) => {
-                            return self.types.intern(Type::Named(checking.definition));
+                            return self.types.intern(Type::Named {
+                                definition: checking.definition,
+                                arguments: ConstArguments::NONE,
+                            });
                         }
                         _ => unreachable!("only a type's function and an interface name `self`"),
                     };
@@ -1121,7 +1139,42 @@ impl<L: Checked> Checker<'_, L> {
                         None => TypeId::INVALID, // reported
                     };
                 }
-                ast::Type::Generic { .. } => "generic types",
+                // A generic struct's copy, only named, as any struct is: its
+                // arguments are named too, so `*Box<Node>` in `Node` is no
+                // cycle. A named struct's id becomes its type's once
+                // checked, so the copy is the same however it is reached.
+                ast::Type::Generic { name, arguments } => {
+                    let text = name.text(&tree.file);
+                    let definition = match self.resolve_global(text) {
+                        Some(Symbol::Type(definition)) => definition,
+                        None => return self.named_type_at(name.span), // reports it
+                        Some(_) => {
+                            let message = format!("`{text}` takes no type arguments");
+                            return self.error(diagnostics::WRONG_ARGUMENT_COUNT, message, span);
+                        }
+                    };
+                    self.record(name.span, FactKind::Name(Symbol::Type(definition)));
+                    let Some(written) =
+                        self.written_type_arguments(definition, text, arguments, span)
+                    else {
+                        return TypeId::INVALID; // reported
+                    };
+                    let mut given = Vec::with_capacity(written.len());
+                    for argument in written {
+                        let resolved = self.resolve_type(argument);
+                        let span = self.module().ast.types.span(argument);
+                        let resolved = self.type_argument(resolved, span);
+                        given.push(ConstArgument::Type(self.types.real(resolved)));
+                    }
+                    if given.contains(&ConstArgument::Type(TypeId::INVALID)) {
+                        return self.named_without_types(definition);
+                    }
+                    let arguments = self.types.const_arguments(&given);
+                    return self.types.intern(Type::Named {
+                        definition,
+                        arguments,
+                    });
+                }
                 ast::Type::Bracketed { name, inner } => {
                     let written = tree.file.slice(name.span);
                     if written != semantic_types::RANGE {

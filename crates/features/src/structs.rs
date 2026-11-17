@@ -183,7 +183,7 @@ impl TypeNode for StructType {
             return TypeId::INVALID;
         }
         let (offsets, size, align) = struct_layout(&checker.types, &field_types, checker.target);
-        let named = checker.types.intern(Type::Named(definition));
+        let named = checker.declared_name(definition);
         let mut ty = checker.fits_target(named, size, written.name.span);
         let holders = checker.types.holders_in_fields(&field_types);
         if checker.reports_too_many_holders(named, holders, written.name.span) {
@@ -225,6 +225,9 @@ impl ExprNode for StructLiteral {
             {
                 expected
             }
+            // Reported where it was written, or a `T` only a copy knows:
+            // `let b: Box<T> = .{ ... }` in a generic function's own body.
+            (None, Some(TypeId::INVALID)) => TypeId::INVALID,
             (None, _) => {
                 let message = "this struct literal needs its type: write it before `.{`";
                 builder
@@ -248,8 +251,10 @@ impl ExprNode for StructLiteral {
                     .checker
                     .error(diagnostics::TYPE_MISMATCH, message, span);
             }
+            // For their own errors; what each field's type is, is not known.
             for field in tree.children.lists.items(fields) {
-                builder.add_expr(tree.children.field_values[field].value, None); // for its own errors
+                let value = tree.children.field_values[field].value;
+                builder.add_expr(value, Some(TypeId::INVALID));
             }
             return thir::Expr::INVALID;
         };
@@ -260,7 +265,7 @@ impl ExprNode for StructLiteral {
         for field in tree.children.lists.items(fields) {
             let ast::FieldValue { name, value } = tree.children.field_values[field];
             let Some((index, field_type)) = builder.field_index(ty, name) else {
-                builder.add_expr(value, None); // for its own errors
+                builder.add_expr(value, Some(TypeId::INVALID)); // for its own errors
                 continue;
             };
             if let Some(first) = set[index] {

@@ -61,9 +61,9 @@ impl<L: Checked> Checker<'_, L> {
                 }
             }
         }
-        let call = (self.internals.function_copies.get(&copy))
-            .map(|copied| (copied.called_in, copied.called_at));
-        let made = call.map_or(String::new(), |_| {
+        let used =
+            (self.internals.copies.get(&copy)).map(|copied| (copied.used_in, copied.used_at));
+        let made = used.map_or(String::new(), |_| {
             let name = model::program::copy_name(self.modules, &self.types, copy);
             format!(" for `{name}`")
         });
@@ -74,11 +74,11 @@ impl<L: Checked> Checker<'_, L> {
             let text = tree.file.slice(span);
             let message = format!("`{text}` is false{made}");
             let mut diagnostic = Diagnostic::new(diagnostics::INVALID_OPERATION, message);
-            if let Some((called_in, called_at)) = call {
-                let file = &self.modules[called_in.index()].ast.file;
-                diagnostic = diagnostic.label(file, called_at, "");
+            if let Some((used_in, used_at)) = used {
+                let file = &self.modules[used_in.index()].ast.file;
+                diagnostic = diagnostic.label(file, used_at, "");
             }
-            // A copy's is moved to the call's module (`report_from_copy`).
+            // A copy's is moved to the use's module (`report_from_copy`).
             self.report(diagnostic.label(&tree.file, span, ""));
         }
         holds

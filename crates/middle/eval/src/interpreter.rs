@@ -22,8 +22,8 @@ use std::rc::Rc;
 
 use arena::Id;
 use bigint::Limbs;
+use model::DeclarationCopy;
 use model::DefId;
-use model::FunctionCopy;
 use model::constant::Value;
 use model::machine::Machine;
 use model::mir::Block;
@@ -108,7 +108,7 @@ pub enum Failure {
     /// It called `callee`, a function or one of its copies, for which
     /// `mir_of` gave no MIR: the caller of `run_function` knows why.
     NoMir {
-        callee: FunctionCopy,
+        callee: DeclarationCopy,
         function: DefId,
         span: Span,
     },
@@ -137,7 +137,7 @@ pub fn run_function<'b>(
     arguments: &[(&Value, ConstantShape)],
     result: ConstantShape,
     target: &Machine,
-    mir_of: &dyn Fn(FunctionCopy) -> Option<&'b Body>,
+    mir_of: &dyn Fn(DeclarationCopy) -> Option<&'b Body>,
 ) -> Result<Option<Value>, Failure> {
     let mut run = Interpreter::new(target, mir_of, Memory::for_constant());
     let span = body.blocks.span(Id::from_index(0));
@@ -208,16 +208,16 @@ struct Frame<'b> {
 
 struct Interpreter<'b, 'f> {
     target: &'f Machine,
-    mir_of: &'f dyn Fn(FunctionCopy) -> Option<&'b Body>,
+    mir_of: &'f dyn Fn(DeclarationCopy) -> Option<&'b Body>,
     steps: u64, // run so far, by every call; past the limit the run stops, so it cannot wrap
     host: Host, // what a program printed; a constant's call prints nothing
     memory: Memory,
     /// Each function called so far: its body and layout, or `None` when
     /// `mir_of` gives it no body; asked once each.
-    called: FxHashMap<FunctionCopy, Option<(&'b Body, Rc<Layout>)>>,
+    called: FxHashMap<DeclarationCopy, Option<(&'b Body, Rc<Layout>)>>,
     /// The functions whose addresses a table holds, in the order of their
     /// addresses from `FUNCTIONS_START`.
-    functions: Vec<FunctionCopy>,
+    functions: Vec<DeclarationCopy>,
     frames: Vec<Frame<'b>>,
     /// Of every frame, the running one last. A register holds an integer
     /// of up to 128 bits, a float's bits or an address, with the bits above
@@ -234,7 +234,7 @@ struct Interpreter<'b, 'f> {
 impl<'b, 'f> Interpreter<'b, 'f> {
     fn new(
         target: &'f Machine,
-        mir_of: &'f dyn Fn(FunctionCopy) -> Option<&'b Body>,
+        mir_of: &'f dyn Fn(DeclarationCopy) -> Option<&'b Body>,
         memory: Memory,
     ) -> Self {
         Interpreter {
@@ -317,7 +317,7 @@ impl<'b, 'f> Interpreter<'b, 'f> {
 
     /// The body and layout of `function`, the first time it is called
     /// worked out and kept; `None` when it has no body.
-    fn called(&mut self, function: FunctionCopy) -> Option<(&'b Body, Rc<Layout>)> {
+    fn called(&mut self, function: DeclarationCopy) -> Option<(&'b Body, Rc<Layout>)> {
         if let Some(called) = self.called.get(&function) {
             return called.clone();
         }
@@ -360,7 +360,7 @@ impl<'b, 'f> Interpreter<'b, 'f> {
     }
 
     /// The address of `function`, given it the first time.
-    fn function_address(&mut self, function: FunctionCopy) -> u64 {
+    fn function_address(&mut self, function: DeclarationCopy) -> u64 {
         let known = self.functions.iter().position(|&known| known == function);
         let index = known.unwrap_or_else(|| {
             self.functions.push(function);
@@ -551,7 +551,7 @@ impl<'b, 'f> Interpreter<'b, 'f> {
         pointer: Operand,
         signature: u32,
         id: Id<Instruction>,
-    ) -> Result<FunctionCopy, Halt> {
+    ) -> Result<DeclarationCopy, Halt> {
         let address = self.operand(pointer) as u64;
         let index = (address.checked_sub(FUNCTIONS_START))
             .filter(|offset| offset % FUNCTION_STRIDE == 0)

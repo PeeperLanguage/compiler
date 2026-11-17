@@ -22,8 +22,8 @@ use eval::interpreter::Failure;
 use eval::interpreter::program::Stream;
 use eval::interpreter::program::Written;
 use model::ConstArguments;
+use model::DeclarationCopy;
 use model::DefId;
-use model::FunctionCopy;
 use model::ModuleId;
 use model::machine::Machine;
 use model::mir;
@@ -129,7 +129,7 @@ pub enum Output<'c> {
 /// parameters, as a compile hands it on: built, used once, and dropped
 /// after.
 pub struct CheckedFunction<'c> {
-    pub function: FunctionCopy,
+    pub function: DeclarationCopy,
     /// The module whose compile built it: its own, or, for a copy, the one
     /// that first called it.
     pub module: ModuleId,
@@ -181,7 +181,7 @@ pub fn interpret(
     let Some((main, _)) = results.entry_point() else {
         return (results, None);
     };
-    let main_function = FunctionCopy {
+    let main_function = DeclarationCopy {
         definition: main,
         arguments: ConstArguments::NONE,
     };
@@ -445,7 +445,7 @@ fn compile_module(
             {
                 let name = function.name.span;
                 checker.function_type(definition, name);
-                let function = FunctionCopy {
+                let function = DeclarationCopy {
                     definition,
                     arguments: ConstArguments::NONE,
                 };
@@ -463,7 +463,7 @@ fn compile_module(
                 }
             }
             ast::Decl::Function(_) => {
-                let function = FunctionCopy {
+                let function = DeclarationCopy {
                     definition,
                     arguments: ConstArguments::NONE,
                 };
@@ -498,7 +498,7 @@ fn compile_module(
 fn build_function(
     checker: &mut Checker<Peeper>,
     module: ModuleId,
-    function: FunctionCopy,
+    function: DeclarationCopy,
     thir: &mut thir::Body,
     use_output: &mut dyn FnMut(Output),
 ) {
@@ -520,68 +520,16 @@ fn build_function(
     }));
 }
 
-/// Feeds `ty` to `hasher` by what it is, not by its id, which differs between
-/// compiles: a named type by its module's path and its name. What it holds
-/// is in the interface of the module declaring it (`interface`).
-fn hash_type(checker: &Checker<Peeper>, id: TypeId, hasher: &mut DefaultHasher) {
-    let ty = &checker.types[id];
-    std::mem::discriminant(ty).hash(hasher);
-    match ty {
-        Type::Integer(integer) => integer.hash(hasher),
-        Type::Float(float) => float.hash(hasher),
-        Type::Function {
-            parameters,
-            result,
-            origins,
-            variadic,
-        } => {
-            parameters.len().hash(hasher);
-            for &parameter in parameters {
-                hash_type(checker, parameter, hasher);
-            }
-            hash_type(checker, *result, hasher);
-            origins.hash(hasher);
-            variadic.hash(hasher);
-        }
-        Type::Named(definition)
-        | Type::Struct { definition, .. }
-        | Type::Interface { definition, .. } => {
-            checker.modules[definition.module.index()].path.hash(hasher);
-            let (name, file) = model::program::declared_name(checker.modules, *definition);
-            name.text(file).hash(hasher);
-        }
-        Type::Array { internals, .. } => {
-            // Lengths are any number: the count keeps one from reading as
-            // the type after it.
-            checker.types.array_lengths(id).count().hash(hasher);
-            for length in checker.types.array_lengths(id) {
-                length.hash(hasher);
-            }
-            hash_type(checker, internals.base, hasher);
-        }
-        Type::Range { element, .. } => hash_type(checker, *element, hasher), // `step` follows
-        Type::Reference { mutable, target }
-        | Type::Slice {
-            mutable,
-            element: target,
-        }
-        | Type::InterfaceReference {
-            mutable,
-            interface: target,
-        } => {
-            mutable.hash(hasher);
-            // References and pointers nest as deep as the source does.
-            source::grow_stack(|| hash_type(checker, *target, hasher));
-        }
-        Type::RawPointer { target } => {
-            target.is_some().hash(hasher);
-            if let Some(target) = target {
-                source::grow_stack(|| hash_type(checker, *target, hasher));
-            }
-        }
-        Type::Invalid | Type::Void | Type::Bool | Type::CString | Type::Str => {}
-        Type::Alias { .. } => unreachable!("indexing looks through aliases"),
-    }
+/// Feeds `ty` to `hasher` by what it is (`Types::hash`): a declared type
+/// by its module's path and its name. What it holds is in the interface of
+/// the module declaring it (`interface`).
+fn hash_type(checker: &Checker<Peeper>, ty: TypeId, hasher: &mut DefaultHasher) {
+    let modules = checker.modules;
+    checker.types.hash(ty, hasher, |definition, hasher| {
+        modules[definition.module.index()].path.hash(hasher);
+        let (name, file) = model::program::declared_name(modules, definition);
+        name.text(file).hash(hasher);
+    });
 }
 
 /// A hash of what other modules see of `module`, once its declarations are

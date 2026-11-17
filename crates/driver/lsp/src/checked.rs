@@ -8,7 +8,7 @@ use std::path::Path;
 use std::path::PathBuf;
 
 use lsp_types::CodeAction;
-use model::FunctionCopy;
+use model::DeclarationCopy;
 use model::ModuleId;
 use model::semantic_types::ConstArgument;
 use model::semantic_types::Constant;
@@ -222,7 +222,7 @@ impl CachedFact {
 /// type parameters.
 fn copy_signature(
     program: &model::program::Program<Peeper>,
-    copy: FunctionCopy,
+    copy: DeclarationCopy,
     ty: TypeId,
     types: &Types,
 ) -> String {

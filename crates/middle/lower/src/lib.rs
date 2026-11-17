@@ -537,7 +537,7 @@ impl<L: Language> Lowering<'_, L> {
             | Type::Struct { .. }
             | Type::Array { .. }
             | Type::Range { .. } => None,
-            Type::Invalid | Type::Void | Type::Function { .. } | Type::Named(_) => {
+            Type::Invalid | Type::Void | Type::Function { .. } | Type::Named { .. } => {
                 unreachable!("no value has this type")
             }
             Type::Alias { .. } => unreachable!("indexing looks through aliases"),
@@ -667,7 +667,7 @@ impl<L: Language> Lowering<'_, L> {
             Type::Reference { .. } | Type::RawPointer { .. } => {
                 let to = match self.types[ty].pointee() {
                     // A struct with an error: this output is never linked.
-                    Some(pointee) if matches!(self.types[pointee], Type::Named(_)) => None,
+                    Some(pointee) if matches!(self.types[pointee], Type::Named { .. }) => None,
                     // shortcut: past `DEEPEST_DEBUG_TYPE` a debugger sees an
                     // untyped pointer, or a struct with no fields.
                     Some(_) if depth == DEEPEST_DEBUG_TYPE => None,
@@ -762,7 +762,8 @@ impl<L: Language> Lowering<'_, L> {
             Type::Struct {
                 definition, fields, ..
             } => {
-                let name = model::program::declared_text(self.modules, *definition).to_string();
+                // A generic struct's copy as written: `Box<i32>`.
+                let name = model::program::type_text(self.modules, self.types, ty);
                 let names = model::program::field_names(self.modules, *definition);
                 let fields: Vec<(String, TypeId)> =
                     (names.map(str::to_string).zip(fields.iter().copied())).collect();
@@ -778,7 +779,7 @@ impl<L: Language> Lowering<'_, L> {
                     .into();
                 return self.debug_struct(ty, &name, &fields, depth);
             }
-            Type::Invalid | Type::Void | Type::Function { .. } | Type::Named(_) => {
+            Type::Invalid | Type::Void | Type::Function { .. } | Type::Named { .. } => {
                 unreachable!("no value has this type")
             }
             Type::Alias { .. } => unreachable!("indexing looks through aliases"),

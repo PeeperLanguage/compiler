@@ -1,3 +1,4 @@
+use super::ConstArgument;
 use super::Conversion;
 use super::FIXED;
 use super::Float;
@@ -8,6 +9,7 @@ use super::TypeId;
 use super::Types;
 use super::builtin_doc;
 use super::integer;
+use crate::ConstArguments;
 use crate::DefId;
 use crate::ModuleId;
 use crate::layout::layout;
@@ -174,7 +176,10 @@ fn interface_references() {
         module: ModuleId::from_index(0),
         index,
     };
-    let shape = types.intern(Type::Named(declaration(0)));
+    let shape = types.intern(Type::Named {
+        definition: declaration(0),
+        arguments: ConstArguments::NONE,
+    });
     let view = types.intern(Type::InterfaceReference {
         mutable: false,
         interface: shape,
@@ -191,8 +196,17 @@ fn interface_references() {
     });
     types.define_interface(shape, [area].into());
     assert!(matches!(types[shape], Type::Interface { .. }));
-    assert_eq!(types.intern(Type::Named(declaration(0))), shape);
-    let square = types.intern(Type::Named(declaration(1)));
+    assert_eq!(
+        types.intern(Type::Named {
+            definition: declaration(0),
+            arguments: ConstArguments::NONE,
+        }),
+        shape
+    );
+    let square = types.intern(Type::Named {
+        definition: declaration(1),
+        arguments: ConstArguments::NONE,
+    });
     types.define_struct(square, [TypeId::F64].into(), (vec![0], 8, 8));
     let reference =
         |types: &mut Types, mutable, target| types.intern(Type::Reference { mutable, target });
@@ -296,13 +310,17 @@ fn type_text() {
         module: ModuleId::from_index(0),
         index,
     };
-    let point = types.intern(Type::Named(declaration(0)));
+    let point = types.intern(Type::Named {
+        definition: declaration(0),
+        arguments: ConstArguments::NONE,
+    });
     let place = types.intern(Type::Alias {
         definition: declaration(1),
         real: point,
     });
     let complete = types.intern(Type::Struct {
         definition: declaration(0),
+        arguments: ConstArguments::NONE,
         fields: [TypeId::I32, TypeId::I32].into(),
         internals: StructInternals {
             offsets: [0, 4].into(),
@@ -314,6 +332,13 @@ fn type_text() {
     });
     let raw = TypeId::RAWPTR;
     let typed = types.intern(Type::RawPointer { target: Some(raw) });
+    // A generic struct's copy names what it is given.
+    let given = [ConstArgument::Type(TypeId::I32), ConstArgument::Type(point)];
+    let arguments = types.const_arguments(&given);
+    let copy = types.intern(Type::Named {
+        definition: declaration(0),
+        arguments,
+    });
     let text = |ty| {
         types.text(ty, |definition| {
             ["Point", "Place"][definition.index as usize]
@@ -327,6 +352,7 @@ fn type_text() {
     assert_eq!(text(point), "Point");
     assert_eq!(text(place), "Place (aka Point)");
     assert_eq!(text(complete), "Point");
+    assert_eq!(text(copy), "Point<i32, Point>");
     assert_eq!(text(raw), "rawptr");
     assert_eq!(text(typed), "*rawptr");
 }
@@ -402,6 +428,7 @@ fn arrays_hold_each_elements_holders() {
             module: ModuleId::from_index(0),
             index: 0,
         },
+        arguments: ConstArguments::NONE,
         fields: [shared, shared].into(),
         internals: StructInternals {
             offsets: [0, 8].into(),

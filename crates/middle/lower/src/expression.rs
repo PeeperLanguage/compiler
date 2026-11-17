@@ -5,7 +5,7 @@ use arena::Id;
 use bigint::Limbs;
 use model::Callee;
 use model::ConstArguments;
-use model::FunctionCopy;
+use model::DeclarationCopy;
 use model::constant::Value as Constant;
 use model::layout::layout;
 use model::mir::Callee as MirCallee;
@@ -959,7 +959,7 @@ impl<L: Language> Lowering<'_, L> {
         // `Shape`; both pass an address, as a call through the table does.
         let table = (methods.iter().zip(signatures))
             .map(|(&definition, &signature)| {
-                let copy = FunctionCopy {
+                let copy = DeclarationCopy {
                     definition,
                     arguments: ConstArguments::NONE,
                 };

@@ -1,0 +1,50 @@
+struct Box<T> {
+    value: T,
+}
+
+struct Plain {
+    x: i32,
+}
+
+// Each copy's field is a new, bigger copy: wrong whatever `T` is, so
+// reported once, at the struct.
+struct Grow<T> { //~ error[T0013]: `Grow` holds itself
+    inner: Grow<Box<T>>,
+}
+
+// Through another struct's field too, and with two fields growing.
+struct Two<T> { //~ error[T0013]: `Two` holds itself
+    first: Box<Two<[2]T>>,
+    second: Box<Two<[3]T>>,
+}
+
+struct Holds<T> { //~ error[T0013]: `Holds` holds itself
+    again: Holds<T>,
+}
+
+// Wrong whatever `T` is: reported once, not at each copy.
+struct Wrong<T> {
+    value: T,
+    other: Missing, //~ error[T0002]: unknown type `Missing`
+}
+
+fn Box::Get(&self) -> T { //~ error[T0043]: functions of generic types are not supported yet
+    return self.value;
+}
+
+fn Bare(b: Box) {} //~ error[T0006]: `Box` takes 1 type argument, but 0 were given
+
+fn TooMany(b: Box<i32, f64>) {} //~ error[T0006]: `Box` takes 1 type argument, but 2 were given
+
+fn NotGeneric(p: Plain<i32>) {} //~ error[T0006]: `Plain` takes no type arguments
+
+fn Uses(g: *Grow<i32>, h: Holds<i32>, w: Wrong<i32>) {
+    let grown = g.*;
+}
+
+fn main() {
+    let b: Box<i32> = .{ value = true }; //~ error[T0001]: mismatched types: expected `i32`, found `bool`
+    let e: Box<i32> = .{}; //~ error[T0029]: missing field `value` in `Box<i32>`
+    // The literal inside reports nothing more.
+    let u: Box<Unknown> = .{ value = .{ x = 1 } }; //~ error[T0002]: unknown type `Unknown`
+}

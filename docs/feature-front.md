@@ -443,7 +443,7 @@ read the front's types. They move before any feature moves (step 18a):
 
 The core of `model` those crates read (`mir`, `machine`, `constant::Value`
 and the ids in `lib.rs`) reached the checker's types too, so three more
-moved: `ConstArguments` (the id in `FunctionCopy`) to `lib.rs`, the widest
+moved: `ConstArguments` (the id in `DeclarationCopy`) to `lib.rs`, the widest
 integer to `machine::MAX_INTEGER_BITS`, and `Constant` and `value_text`,
 which read a `Type`, to `semantic_types`.
 

@@ -2,7 +2,7 @@
 //! operation on values known at compile time is folded to its value.
 
 mod borrows;
-mod calls;
+pub(crate) mod calls;
 mod literals;
 mod operators;
 mod places;

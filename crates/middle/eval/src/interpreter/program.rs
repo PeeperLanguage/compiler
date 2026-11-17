@@ -6,8 +6,8 @@
 //! runs on.
 
 use arena::Id;
+use model::DeclarationCopy;
 use model::DefId;
-use model::FunctionCopy;
 use model::machine::Machine;
 use model::mir::Body;
 use model::mir::Instruction;
@@ -72,7 +72,7 @@ pub fn run<'b>(
     main: DefId,
     body: &'b Body,
     target: &Machine,
-    mir_of: &dyn Fn(FunctionCopy) -> Option<&'b Body>,
+    mir_of: &dyn Fn(DeclarationCopy) -> Option<&'b Body>,
 ) -> Outcome {
     let mut run = Interpreter::new(target, mir_of, Memory::for_program());
     let ending = match run.run_from(main, body) {
@@ -225,7 +225,7 @@ impl<'f> Interpreter<'_, 'f> {
     pub(super) fn call_outside(
         &mut self,
         id: Id<Instruction>,
-        callee: FunctionCopy,
+        callee: DeclarationCopy,
         signature: u32,
         arguments: &[Operand],
     ) -> Result<(), Halt> {

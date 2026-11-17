@@ -6,12 +6,13 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use arena::List;
 use diagnostics::Diagnostic;
 use source::SourceFile;
 use source::Span;
 
+use crate::DeclarationCopy;
 use crate::DefId;
-use crate::FunctionCopy;
 use crate::ModuleId;
 use crate::constant::Value;
 use crate::semantic_types::ConstArgument;
@@ -127,6 +128,26 @@ pub fn extern_symbol<L: Language>(
     Ok(symbol)
 }
 
+/// What a copy of the declaration `definition` of `modules` is made for, as
+/// `copy_parameters` says: a function's from its signature, a type's its
+/// `<T>`, as in `struct Box<T>`; none for any other declaration.
+pub fn declaration_copy_parameters<L: Language>(
+    modules: &[Module<L>],
+    definition: DefId,
+) -> impl Iterator<Item = Option<Span>> {
+    let tree = &modules[definition.module.index()].ast;
+    let (signature, type_parameters) = match declaration(modules, definition) {
+        ast::Decl::Function(function) => (Some(function.signature), List::EMPTY),
+        ast::Decl::Type(written) | ast::Decl::Alias(written) => (None, written.type_parameters),
+        _ => (None, List::EMPTY),
+    };
+    let declared_type = (tree.children.lists.items(type_parameters))
+        .map(|parameter| Some(tree.children.names.span(parameter)));
+    (signature.into_iter())
+        .flat_map(|signature| copy_parameters(tree, signature))
+        .chain(declared_type)
+}
+
 /// What a copy of the function with `signature`, in `tree`, is made for, in
 /// the order its `ConstArguments` hold them: each type parameter, `<T>`,
 /// then each `const` parameter. `Some` is where one that stands for a type
@@ -193,7 +214,7 @@ pub fn symbol<L: Language>(modules: &[Module<L>], definition: DefId) -> String {
 pub fn copy_symbol<L: Language>(
     modules: &[Module<L>],
     types: &Types,
-    copy: FunctionCopy,
+    copy: DeclarationCopy,
 ) -> String {
     let qualified = |definition: DefId| {
         let path = &modules[definition.module.index()].path;
@@ -218,7 +239,11 @@ pub fn copy_symbol<L: Language>(
 /// The copy `copy` as a program names it: its declared path, with its
 /// `const` arguments as Peeper text (`Stack.New<Node>`); what messages,
 /// dumps and a debugger show.
-pub fn copy_name<L: Language>(modules: &[Module<L>], types: &Types, copy: FunctionCopy) -> String {
+pub fn copy_name<L: Language>(
+    modules: &[Module<L>],
+    types: &Types,
+    copy: DeclarationCopy,
+) -> String {
     let declared = declared_path(modules, copy.definition);
     types.copy_text(declared, copy.arguments, |definition| {
         declared_text(modules, definition)

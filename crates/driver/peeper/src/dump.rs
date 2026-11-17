@@ -6,8 +6,8 @@ use features::Peeper;
 use std::io::Write;
 use std::path::Path;
 
+use model::DeclarationCopy;
 use model::DefId;
-use model::FunctionCopy;
 use model::mir;
 use model::semantic_types::Types;
 use model::thir;
@@ -60,7 +60,7 @@ impl<'p> Dumps<'p> {
     /// the dumps of the module that declares it.
     pub fn add(
         &mut self,
-        function: FunctionCopy,
+        function: DeclarationCopy,
         thir: &thir::Body,
         mir: &mir::Body,
         types: &Types,

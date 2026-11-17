@@ -4,6 +4,8 @@
 use std::fmt;
 use std::fmt::Display;
 use std::fmt::Write as _;
+use std::hash::Hash;
+use std::hash::Hasher;
 use std::ops::Index;
 
 use bigint::Limbs;
@@ -212,16 +214,23 @@ pub enum Type {
     /// declares is checked: naming a type checks nothing. No value has it: a
     /// value's type is the declaration's own (`Type::Struct`), which takes
     /// over this id (`define_struct`); only a raw pointer's target can stay
-    /// this, when its declaration has an error.
-    Named(DefId),
-    /// The type a struct declaration makes, with its fields' types in order.
-    /// The declaration is its identity, so two structs with the same fields
-    /// differ; the field names stay in the declaration. A field held by value
-    /// has its own struct's type, so the type is complete. A raw pointer in a
-    /// field can reach the struct again, so a walk over types stops at
-    /// pointers or remembers the structs it met.
+    /// this, when its declaration has an error. `arguments`: the types a
+    /// generic struct is given, `Box<i32>`, which make its own copy;
+    /// `ConstArguments::NONE` for any other.
+    Named {
+        definition: DefId,
+        arguments: ConstArguments,
+    },
+    /// The type a struct declaration makes, or a copy of a generic one for
+    /// its `arguments` (`Type::Named`), with its fields' types in order.
+    /// The declaration and the arguments are its identity, so two structs
+    /// with the same fields differ; the field names stay in the declaration.
+    /// A field held by value has its own struct's type, so the type is
+    /// complete. A raw pointer in a field can reach the struct again, so a
+    /// walk over types stops at pointers or remembers the structs it met.
     Struct {
         definition: DefId,
+        arguments: ConstArguments,
         fields: Box<[TypeId]>,
         internals: StructInternals,
     },
@@ -341,7 +350,7 @@ impl Type {
     /// an interface, or a declared name not checked yet.
     pub fn definition(&self) -> Option<DefId> {
         match *self {
-            Type::Named(definition)
+            Type::Named { definition, .. }
             | Type::Struct { definition, .. }
             | Type::Interface { definition, .. } => Some(definition),
             _ => None,
@@ -357,6 +366,7 @@ impl Type {
                 definition,
                 fields,
                 internals,
+                ..
             } => Some(Members {
                 definition: *definition,
                 fields,
@@ -751,11 +761,16 @@ impl Types {
             mutable_holder: (fields.iter()).any(|&field| self.holds_loans(field) == Some(true)),
         };
         let slot = &mut self.types[named.0 as usize];
-        let Type::Named(definition) = *slot else {
+        let Type::Named {
+            definition,
+            arguments,
+        } = *slot
+        else {
             unreachable!("only a declared name becomes a struct");
         };
         *slot = Type::Struct {
             definition,
+            arguments,
             fields,
             internals,
         };
@@ -767,7 +782,7 @@ impl Types {
     /// `&Shape` of after.
     pub fn define_interface(&mut self, named: TypeId, methods: Box<[TypeId]>) {
         let slot = &mut self.types[named.0 as usize];
-        let Type::Named(definition) = *slot else {
+        let Type::Named { definition, .. } = *slot else {
             unreachable!("only a declared name becomes an interface");
         };
         *slot = Type::Interface {
@@ -964,7 +979,7 @@ impl Types {
             Type::Struct { .. } | Type::Interface { .. } => false,
             // No value of these is moved: an error, nothing, or not yet a value.
             Type::Invalid | Type::Void | Type::Function { .. } => true,
-            Type::Alias { .. } | Type::Named(_) => {
+            Type::Alias { .. } | Type::Named { .. } => {
                 unreachable!("indexing `Types` looks through aliases; no value is named")
             }
         }
@@ -975,6 +990,92 @@ impl Types {
         match self.types[id.0 as usize] {
             Type::Alias { real, .. } => real,
             _ => id,
+        }
+    }
+
+    /// Feeds the type `id` to `hasher` by what it is, not by its id, which
+    /// differs between compiles: a declared type by what `declaration`
+    /// feeds for it, then what a copy of it is given. A struct's fields and
+    /// an interface's methods are not fed: its declaration holds them.
+    pub fn hash<H: Hasher>(
+        &self,
+        id: TypeId,
+        hasher: &mut H,
+        declaration: impl Fn(DefId, &mut H) + Copy,
+    ) {
+        let ty = &self[id];
+        std::mem::discriminant(ty).hash(hasher);
+        match ty {
+            Type::Integer(integer) => integer.hash(hasher),
+            Type::Float(float) => float.hash(hasher),
+            Type::Function {
+                parameters,
+                result,
+                origins,
+                variadic,
+            } => {
+                parameters.len().hash(hasher);
+                for &parameter in parameters {
+                    self.hash(parameter, hasher, declaration);
+                }
+                self.hash(*result, hasher, declaration);
+                origins.hash(hasher);
+                variadic.hash(hasher);
+            }
+            Type::Named {
+                definition,
+                arguments,
+            }
+            | Type::Struct {
+                definition,
+                arguments,
+                ..
+            } => {
+                declaration(*definition, hasher);
+                let given = self.arguments(*arguments);
+                given.len().hash(hasher);
+                for argument in given {
+                    match argument {
+                        ConstArgument::Type(ty) => self.hash(*ty, hasher, declaration),
+                        ConstArgument::Value(constant) => {
+                            self.hash(constant.ty, hasher, declaration);
+                            constant.value.hash(hasher);
+                        }
+                    }
+                }
+            }
+            Type::Interface { definition, .. } => declaration(*definition, hasher),
+            Type::Array { internals, .. } => {
+                // Lengths are any number: the count keeps one from reading as
+                // the type after it.
+                self.array_lengths(id).count().hash(hasher);
+                for length in self.array_lengths(id) {
+                    length.hash(hasher);
+                }
+                self.hash(internals.base, hasher, declaration);
+            }
+            Type::Range { element, .. } => self.hash(*element, hasher, declaration), // `step` follows
+            Type::Reference { mutable, target }
+            | Type::Slice {
+                mutable,
+                element: target,
+            }
+            | Type::InterfaceReference {
+                mutable,
+                interface: target,
+            } => {
+                mutable.hash(hasher);
+                // References and pointers nest as deep as the source does.
+                source::grow_stack(|| self.hash(*target, hasher, declaration));
+            }
+            Type::RawPointer { target } => {
+                target.is_some().hash(hasher);
+                if let Some(target) = target {
+                    source::grow_stack(|| self.hash(*target, hasher, declaration));
+                }
+            }
+            Type::Invalid | Type::Void | Type::Bool | Type::CString | Type::Str => {}
+            Type::Alias { .. } => unreachable!("indexing looks through aliases"),
         }
     }
 
@@ -1034,9 +1135,20 @@ impl Types {
                     self.write_real_text(out, *result, name_of);
                 }
             }
-            Type::Named(definition)
-            | Type::Struct { definition, .. }
-            | Type::Interface { definition, .. } => _ = write!(out, "{}", name_of(*definition)),
+            // A generic struct's copy as written: `Box<i32>`.
+            Type::Named {
+                definition,
+                arguments,
+            }
+            | Type::Struct {
+                definition,
+                arguments,
+                ..
+            } => {
+                let name = name_of(*definition).to_string();
+                out.push_str(&self.copy_text(name, *arguments, name_of));
+            }
+            Type::Interface { definition, .. } => _ = write!(out, "{}", name_of(*definition)),
             Type::Array { internals, .. } => {
                 for length in self.array_lengths(id) {
                     _ = write!(out, "[{length}]");

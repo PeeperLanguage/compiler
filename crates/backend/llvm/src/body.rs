@@ -10,7 +10,7 @@ use std::fmt::Display;
 use std::fmt::Write;
 
 use arena::Id;
-use model::FunctionCopy;
+use model::DeclarationCopy;
 use model::mir::Block;
 use model::mir::Body;
 use model::mir::CPassing;
@@ -56,7 +56,7 @@ const MEMCPY: &str = "llvm.memcpy.p0.p0.i64";
 
 /// A function the compile checked, for a worker to write.
 pub(crate) struct Defined {
-    pub(crate) copy: FunctionCopy,
+    pub(crate) copy: DeclarationCopy,
     /// As a debugger shows it, `const` arguments too; empty in a release
     /// build.
     pub(crate) shown_name: String,
@@ -75,7 +75,7 @@ impl Module<'_> {
         &mut self,
         defined: &Defined,
         file: &SourceFile,
-        symbols: &FxHashMap<FunctionCopy, String>,
+        symbols: &FxHashMap<DeclarationCopy, String>,
         debug_types: &DebugTypes,
     ) {
         let Defined {
@@ -172,8 +172,8 @@ impl Module<'_> {
     /// per module, with a `declare` of each.
     fn add_table(
         &mut self,
-        entries: &[(FunctionCopy, Signature)],
-        symbols: &FxHashMap<FunctionCopy, String>,
+        entries: &[(DeclarationCopy, Signature)],
+        symbols: &FxHashMap<DeclarationCopy, String>,
     ) -> String {
         let mut constant = format!("[{} x ptr] [", entries.len());
         for (index, (copy, signature)) in entries.iter().enumerate() {
@@ -392,7 +392,7 @@ struct Writer<'m, 'p, 'b> {
     module: &'m mut Module<'p>,
     body: &'b Body,
     file: &'b SourceFile, // the function's own, which a copy's module may not be
-    symbols: &'b FxHashMap<FunctionCopy, String>,
+    symbols: &'b FxHashMap<DeclarationCopy, String>,
     globals: Vec<String>,                      // each global's address
     scopes: Vec<usize>, // by debug scope, its metadata; none in a release build
     locations: FxHashMap<(usize, u32), usize>, // each scope and offset's DILocation

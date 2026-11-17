@@ -378,11 +378,13 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
     /// What `reference`, whose type refers to `target`, refers to: a place.
     pub(super) fn dereference(&mut self, reference: Id<Expr>, target: TypeId) -> Expr {
         let pointer = self.body.exprs[reference].ty;
-        let ty = match (&self.checker.types[pointer], &self.checker.types[target]) {
-            // Only a struct with an error stays a name; lowering stops at this.
-            (_, Type::Named(_)) => TypeId::INVALID,
-            (Type::RawPointer { .. }, _) => {
-                let span = self.body.exprs.span(reference);
+        let span = self.body.exprs.span(reference);
+        // A pointer only names its target, which may hold it (`*Node` in
+        // `Node`): reaching through it uses the target as a value, invalid
+        // for a struct with an error, where lowering stops.
+        let target = self.checker.value_type_at(target, span);
+        let ty = match self.checker.types[pointer] {
+            Type::RawPointer { .. } if target != TypeId::INVALID => {
                 let held = self.checker.reached_through_pointer(target, span);
                 held.unwrap_or(TypeId::INVALID)
             }

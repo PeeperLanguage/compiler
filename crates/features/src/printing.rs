@@ -10,7 +10,7 @@ use bigint::Limbs;
 use check::builder::ThirBuilder;
 use model::Callee;
 use model::ConstArguments;
-use model::FunctionCopy;
+use model::DeclarationCopy;
 use model::constant::Value;
 use model::semantic_types::Conversion;
 use model::semantic_types::Float;
@@ -370,7 +370,7 @@ fn library_call(
         }
         return None;
     };
-    let function = FunctionCopy {
+    let function = DeclarationCopy {
         definition,
         arguments: ConstArguments::NONE,
     };

@@ -3,7 +3,7 @@
 //! `model::semantic_types` (`Types::builtin`).
 
 use bigint::Limbs;
-use model::FunctionCopy;
+use model::DeclarationCopy;
 use model::constant::Value;
 use model::layout::layout;
 use model::semantic_types::ConstArgument;
@@ -70,7 +70,7 @@ impl<L: Checked> Checker<'_, L> {
     /// is given, answers when its call at `span` runs (`evaluate_call`): the
     /// fact of that type its name asks for. `None` for a type the fact is
     /// not of, reported.
-    pub(crate) fn builtin_value(&mut self, function: FunctionCopy, span: Span) -> Option<Value> {
+    pub(crate) fn builtin_value(&mut self, function: DeclarationCopy, span: Span) -> Option<Value> {
         let &[ConstArgument::Type(ty)] = self.types.arguments(function.arguments) else {
             unreachable!("a `#[builtin]` function takes one type")
         };

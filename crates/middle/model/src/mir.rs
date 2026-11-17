@@ -10,7 +10,7 @@
 
 use std::fmt::Write;
 
-use crate::FunctionCopy;
+use crate::DeclarationCopy;
 use arena::Arena;
 use arena::Id;
 use arena::List;
@@ -276,7 +276,7 @@ pub enum Global {
     Bytes(Box<[u8]>),
     /// A table of function addresses, in order, each with how it is called:
     /// a module may hold a table of functions it never calls.
-    Functions(Box<[(FunctionCopy, Signature)]>),
+    Functions(Box<[(DeclarationCopy, Signature)]>),
 }
 
 /// How a function takes its parameters and gives its result.
@@ -741,7 +741,7 @@ pub enum InstructionKind {
 pub enum Callee {
     /// A function of the program, or a copy of one; an `extern` function
     /// has no body.
-    Function(FunctionCopy),
+    Function(DeclarationCopy),
     /// The function whose address the operand gives.
     Pointer(Operand),
 }
@@ -956,7 +956,7 @@ impl Body {
 
     /// Each function the body may run: those it calls, and those in its
     /// tables, which a method call reaches through an interface value.
-    pub fn named_functions(&self) -> impl Iterator<Item = FunctionCopy> {
+    pub fn named_functions(&self) -> impl Iterator<Item = DeclarationCopy> {
         let called = self
             .instructions
             .ids()
@@ -1025,7 +1025,7 @@ impl Body {
     /// temporary), a place as its root then `[+8]`, `[*]` or `[%3 * 4]`.
     /// The globals follow the blocks: bytes as text, a table by its
     /// functions' names.
-    pub fn text(&self, file: &SourceFile, name_of: impl Fn(FunctionCopy) -> String) -> String {
+    pub fn text(&self, file: &SourceFile, name_of: impl Fn(DeclarationCopy) -> String) -> String {
         let mut printer = Printer {
             body: self,
             file,
@@ -1066,7 +1066,7 @@ impl Body {
 struct Printer<'b> {
     body: &'b Body,
     file: &'b SourceFile,
-    name_of: &'b dyn Fn(FunctionCopy) -> String,
+    name_of: &'b dyn Fn(DeclarationCopy) -> String,
     out: String,
 }
 

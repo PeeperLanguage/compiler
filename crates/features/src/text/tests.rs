@@ -4,7 +4,7 @@
 use std::sync::Arc;
 
 use model::ConstArguments;
-use model::FunctionCopy;
+use model::DeclarationCopy;
 use model::semantic_types::TypeId;
 use model::thir::Body;
 use source::SourceFile;
@@ -72,7 +72,7 @@ fn a_run_gives_back_a_c_string_without_its_end() {
     let (built, reported) = with_checker(text, |checker, functions| {
         let (definition, name) = functions[1];
         let mut body = Body::default();
-        let copy = FunctionCopy {
+        let copy = DeclarationCopy {
             definition,
             arguments: ConstArguments::NONE,
         };
