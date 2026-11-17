@@ -47,11 +47,11 @@ impl<'p> Scope<'p> {
         self.names.get(&(owner, name)).map(|&(symbol, _)| symbol)
     }
 
-    /// The struct this module declares as `name`, the only type that can
-    /// have functions (`fn Point::name`); `None` for any other name. A type
+    /// The type this module declares as `name`, which can have functions
+    /// (`fn Point::name`, `has_functions`); `None` for any other name. A type
     /// here is always this module's: imports bring in modules, and the
     /// prelude is not copied in.
-    pub(crate) fn struct_named<L: Language>(
+    pub(crate) fn owner_named<L: Language>(
         &self,
         modules: &[model::program::Module<L>],
         name: &str,
@@ -89,20 +89,17 @@ impl<'p> Scope<'p> {
     }
 }
 
-/// Whether the type declaration `definition` can have functions
-/// (`fn Point::name`): only a struct can.
+/// Whether the declaration `definition` can have functions
+/// (`fn Point::name`): any type it declares, not an alias, which names a
+/// type declared elsewhere.
 pub(crate) fn has_functions<L: Language>(
     modules: &[model::program::Module<L>],
     definition: DefId,
 ) -> bool {
-    let tree = &modules[definition.module.index()].ast;
-    match model::program::declaration(modules, definition) {
-        ast::Decl::Type(declaration) => match tree.types[declaration.ty] {
-            ast::Type::Feature(ty) => L::fields(&ty).is_some(),
-            _ => false,
-        },
-        _ => false,
-    }
+    matches!(
+        model::program::declaration(modules, definition),
+        ast::Decl::Type(_)
+    )
 }
 
 /// The name nearest to `name` (`nearest_name`): one of `first`, else one of
@@ -141,7 +138,7 @@ pub fn report_redeclared(
 /// The scope of the module `id` of `modules`. A name declared twice keeps
 /// its first meaning and is reported. A type's functions come after the
 /// top-level names, since a type may be declared below its functions; the
-/// type must be a struct of this module, so it has the same functions
+/// type must be one this module declares, so it has the same functions
 /// everywhere.
 pub fn collect<'p, L: Language>(
     id: ModuleId,
@@ -209,9 +206,9 @@ pub fn collect<'p, L: Language>(
         else {
             continue;
         };
-        let Some(owner_struct) = scope.struct_named(modules, owner.text(file)) else {
+        let Some(owner_type) = scope.owner_named(modules, owner.text(file)) else {
             let message = format!(
-                "`{}` is not a struct declared in this module",
+                "`{}` is not a type declared in this module",
                 owner.text(file)
             );
             diagnostics.push(
@@ -221,10 +218,22 @@ pub fn collect<'p, L: Language>(
             );
             continue;
         };
+        // An interface's own methods are its names too: a call through it
+        // must mean one.
+        let text = name.text(file);
+        let methods = model::program::interface_methods(modules, owner_type).into_iter();
+        if let Some(method) = methods
+            .flatten()
+            .find(|method| method.name.text(file) == text)
+        {
+            let diagnostic = report_redeclared(file, text, "type", name.span, method.name.span);
+            diagnostics.push(diagnostic);
+            continue;
+        }
         let symbol = Symbol::Function(definition(index));
         diagnostics.extend(declare(
             &mut scope,
-            Some(owner_struct),
+            Some(owner_type),
             name.text(file),
             symbol,
             name.span,

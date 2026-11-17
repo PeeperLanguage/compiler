@@ -203,7 +203,7 @@ impl<L: Checked> Checker<'_, L> {
         // shortcut: a generic struct's functions are refused until a copy of
         // one takes its owner's type arguments.
         if let Some(written) = owner
-            && let Some(owner) = (self.scope()).struct_named(self.modules, written.text(&tree.file))
+            && let Some(owner) = (self.scope()).owner_named(self.modules, written.text(&tree.file))
             && (model::program::declaration_copy_parameters(self.modules, owner).next()).is_some()
         {
             return self.not_supported(written.span, "functions of generic types");
@@ -1124,7 +1124,7 @@ impl<L: Checked> Checker<'_, L> {
                     };
                     let owner = self
                         .scope()
-                        .struct_named(self.modules, owner.text(&tree.file));
+                        .owner_named(self.modules, owner.text(&tree.file));
                     return owner.map_or(TypeId::INVALID, |owner| self.named_type(owner, span));
                 }
                 ast::Type::Name => return self.named_type_at(span),

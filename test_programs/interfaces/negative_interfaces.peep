@@ -12,6 +12,10 @@ iface Bad {
     fn generic<T>(&self, value: T) //~ error[P0005]: an interface method takes no type or `const` parameter: each type that implements it gives one function for every call
 }
 
+// An interface's own functions share its methods' names.
+fn Shape::area(&self) -> f64 { return 0.0; } //~ error[T0003]: `area` is already declared in this type
+fn Shape::double(&self) -> f64 { return self.area() * 2.0; }
+
 struct Square { side: f64 }
 fn Square::area(&self) -> f64 { return self.side * self.side; }
 fn Square::grow(&mut self, by: f64) { self.side = self.side + by; }
@@ -29,6 +33,8 @@ fn show(s: &Shape) {
     s.grow(1.0); //~ error[T0007]: cannot mutably borrow `s` through shared reference `s`
     println(s.aera()); //~ error[T0002]: unknown name `aera` in interface `Shape`
     s.parts(); //~ error[T0004]: `parts` takes `self` whole, so it cannot be called through `&Shape`
+    println(s.doubel()); //~ error[T0002]: unknown name `doubel` in interface `Shape`
+    //~ help: did you mean `double`?
 }
 
 fn pointer(p: *Shape) -> f64 { return p.*.area(); } //~ error[T0043]: raw pointers to owned interfaces are not supported yet

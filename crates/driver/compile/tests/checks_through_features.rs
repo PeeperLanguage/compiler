@@ -290,10 +290,10 @@ fn a_type_function_needs_a_struct_of_its_module() {
         messages,
         [
             "`a` is already declared in this type",
-            "`Limit` is not a struct declared in this module",
-            "`Missing` is not a struct declared in this module",
-            "`Other` is not a struct declared in this module",
-            "`i32` is not a struct declared in this module",
+            "`Limit` is not a type declared in this module",
+            "`Missing` is not a type declared in this module",
+            "`Other` is not a type declared in this module",
+            "`i32` is not a type declared in this module",
         ]
     );
 }

@@ -218,7 +218,7 @@ fn interface_references() {
         (to_mutable_square, view, Conversion::ToInterface),
         (to_mutable_square, edit, Conversion::ToInterface),
         (to_square, edit, Conversion::Never),
-        (to_number, view, Conversion::Never), // only a struct has methods
+        (to_number, view, Conversion::Never), // only a declared type has methods
         (edit, view, Conversion::Reborrow),
         (view, edit, Conversion::Never),
         (view, to_square, Conversion::Never),

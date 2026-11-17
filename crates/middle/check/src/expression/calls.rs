@@ -12,7 +12,6 @@ use model::DefId;
 use model::constant::Value;
 use model::semantic_types::ConstArgument;
 use model::semantic_types::Constant;
-use model::semantic_types::Members;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
 use model::thir::Expr;
@@ -363,11 +362,13 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
         }
     }
 
-    /// The function `name` of the struct `value` is or points to, or the
+    /// The function `name` of the type `value` is or points to, or the
     /// method `name` of the interface or interface reference `value` is,
-    /// called with a dot written at `span`: the place of the struct, of the
+    /// called with a dot written at `span`: the place of the value, of the
     /// interface, or of what the interface reference views, which the call
-    /// gives as `self`, the callee, and its type.
+    /// gives as `self`, the callee, and its type. An interface's own
+    /// function (`fn Shape::name`) is found before its methods; a name
+    /// cannot be both (`scope::collect`).
     fn method(
         &mut self,
         value: Id<ast::Expr<L>>,
@@ -376,16 +377,23 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
     ) -> Option<(Id<Expr>, Callee, TypeId)> {
         let value = self.add_expr(value, None);
         let ty = self.body.exprs[value].ty;
-        match self.checker.types[ty] {
-            Type::InterfaceReference { interface, .. } => {
-                return self.interface_method(value, interface, name);
-            }
-            Type::Interface { .. } => return self.interface_method(value, ty, name),
-            _ => {}
+        let interface = match self.checker.types[ty] {
+            Type::InterfaceReference { interface, .. } => Some(interface),
+            Type::Interface { .. } => Some(ty),
+            _ => None,
+        };
+        if let Some(interface) = interface
+            && let Some(definition) = self.checker.types[interface].definition()
+            && let text = name.text(&self.checker.module().ast.file)
+            && (self.checker.module_checks[definition.module.index()].scope)
+                .get(Some(definition), text)
+                .is_none()
+        {
+            return self.interface_method(value, interface, name);
         }
         let place = self.through_pointer(value, self.body.exprs.span(value));
         let ty = self.body.exprs[place].ty;
-        let Some(Members { definition, .. }) = self.checker.types[ty].members() else {
+        let Some(definition) = self.checker.types[ty].definition() else {
             if ty != TypeId::INVALID {
                 let message = format!("`{}` has no functions", self.checker.type_text(ty));
                 self.checker
@@ -611,7 +619,13 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
         };
         let head = self.checker.type_text(interface);
         let Some(slot) = names().position(|method| method == text) else {
-            let meant = scope::nearest(text, std::iter::empty(), names());
+            // Another module's private ones cannot be called from here.
+            let elsewhere = definition.module != self.checker.current_module();
+            let functions = (self.checker.module_checks[definition.module.index()].scope)
+                .symbols(Some(definition))
+                .map(|(function, _)| function)
+                .filter(|function| !elsewhere || model::program::is_exported(function));
+            let meant = scope::nearest(text, names(), functions);
             let message = format!("unknown name `{text}` in interface `{head}`");
             self.checker
                 .report_unknown(diagnostics::UNDEFINED_NAME, name.span, message, meant);
