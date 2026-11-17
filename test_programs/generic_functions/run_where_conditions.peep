@@ -100,4 +100,8 @@ fn main() {
     let address: usize = 1;
     println(Max(3, 7), Max(1.5, 0.5), Whole(small), Second(1, 2.5), Wide(address));
     println(Eight(2.5), Times(3, 7), Area(&Square.{ side = 3 }));
+    // Types written after `::` decide; each argument converts, and the
+    // constraints are asked of them the same way.
+    println(Max::<f64>(3, 2.5), Whole::<u8>(200), Second::<i8, f32>(1, 2));
+    println(Eight::<f64>(1), Times::<i64>(2, 5), Wide::<usize>(1));
 }
