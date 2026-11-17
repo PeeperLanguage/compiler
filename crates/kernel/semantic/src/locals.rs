@@ -3,33 +3,26 @@
 
 use arena::Id;
 use diagnostics::Diagnostic;
-use model::layout::in_memory;
-use model::semantic_types::Constant;
-use model::semantic_types::Type;
-use model::semantic_types::TypeId;
-use model::thir::Expr;
-use model::thir::ExprKind;
-use model::thir::Local;
-use model::thir::Stmt;
-use model::thir::Variable;
+use model::layout;
+use model::semantic_types;
+use model::thir;
 use source::Span;
 use syntax::ast;
-use syntax::ast::Ident;
 
 use crate::Checked;
-use crate::builder::ThirBuilder;
-use crate::function::constant_refusal;
+use crate::builder;
+use crate::functions;
 
-impl<L: Checked> ThirBuilder<'_, '_, L> {
+impl<L: Checked> builder::ThirBuilder<'_, '_, L> {
     /// `let mut name: ty = value;`. The variable is declared after its value is
     /// checked, so the value cannot use it.
     pub(super) fn check_let_statement(
         &mut self,
         mutable: bool,
-        name: Ident,
+        name: ast::Ident,
         ty: Option<Id<ast::Type<L>>>,
         value: Option<Id<ast::Expr<L>>>,
-    ) -> Stmt {
+    ) -> thir::Stmt {
         let declared = ty.map(|ty| self.checker.resolve_value_type(ty));
         let initialized = value.is_some();
         let (ty, value) = match (declared, value) {
@@ -37,12 +30,12 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
             (None, Some(value)) => {
                 let value = self.add_expr(value, None);
                 let ty = self.body.exprs[value].ty;
-                if ty == TypeId::VOID {
+                if ty == semantic_types::TypeId::VOID {
                     let span = self.body.exprs.span(value);
                     let message = "this expression has no value to bind";
                     self.checker
                         .error(diagnostics::INVALID_OPERATION, message, span);
-                    (TypeId::INVALID, None)
+                    (semantic_types::TypeId::INVALID, None)
                 } else {
                     (ty, Some(value))
                 }
@@ -52,10 +45,10 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
                 let message = format!("`{text}` needs a type or a value");
                 self.checker
                     .error(diagnostics::MISSING_TYPE, message, name.span);
-                (TypeId::INVALID, None)
+                (semantic_types::TypeId::INVALID, None)
             }
         };
-        let declared_variable = Variable {
+        let declared_variable = thir::Variable {
             ty,
             mutable,
             initialized,
@@ -65,7 +58,7 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
         let text = name.text(&self.checker.module().ast.file);
         if let Some(&position) = self.innermost.get(text)
             && position < self.block_start
-            && let Local::Variable(outer) = self.names[position].local
+            && let thir::Local::Variable(outer) = self.names[position].local
             && self.body.variables[outer].mutable
         {
             // Likely meant as `x = ...`: the outer local stays unchanged.
@@ -95,8 +88,8 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
         if let Some(value) = value {
             self.body.keep_temporaries(value, variable);
         }
-        self.declare(name, Local::Variable(variable));
-        Stmt::Let { variable, value }
+        self.declare(name, thir::Local::Variable(variable));
+        thir::Stmt::Let { variable, value }
     }
 
     /// `const name: ty = value;`: a name for a value known at compile time.
@@ -105,7 +98,7 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
     pub(crate) fn check_const_statement(
         &mut self,
         declaration: Id<ast::Decl<L>>,
-    ) -> Option<Constant> {
+    ) -> Option<semantic_types::Constant> {
         let ast::Decl::Const {
             name, ty, value, ..
         } = self.checker.module().ast.decls[declaration]
@@ -130,8 +123,8 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
     pub(crate) fn check_constant_value(
         &mut self,
         value: Id<ast::Expr<L>>,
-        declared: Option<TypeId>,
-    ) -> Option<Constant> {
+        declared: Option<semantic_types::TypeId>,
+    ) -> Option<semantic_types::Constant> {
         let span = self.checker.module().ast.exprs.span(value);
         let outer = std::mem::replace(&mut self.in_constant, true);
         let checked = match declared {
@@ -144,24 +137,28 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
 
     /// `checked`, worked out with `in_constant`, as a constant; reported at
     /// `span` when it is not one.
-    pub(crate) fn known_constant(&mut self, checked: Expr, span: Span) -> Option<Constant> {
+    pub(crate) fn known_constant(
+        &mut self,
+        checked: thir::Expr,
+        span: Span,
+    ) -> Option<semantic_types::Constant> {
         match checked.kind {
-            ExprKind::Constant(value) => Some(Constant {
+            thir::ExprKind::Constant(value) => Some(semantic_types::Constant {
                 ty: checked.ty,
                 value,
             }),
-            ExprKind::Invalid => None,
+            thir::ExprKind::Invalid => None,
             _ => {
                 let file = self.checker.module().ast.file.clone();
                 let unknown = self.body.first_named_variable(&checked.kind);
                 let types = &self.checker.types;
                 let message = if unknown.is_some() {
                     "the value of a constant must be known at compile time"
-                } else if in_memory(types, checked.ty)
+                } else if layout::in_memory(types, checked.ty)
                     || types[checked.ty].borrows() == Some(true)
-                    || matches!(types[checked.ty], Type::RawPointer { .. })
+                    || matches!(types[checked.ty], semantic_types::Type::RawPointer { .. })
                 {
-                    constant_refusal(&types[checked.ty])
+                    functions::bodies::constant_refusal(&types[checked.ty])
                 } else {
                     "this value cannot be worked out at compile time yet"
                 };

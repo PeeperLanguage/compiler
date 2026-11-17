@@ -2,8 +2,8 @@
 //! operation on values known at compile time is folded to its value.
 
 mod borrows;
-pub(crate) mod calls;
 mod literals;
+mod names;
 mod operators;
 mod places;
 

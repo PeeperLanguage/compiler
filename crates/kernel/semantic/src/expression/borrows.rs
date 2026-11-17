@@ -16,7 +16,7 @@ use crate::builder::ThirBuilder;
 impl<L: Checked> ThirBuilder<'_, '_, L> {
     /// A `&place` or `&mut place` reference to the checked place `place`.
     /// `&mut` needs a place that can be written.
-    pub(super) fn check_borrow(&mut self, mutable: bool, place: Id<Expr>) -> Expr {
+    pub(crate) fn check_borrow(&mut self, mutable: bool, place: Id<Expr>) -> Expr {
         let target = self.body.exprs[place].ty;
         let ty = self.checker.reference_type(mutable, target);
         if ty == TypeId::INVALID {

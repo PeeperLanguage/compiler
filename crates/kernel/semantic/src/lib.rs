@@ -3,15 +3,32 @@
 //! (docs/ir-design.md). It starts with each module's scope.
 
 pub mod builder;
-pub mod builtin;
-mod constraints;
-mod copies;
+mod conformance;
 pub mod declaration;
 mod expression;
 pub mod fold;
-mod function;
+pub mod functions;
+pub mod generics;
+mod locals;
 pub mod scope;
 mod statement;
+/// Why a call of `callee` with `given` arguments is wrong, when it takes
+/// `fixed` of them, or at least that many when `variadic`.
+pub(crate) fn argument_count_message(
+    callee: &str,
+    what: &str,
+    fixed: usize,
+    variadic: bool,
+    given: usize,
+) -> String {
+    format!(
+        "`{callee}` takes {}{fixed} {what}{}, but {given} {} given",
+        if variadic { "at least " } else { "" },
+        if fixed == 1 { "" } else { "s" },
+        if given == 1 { "was" } else { "were" },
+    )
+}
+
 #[cfg(test)]
 mod testing;
 
@@ -23,7 +40,7 @@ use builder::ThirBuilder;
 use diagnostics::Code;
 use diagnostics::Diagnostic;
 use diagnostics::fix::Fix;
-use function::Built;
+use functions::bodies;
 use lower::ProgramDebugTypes;
 use model::ConstArguments;
 use model::DeclarationCopy;
@@ -112,7 +129,7 @@ struct CheckerInternals {
     declarations_being_checked: Vec<Checking>,
     /// How far the body of each function, or each copy of one, is built
     /// (`build_function`).
-    built_bodies: FxHashMap<DeclarationCopy, Built>,
+    built_bodies: FxHashMap<DeclarationCopy, bodies::Built>,
     /// Each copy of a function or type with type or `const` parameters
     /// made so far (`copy_type`).
     copies: FxHashMap<DeclarationCopy, Copied>,
@@ -543,33 +560,6 @@ impl<'p, L: Checked> Checker<'p, L> {
                 .entry(definition)
                 .or_default()
                 .push(Fact { span, kind });
-        }
-    }
-
-    /// Makes the fact that the name ending at `name_end` is a function
-    /// (`record`) the fact that its call there made `copy`, of the type
-    /// `ty`. Only a body checked once has it: a copy has no facts, and a
-    /// function's own body (`check_body`) makes no copy, so it would have
-    /// only those that other calls happened to make.
-    pub(crate) fn record_copy(&mut self, name_end: u32, copy: DeclarationCopy, ty: TypeId) {
-        let checking = self
-            .internals
-            .declarations_being_checked
-            .last()
-            .expect("a declaration is being checked");
-        if checking.arguments != ConstArguments::NONE {
-            return;
-        }
-        let definition = checking.definition;
-        let names_it = |kind| matches!(kind, FactKind::Name(Symbol::Function(named)) if named == copy.definition);
-        let facts = &mut self.module_checks[definition.module.index()].facts;
-        let Some(facts) = facts.get_mut(&definition) else {
-            return; // none are recorded
-        };
-        let mut facts = facts.iter_mut().rev();
-        // The facts of the call's arguments were recorded after its name's.
-        if let Some(fact) = facts.find(|fact| fact.span.end == name_end && names_it(fact.kind)) {
-            fact.kind = FactKind::Copy { function: copy, ty };
         }
     }
 

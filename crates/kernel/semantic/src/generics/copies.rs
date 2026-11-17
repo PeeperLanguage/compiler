@@ -4,7 +4,7 @@
 //! What a copy is, each kind of declaration checks itself: a function its
 //! signature, then its body (`next_copy`); a type its declaration.
 
-use std::sync::Arc;
+use std::sync;
 
 use arena::Id;
 use arena::List;
@@ -13,9 +13,8 @@ use model::ConstArguments;
 use model::DeclarationCopy;
 use model::DefId;
 use model::ModuleId;
-use model::semantic_types::ConstArgument;
-use model::semantic_types::Type;
-use model::semantic_types::TypeId;
+use model::semantic_types;
+use model::thir;
 use source::Span;
 use syntax::ast;
 
@@ -24,7 +23,6 @@ use crate::Checked;
 use crate::Checker;
 use crate::Checking;
 use crate::Copied;
-use crate::expression::calls;
 
 impl<L: Checked> Checker<'_, L> {
     /// The type of `copy`, asked for at `used_at`: given nothing, its
@@ -34,7 +32,7 @@ impl<L: Checked> Checker<'_, L> {
     /// (`next_copy`). Invalid when the declaration's own check, or the
     /// copy's, has an error, or when copies are made inside each other too
     /// deep (`COPY_DEPTH_LIMIT`), reported at `used_at`.
-    pub fn copy_type(&mut self, copy: DeclarationCopy, used_at: Span) -> TypeId {
+    pub fn copy_type(&mut self, copy: DeclarationCopy, used_at: Span) -> semantic_types::TypeId {
         let has_body = matches!(
             model::program::declaration(self.modules, copy.definition),
             ast::Decl::Function(_)
@@ -48,21 +46,21 @@ impl<L: Checked> Checker<'_, L> {
             copy.definition,
             used_at,
             |module| &mut module.declared_types,
-            TypeId::INVALID,
+            semantic_types::TypeId::INVALID,
             check,
         );
-        if copy.arguments == ConstArguments::NONE || own == TypeId::INVALID {
+        if copy.arguments == ConstArguments::NONE || own == semantic_types::TypeId::INVALID {
             return own;
         }
         // Named in a type's own check by what names `T`
         // (`named_without_types`): its own check's name, which no value has.
         if copy.arguments == self.own_arguments(copy.definition) {
-            return TypeId::INVALID;
+            return semantic_types::TypeId::INVALID;
         }
         if let Some(&Copied { ty, .. }) = self.internals.copies.get(&copy) {
             // Invalid only while it is checked, as one with an error is not
             // kept: asked for again there, as a `where` or a field can.
-            if ty == TypeId::INVALID {
+            if ty == semantic_types::TypeId::INVALID {
                 let mut checking = self.internals.declarations_being_checked.iter();
                 let start = (checking.position(|checking| checking.copy() == copy))
                     .expect("a copy without a type is being checked");
@@ -87,7 +85,7 @@ impl<L: Checked> Checker<'_, L> {
             && made_inside.arguments != ConstArguments::NONE
             && !self.internals.copies.contains_key(&made_inside)
         {
-            return TypeId::INVALID;
+            return semantic_types::TypeId::INVALID;
         }
         let (depth, reported_in) = match self.internals.copies.get(&made_inside) {
             Some(inside) => (inside.depth + 1, inside.reported_in),
@@ -96,7 +94,7 @@ impl<L: Checked> Checker<'_, L> {
         if depth > COPY_DEPTH_LIMIT {
             // Reported once: the declaration that made the copy has the error.
             if std::mem::replace(&mut self.internals.copies_too_deep, true) {
-                return TypeId::INVALID;
+                return semantic_types::TypeId::INVALID;
             }
             let name = model::program::declared_path(self.modules, copy.definition);
             let message = format!(
@@ -108,7 +106,7 @@ impl<L: Checked> Checker<'_, L> {
         self.internals.copies.insert(
             copy,
             Copied {
-                ty: TypeId::INVALID,
+                ty: semantic_types::TypeId::INVALID,
                 depth,
                 reported_in,
                 used_in: self.current_module(),
@@ -129,7 +127,7 @@ impl<L: Checked> Checker<'_, L> {
         });
         let user = self.current_module();
         self.report_from_copy(copy, reported, user);
-        if ty == TypeId::INVALID {
+        if ty == semantic_types::TypeId::INVALID {
             // Not kept: another use that asks for it is told why as well.
             self.internals.copies.remove(&copy);
             return ty;
@@ -148,7 +146,7 @@ impl<L: Checked> Checker<'_, L> {
     /// named, as in its own check: what holds it by value checks it
     /// (`copy_type`), so a type that holds itself, as `Two<[2]T>` in `Two`,
     /// is found once, whatever `T` is.
-    pub(crate) fn named_without_types(&mut self, definition: DefId) -> TypeId {
+    pub(crate) fn named_without_types(&mut self, definition: DefId) -> semantic_types::TypeId {
         let checking = (self.internals.declarations_being_checked.last())
             .expect("a declaration is being checked");
         let in_own_type_check = checking.arguments != ConstArguments::NONE
@@ -158,10 +156,10 @@ impl<L: Checked> Checker<'_, L> {
                 ast::Decl::Type(_)
             );
         if !in_own_type_check {
-            return TypeId::INVALID;
+            return semantic_types::TypeId::INVALID;
         }
         let arguments = self.own_arguments(definition);
-        self.types.intern(Type::Named {
+        self.types.intern(semantic_types::Type::Named {
             definition,
             arguments,
         })
@@ -186,7 +184,7 @@ impl<L: Checked> Checker<'_, L> {
         if count == 0 {
             return ConstArguments::NONE;
         }
-        let invalid = ConstArgument::Type(TypeId::INVALID);
+        let invalid = semantic_types::ConstArgument::Type(semantic_types::TypeId::INVALID);
         self.types.const_arguments(&vec![invalid; count])
     }
 
@@ -210,7 +208,7 @@ impl<L: Checked> Checker<'_, L> {
         let message = if count == 0 {
             format!("`{name}` takes no type arguments")
         } else {
-            calls::argument_count_message(name, "type argument", count, false, written.len())
+            crate::argument_count_message(name, "type argument", count, false, written.len())
         };
         self.error(diagnostics::WRONG_ARGUMENT_COUNT, message, span);
         None
@@ -246,13 +244,47 @@ impl<L: Checked> Checker<'_, L> {
             // One that marks the use already, as one about the use itself
             // (`constraints_hold`) or a cycle through the copy, says where.
             let at_use = (diagnostic.labels.iter())
-                .any(|label| Arc::ptr_eq(&label.file, file) && label.span == used_at);
+                .any(|label| sync::Arc::ptr_eq(&label.file, file) && label.span == used_at);
             into.push(if at_use {
                 diagnostic
             } else {
                 let message = format!("in `{name}`, the copy made here");
                 diagnostic.label(file, used_at, message)
             });
+        }
+    }
+}
+
+impl<L: Checked> Checker<'_, L> {
+    /// Makes the fact that the name ending at `name_end` is a function
+    /// (`record`) the fact that its call there made `copy`, of the type
+    /// `ty`. Only a body checked once has it: a copy has no facts, and a
+    /// function's own body (`check_body`) makes no copy, so it would have
+    /// only those that other calls happened to make.
+    pub(crate) fn record_copy(
+        &mut self,
+        name_end: u32,
+        copy: DeclarationCopy,
+        ty: semantic_types::TypeId,
+    ) {
+        let checking = self
+            .internals
+            .declarations_being_checked
+            .last()
+            .expect("a declaration is being checked");
+        if checking.arguments != ConstArguments::NONE {
+            return;
+        }
+        let definition = checking.definition;
+        let names_it = |kind| matches!(kind, thir::FactKind::Name(thir::Symbol::Function(named)) if named == copy.definition);
+        let facts = &mut self.module_checks[definition.module.index()].facts;
+        let Some(facts) = facts.get_mut(&definition) else {
+            return; // none are recorded
+        };
+        let mut facts = facts.iter_mut().rev();
+        // The facts of the call's arguments were recorded after its name's.
+        if let Some(fact) = facts.find(|fact| fact.span.end == name_end && names_it(fact.kind)) {
+            fact.kind = thir::FactKind::Copy { function: copy, ty };
         }
     }
 }

@@ -2,7 +2,6 @@
 //! blocks declare.
 
 mod assignments;
-mod declarations;
 mod loops;
 
 use std::num::NonZeroU32;
@@ -33,7 +32,6 @@ use crate::Checker;
 use crate::Checking;
 use crate::builder::Declared;
 use crate::builder::ThirBuilder;
-use crate::function::function_declaration;
 use crate::scope::report_redeclared;
 
 impl<L: Checked> Checker<'_, L> {
@@ -57,7 +55,7 @@ impl<L: Checked> Checker<'_, L> {
             definition,
             arguments,
         } = copy;
-        let function = function_declaration(self.modules, definition);
+        let function = model::program::function_declaration(self.modules, definition);
         let Some(block) = function.body else {
             return false;
         };
@@ -297,7 +295,7 @@ impl<'a, 'p, L: Checked> ThirBuilder<'a, 'p, L> {
     /// parameters are in the body's outermost block, as in Go. A type's name,
     /// built-in or declared, is reported and stays the type's: a value never
     /// hides a type.
-    fn declare(&mut self, name: Ident, local: Local) {
+    pub(crate) fn declare(&mut self, name: Ident, local: Local) {
         let text = name.text(&self.checker.module().ast.file);
         if text.is_empty() {
             return; // missing after a syntax error

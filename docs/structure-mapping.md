@@ -93,16 +93,18 @@ API: `Language::string_kind` is removed. Its places:
 | `builder.rs`, `scope.rs`, `fold.rs`, `fold/*`, `testing.rs` | stay | same | |
 | `function.rs` | move | `functions/bodies.rs` | a body to checked MIR, `evaluate_call` |
 | `builtin.rs` | move | `functions/builtin.rs` | `#[builtin]` functions |
-| `declaration.rs`: `check_function`, `is_builtin_declared`, `signature_type`, `result_origins`, `resolve_signature_type` | extract | `functions/signatures.rs` | a function's type |
+| `builtin.rs`: `unsupported_type` | extract | `declaration.rs` | built-in types not handled yet, read only where type names resolve |
+| `declaration.rs`: `FunctionKind`, `check_function`, `is_builtin_declared`, `signature_type`, `result_origins`, `resolve_signature_type` | extract | `functions.rs` | a function's type |
+| `function.rs`: `function_declaration` | extract | `model::program`, beside `declaration` | a function as written, which `functions`, `generics`, `conformance` and `statement` look up |
 | `declaration.rs`: `implementation`, `method_type` | extract | `conformance.rs` | whether a type implements an interface; receiver substitution; the cached `ImplementationId` |
-| `declaration.rs`: `resolve_type_argument`, `type_argument`, `first_copy_parameter`, `written_inside`, `find_type_argument`, `names_type_parameter` | extract | `generics/arguments.rs` | finding and writing type arguments |
+| `declaration.rs`: `resolve_type_argument`, `type_argument`, `first_copy_parameter`, `written_inside`, `find_type_argument`, `names_type_parameter` | extract | `generics.rs` | finding and writing type arguments |
 | `declaration.rs`: the rest (`check_attributes` for every declaration, type declarations, constants, resolving written types, `is_interface`, `reference_type`, `array_type`, `range_type`, ...) | stays | `declaration.rs` | about 670 of its 1382 lines leave |
 | `copies.rs` | move | `generics/copies.rs` | the one copy table |
 | `constraints.rs` | move | `generics/constraints.rs` | `where`: both interface constraints (through `conformance.rs`) and predicate functions run at compile time; neither form changes |
 | `expression.rs`, `expression/{borrows, literals, operators, places}.rs` | stay | same | |
-| `expression/calls.rs`: `check_call`, `call_found`, `function_called`, `method`, `takes_self`, `interface_method`, `argument_count_message` | move (file renamed) | `functions/calls.rs` | function, method and interface method calls |
+| `expression/calls.rs`: `check_call`, `call_found`, `function_called`, `method`, `takes_self`, `interface_method` | move (file renamed) | `functions/calls.rs` | function, method and interface method calls |
 | `expression/calls.rs`: `check_symbol_value`, `constant_expr` | extract | `expression/names.rs` | a name or path used as a value |
-| `expression/calls.rs`: `written_type_argument`, `copy_called` | extract | `generics/arguments.rs` | type arguments at a call, the copy a call makes |
+| `expression/calls.rs`: `written_type_argument`, `copy_called` | extract | `generics.rs` | type arguments at a call, the copy a call makes |
 | `statement.rs`, `statement/assignments.rs`, `statement/loops.rs` | stay | same | blocks, `if`, `for`, `return`, `break`, `continue`, `panic` |
 | `statement/declarations.rs` | move | `locals.rs` | `let`, `const` in a body, `let .{ }`; `statement.rs` declares the module and calls it as before |
 
@@ -111,9 +113,22 @@ in the kernel and call `conformance.rs`; none imports `features`.
 `conformance.rs` still reads some source declarations as well as checked
 types; that stays as it is for this restructuring.
 
+The signatures and the type arguments sit in the module files
+`functions.rs` and `generics.rs`, the way `expression.rs` and
+`statement.rs` hold their main code beside their submodules. That keeps
+each free function two levels deep for its callers
+(`generics::first_copy_parameter`, `model::program::function_declaration`).
+`argument_count_message` sits in `lib.rs`, since calls and copies both
+report counts with it; with `function_declaration` in `model`, `generics`
+needs nothing from `functions`, and `functions` depends on `generics`
+only.
+
 Done when: the full `scripts/check.sh` passes and no fixture output
-changes. `conformance.rs` gets its own unit tests: a type that implements,
-one that lacks a function, one with a wrong signature.
+changes. Conformance is covered by the marked test programs (a missing
+method and a wrong signature in `interfaces/negative_interfaces.peep`, a
+`const` method in `negative_const_parameters.peep`, a false `where` in
+`negative_where_conditions.peep`, the passing cases in `run_interfaces`);
+the checker's own tests run in `Bare`, which has no interfaces.
 
 ## Step 4: the feature-boundary check (`scripts/check.sh`)
 

@@ -1,28 +1,14 @@
-//! The `#[builtin]` functions the checker works out itself, and the built-in
-//! types it does not handle yet. The types it does handle are named in
-//! `model::semantic_types` (`Types::builtin`).
+//! The `#[builtin]` functions the checker works out itself.
 
 use bigint::Limbs;
 use model::DeclarationCopy;
-use model::constant::Value;
-use model::layout::layout;
-use model::semantic_types::ConstArgument;
-use model::semantic_types::Float;
-use model::semantic_types::Type;
+use model::constant;
+use model::layout;
+use model::semantic_types;
 use source::Span;
 
 use crate::Checked;
 use crate::Checker;
-
-/// What to call the built-in type `name` in a "not supported yet" report, if
-/// it is one the checker does not handle yet.
-pub(crate) fn unsupported_type(name: &str) -> Option<&'static str> {
-    match name {
-        "string" => Some("string types"),
-        "byte" | "char" => Some("byte and char types"),
-        _ => None,
-    }
-}
 
 /// What a `#[builtin]` function gives of the type it takes, on the target
 /// being built.
@@ -70,27 +56,47 @@ impl<L: Checked> Checker<'_, L> {
     /// is given, answers when its call at `span` runs (`evaluate_call`): the
     /// fact of that type its name asks for. `None` for a type the fact is
     /// not of, reported.
-    pub(crate) fn builtin_value(&mut self, function: DeclarationCopy, span: Span) -> Option<Value> {
-        let &[ConstArgument::Type(ty)] = self.types.arguments(function.arguments) else {
+    pub(crate) fn builtin_value(
+        &mut self,
+        function: DeclarationCopy,
+        span: Span,
+    ) -> Option<constant::Value> {
+        let &[semantic_types::ConstArgument::Type(ty)] = self.types.arguments(function.arguments)
+        else {
             unreachable!("a `#[builtin]` function takes one type")
         };
         let (name, file) = model::program::declared_name(self.modules, function.definition);
         let name = name.text(file);
         let fact = type_fact(name).expect("a `#[builtin]` function is one the compiler has");
-        let (size, align) = layout(&self.types, ty, self.target);
-        let number = |value: u64| Value::Integer(Limbs::new(self.target.pointer_bits, &[value]));
+        let (size, align) = layout::layout(&self.types, ty, self.target);
+        let number =
+            |value: u64| constant::Value::Integer(Limbs::new(self.target.pointer_bits, &[value]));
         Some(match (fact, &self.types[ty]) {
             (TypeFact::Size, _) => number(size),
             (TypeFact::Align, _) => number(align),
-            (TypeFact::Bits, Type::Integer(integer)) => number(u64::from(integer.bits)),
-            (TypeFact::Bits, Type::Float(Float::F32)) => number(32),
-            (TypeFact::Bits, Type::Float(Float::F64)) => number(64),
-            (TypeFact::Signed, Type::Integer(integer)) => Value::Bool(integer.signed),
-            (TypeFact::IsInteger, kind) => Value::Bool(matches!(kind, Type::Integer(_))),
-            (TypeFact::IsFloat, kind) => Value::Bool(matches!(kind, Type::Float(_))),
-            (TypeFact::IsText, kind) => Value::Bool(matches!(kind, Type::Str)),
-            (TypeFact::IsBool, kind) => Value::Bool(matches!(kind, Type::Bool)),
-            (TypeFact::IsPointer, kind) => Value::Bool(matches!(kind, Type::RawPointer { .. })),
+            (TypeFact::Bits, semantic_types::Type::Integer(integer)) => {
+                number(u64::from(integer.bits))
+            }
+            (TypeFact::Bits, semantic_types::Type::Float(semantic_types::Float::F32)) => number(32),
+            (TypeFact::Bits, semantic_types::Type::Float(semantic_types::Float::F64)) => number(64),
+            (TypeFact::Signed, semantic_types::Type::Integer(integer)) => {
+                constant::Value::Bool(integer.signed)
+            }
+            (TypeFact::IsInteger, kind) => {
+                constant::Value::Bool(matches!(kind, semantic_types::Type::Integer(_)))
+            }
+            (TypeFact::IsFloat, kind) => {
+                constant::Value::Bool(matches!(kind, semantic_types::Type::Float(_)))
+            }
+            (TypeFact::IsText, kind) => {
+                constant::Value::Bool(matches!(kind, semantic_types::Type::Str))
+            }
+            (TypeFact::IsBool, kind) => {
+                constant::Value::Bool(matches!(kind, semantic_types::Type::Bool))
+            }
+            (TypeFact::IsPointer, kind) => {
+                constant::Value::Bool(matches!(kind, semantic_types::Type::RawPointer { .. }))
+            }
             (TypeFact::Bits | TypeFact::Signed, _) => {
                 let kinds = match fact {
                     TypeFact::Bits => "an integer or a float",

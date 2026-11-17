@@ -189,7 +189,7 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
     /// else a slice of an array made from them, as `[_]T{ values }` would be.
     /// That array holds what is listed, so writes through a `...mut T` never
     /// reach the variables named.
-    pub(super) fn check_variadic(
+    pub(crate) fn check_variadic(
         &mut self,
         values: &[Id<ast::Expr<L>>],
         parameter: TypeId,

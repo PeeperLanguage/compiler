@@ -6,7 +6,7 @@
 use arena::Id;
 use arena::List;
 use check::Checker;
-use check::declaration::FunctionKind;
+use check::functions;
 use check::scope::report_redeclared;
 use model::DefId;
 use model::semantic_types::Type;
@@ -113,7 +113,7 @@ impl TypeNode for InterfaceType {
                 methods.push(TypeId::INVALID);
                 continue;
             }
-            let kind = &FunctionKind::INTERFACE_METHOD;
+            let kind = &functions::FunctionKind::INTERFACE_METHOD;
             methods.push(checker.signature_type(method.name, method.signature, true, kind));
         }
         let invalid = |ty: TypeId| match &checker.types[ty] {

@@ -7,16 +7,14 @@ use arena::Id;
 use arena::List;
 use diagnostics::Diagnostic;
 use model::ConstArguments;
-use model::constant::Value;
-use model::semantic_types::TypeId;
-use model::thir::Block;
-use model::thir::Body;
-use model::thir::Symbol;
+use model::constant;
+use model::semantic_types;
+use model::thir;
 use syntax::ast;
 
 use crate::Checked;
 use crate::Checker;
-use crate::builder::ThirBuilder;
+use crate::builder;
 
 impl<L: Checked> Checker<'_, L> {
     /// Whether the constraints of `signature`, after `where`, hold for what
@@ -28,7 +26,7 @@ impl<L: Checked> Checker<'_, L> {
     pub(crate) fn constraints_hold(
         &mut self,
         signature: ast::Signature<L>,
-        parameters: &[TypeId],
+        parameters: &[semantic_types::TypeId],
     ) -> bool {
         let checking = (self.internals.declarations_being_checked.last())
             .expect("a declaration is being checked");
@@ -39,9 +37,9 @@ impl<L: Checked> Checker<'_, L> {
         let constraints: Vec<Id<ast::Constraint<L>>> =
             tree.children.lists.items(signature.constraints).collect();
         let span = tree.children.constraints.span(constraints[0]);
-        let mut body = Body::default();
-        let mut builder = ThirBuilder::new(self, &mut body, TypeId::VOID);
-        let block = Block {
+        let mut body = thir::Body::default();
+        let mut builder = builder::ThirBuilder::new(self, &mut body, semantic_types::TypeId::VOID);
+        let block = thir::Block {
             parent: None,
             statements: List::EMPTY,
         };
@@ -85,7 +83,7 @@ impl<L: Checked> Checker<'_, L> {
     }
 }
 
-impl<L: Checked> ThirBuilder<'_, '_, L> {
+impl<L: Checked> builder::ThirBuilder<'_, '_, L> {
     /// Whether `constraint`, after a function's `where`, holds: its subject,
     /// a type, implements the interface its bound names, or the function its
     /// bound names gives `true` when called at compile time with the subject
@@ -109,15 +107,15 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
             _ => self.resolve(bound_span),
         }?;
         match symbol {
-            Symbol::Function(_) => {
+            thir::Symbol::Function(_) => {
                 let outer = std::mem::replace(&mut self.in_constant, true);
                 let found = self.function_called(Some(symbol), bound_span);
                 let checked = self.call_found(found, None, bound_span, List::EMPTY, &given, span);
                 self.in_constant = outer;
-                if checked.ty == TypeId::INVALID {
+                if checked.ty == semantic_types::TypeId::INVALID {
                     return None; // reported, or only a copy knows it
                 }
-                if checked.ty != TypeId::BOOL {
+                if checked.ty != semantic_types::TypeId::BOOL {
                     let ty = self.checker.type_text(checked.ty);
                     let message =
                         format!("`{bound_text}` gives `{ty}`, but a constraint needs `bool`");
@@ -126,13 +124,13 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
                     return None;
                 }
                 match self.known_constant(checked, span)?.value {
-                    Value::Bool(holds) => Some(holds),
+                    constant::Value::Bool(holds) => Some(holds),
                     _ => unreachable!("a `bool` constant is a `Value::Bool`"),
                 }
             }
-            Symbol::Type(definition) => {
+            thir::Symbol::Type(definition) => {
                 let interface = self.checker.declared_type(definition, bound_span);
-                if interface == TypeId::INVALID {
+                if interface == semantic_types::TypeId::INVALID {
                     return None; // reported
                 }
                 if !self.checker.is_interface(interface) {
@@ -149,7 +147,7 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
                     return None;
                 }
                 let ty = self.written_type_argument(subject);
-                if ty == TypeId::INVALID {
+                if ty == semantic_types::TypeId::INVALID {
                     return None; // reported, or only a copy knows it
                 }
                 if self.checker.types[ty].members().is_none() {

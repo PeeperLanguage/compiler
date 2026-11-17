@@ -39,6 +39,17 @@ pub fn declaration<L: Language>(modules: &[Module<L>], definition: DefId) -> &as
     &tree.decls[tree.declaration(definition.index)]
 }
 
+/// The function `definition`, as written.
+pub fn function_declaration<L: Language>(
+    modules: &[Module<L>],
+    definition: DefId,
+) -> &ast::Function<L> {
+    match declaration(modules, definition) {
+        ast::Decl::Function(function) => function,
+        _ => unreachable!("`{definition:?}` is a function"),
+    }
+}
+
 /// The text of the name the declaration `definition` of `modules` declares.
 pub fn declared_text<L: Language>(modules: &[Module<L>], definition: DefId) -> &str {
     let (name, file) = declared_name(modules, definition);

@@ -2,21 +2,16 @@
 //! and calls run at compile time on it (`evaluate_call`).
 
 use diagnostics::Diagnostic;
-use eval::interpreter::ADDRESS_NOT_KNOWN;
-use eval::interpreter::ConstantShape;
-use eval::interpreter::Failure;
+use eval::interpreter;
 use model::ConstArguments;
 use model::DeclarationCopy;
 use model::DefId;
-use model::constant::Value;
+use model::constant;
 use model::mir;
-use model::semantic_types::Type;
-use model::semantic_types::TypeId;
+use model::semantic_types;
 use model::thir;
 use rustc_hash::FxHashSet;
 use source::Span;
-use syntax::ast;
-use syntax::ast::Language;
 
 use crate::Checked;
 use crate::Checker;
@@ -74,12 +69,12 @@ impl<L: Checked> Checker<'_, L> {
     fn lower_function(
         &mut self,
         definition: DefId,
-        ty: TypeId,
+        ty: semantic_types::TypeId,
         thir: &thir::Body,
     ) -> Option<mir::Body> {
         let modules = self.modules;
         let module = definition.module.index();
-        let Type::Function { result, .. } = &self.types[ty] else {
+        let semantic_types::Type::Function { result, .. } = &self.types[ty] else {
             unreachable!("a checked body has a function type")
         };
         let debug_types = &mut self.debug_types;
@@ -110,9 +105,9 @@ impl<L: Checked> Checker<'_, L> {
     pub(crate) fn evaluate_call(
         &mut self,
         function: DeclarationCopy,
-        arguments: &[Value],
+        arguments: &[constant::Value],
         span: Span,
-    ) -> Option<Value> {
+    ) -> Option<constant::Value> {
         if model::program::is_builtin(self.modules, function.definition) {
             return self.builtin_value(function, span);
         }
@@ -156,28 +151,29 @@ impl<L: Checked> Checker<'_, L> {
             }
         }
         let ty = self.copy_type(function, span);
-        let Type::Function {
+        let semantic_types::Type::Function {
             parameters, result, ..
         } = &self.types[ty]
         else {
             unreachable!("a body is a function's")
         };
-        let shape = |ty: TypeId| match &self.types[ty] {
-            Type::Bool => ConstantShape::Bool,
-            &Type::Integer(integer) => ConstantShape::Integer {
+        let shape = |ty: semantic_types::TypeId| match &self.types[ty] {
+            semantic_types::Type::Bool => interpreter::ConstantShape::Bool,
+            &semantic_types::Type::Integer(integer) => interpreter::ConstantShape::Integer {
                 bits: integer.bits,
                 signed: integer.signed,
             },
-            &Type::Float(float) => ConstantShape::Float(float.class()),
-            Type::RawPointer { .. } => ConstantShape::RawPointer,
-            Type::CString => ConstantShape::CString,
-            Type::Str => ConstantShape::Str,
-            other => ConstantShape::Refused(constant_refusal(other)),
+            &semantic_types::Type::Float(float) => interpreter::ConstantShape::Float(float.class()),
+            semantic_types::Type::RawPointer { .. } => interpreter::ConstantShape::RawPointer,
+            semantic_types::Type::CString => interpreter::ConstantShape::CString,
+            semantic_types::Type::Str => interpreter::ConstantShape::Str,
+            other => interpreter::ConstantShape::Refused(constant_refusal(other)),
         };
-        let shaped_arguments: Vec<(&Value, ConstantShape)> = (arguments.iter())
-            .zip(parameters)
-            .map(|(argument, &ty)| (argument, shape(ty)))
-            .collect();
+        let shaped_arguments: Vec<(&constant::Value, interpreter::ConstantShape)> = (arguments
+            .iter())
+        .zip(parameters)
+        .map(|(argument, &ty)| (argument, shape(ty)))
+        .collect();
         let result = shape(*result);
         let mir_of = |copy: DeclarationCopy| match self.internals.built_bodies.get(&copy) {
             Some(Built::Kept(mir)) => mir.as_deref(),
@@ -196,12 +192,12 @@ impl<L: Checked> Checker<'_, L> {
                         &mir_of,
                     ) {
                         Ok(value) => return value,
-                        Err(Failure::Stopped {
+                        Err(interpreter::Failure::Stopped {
                             message,
                             function,
                             span,
                         }) => break 'failed (Some((function, span)), message),
-                        Err(Failure::NoMir {
+                        Err(interpreter::Failure::NoMir {
                             callee,
                             function,
                             span,
@@ -217,7 +213,7 @@ impl<L: Checked> Checker<'_, L> {
                 self.report_cycle(start, span);
                 return None;
             }
-            if function_declaration(self.modules, callee.definition)
+            if model::program::function_declaration(self.modules, callee.definition)
                 .body
                 .is_some()
             {
@@ -243,26 +239,15 @@ impl<L: Checked> Checker<'_, L> {
     }
 }
 
-/// The function `definition`, as written.
-pub(crate) fn function_declaration<L: Language>(
-    modules: &[model::program::Module<L>],
-    definition: DefId,
-) -> &ast::Function<L> {
-    match model::program::declaration(modules, definition) {
-        ast::Decl::Function(function) => function,
-        _ => unreachable!("`{definition:?}` is a function"),
-    }
-}
-
 /// Why a constant cannot hold a value of the type `ty`.
-pub(crate) fn constant_refusal(ty: &Type) -> &'static str {
+pub(crate) fn constant_refusal(ty: &semantic_types::Type) -> &'static str {
     match ty {
-        Type::Struct { .. } => "a constant cannot hold a struct yet",
-        Type::Array { .. } => "a constant cannot hold an array yet",
-        Type::Range { .. } => "a constant cannot hold a range yet",
+        semantic_types::Type::Struct { .. } => "a constant cannot hold a struct yet",
+        semantic_types::Type::Array { .. } => "a constant cannot hold an array yet",
+        semantic_types::Type::Range { .. } => "a constant cannot hold a range yet",
         _ if ty.borrows() == Some(true) => {
             "a constant cannot hold a mutable reference, as all its uses would share one value"
         }
-        _ => ADDRESS_NOT_KNOWN,
+        _ => interpreter::ADDRESS_NOT_KNOWN,
     }
 }

@@ -1,7 +1,7 @@
-//! Checking names, paths and calls: what a name stands for as a value, and
-//! a call's arguments.
+//! Checking calls: of a function, a method or an interface's method, and
+//! their arguments.
 
-use std::num::NonZeroU32;
+use std::num;
 
 use arena::Id;
 use arena::List;
@@ -9,59 +9,18 @@ use model::Callee;
 use model::ConstArguments;
 use model::DeclarationCopy;
 use model::DefId;
-use model::constant::Value;
-use model::semantic_types::ConstArgument;
-use model::semantic_types::Constant;
-use model::semantic_types::Type;
-use model::semantic_types::TypeId;
-use model::thir::Expr;
-use model::thir::ExprKind;
-use model::thir::Local;
-use model::thir::Symbol;
+use model::constant;
+use model::semantic_types;
+use model::thir;
 use source::Span;
 use syntax::ast;
-use syntax::ast::Ident;
 
 use crate::Checked;
-use crate::builder::ThirBuilder;
-use crate::declaration::find_type_argument;
-use crate::declaration::first_copy_parameter;
-use crate::declaration::names_type_parameter;
-use crate::function::function_declaration;
+use crate::builder;
+use crate::generics;
 use crate::scope;
 
-impl<L: Checked> ThirBuilder<'_, '_, L> {
-    /// The name or path written at `span`, which stands for `symbol`, as a
-    /// value. `None` when finding the symbol reported an error.
-    pub(super) fn check_symbol_value(&mut self, symbol: Option<Symbol>, span: Span) -> Expr {
-        let what = match symbol {
-            None => return Expr::INVALID, // finding it reported the error
-            Some(Symbol::Local(Local::Variable(variable))) => {
-                return Expr {
-                    ty: self.body.variables[variable].ty,
-                    kind: ExprKind::Variable(variable),
-                };
-            }
-            Some(Symbol::Local(Local::Constant(constant))) => {
-                return constant_expr(self.body.constants[constant].clone());
-            }
-            Some(Symbol::Constant(constant)) => {
-                return constant_expr(self.checker.constant(constant, span));
-            }
-            Some(Symbol::Function(_)) => {
-                self.checker.not_supported(span, "functions as values");
-                return Expr::INVALID;
-            }
-            Some(Symbol::Type(_) | Symbol::Builtin(_) | Symbol::TypeArgument { .. }) => "a type",
-            Some(Symbol::Module(_)) => "a module",
-        };
-        let text = self.checker.module().ast.file.slice(span);
-        let message = format!("`{text}` is {what}, not a value");
-        self.checker
-            .error(diagnostics::INVALID_OPERATION, message, span);
-        Expr::INVALID
-    }
-
+impl<L: Checked> builder::ThirBuilder<'_, '_, L> {
     /// `callee(arguments)`, written at `span`; a pipe gives its value as the
     /// first of `arguments`. Only a module's function, by
     /// its name or its path, can be called, or with a dot, `x.name(arguments)`,
@@ -76,7 +35,7 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
         type_arguments: List<ast::Type<L>>,
         arguments: &[Id<ast::Expr<L>>],
         span: Span,
-    ) -> Expr {
+    ) -> thir::Expr {
         let tree = &self.checker.module().ast;
         let callee_span = tree.exprs.span(callee);
         let mut receiver = None;
@@ -84,13 +43,13 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
             ast::Expr::Name => {
                 let symbol = match self.resolve(callee_span) {
                     // Their errors were reported.
-                    Some(Symbol::Local(Local::Constant(constant)))
+                    Some(thir::Symbol::Local(thir::Local::Constant(constant)))
                         if self.body.constants[constant].is_none() =>
                     {
                         None
                     }
-                    Some(Symbol::Local(Local::Variable(variable)))
-                        if self.body.variables[variable].ty == TypeId::INVALID =>
+                    Some(thir::Symbol::Local(thir::Local::Variable(variable)))
+                        if self.body.variables[variable].ty == semantic_types::TypeId::INVALID =>
                     {
                         None
                     }
@@ -130,13 +89,13 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
     /// after `receiver`'s for a method (`check_call`). `None` was reported.
     pub(crate) fn call_found(
         &mut self,
-        found: Option<(Callee, TypeId)>,
-        receiver: Option<Id<Expr>>,
+        found: Option<(Callee, semantic_types::TypeId)>,
+        receiver: Option<Id<thir::Expr>>,
         callee_span: Span,
         type_arguments: List<ast::Type<L>>,
         arguments: &[Id<ast::Expr<L>>],
         span: Span,
-    ) -> Expr {
+    ) -> thir::Expr {
         let tree = &self.checker.module().ast;
         let text = tree.file.slice(callee_span);
         // The written arguments come after the receiver's.
@@ -144,10 +103,10 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
         // The places among the written arguments of what a copy is for.
         let mut const_places = Vec::new();
         // The written arguments checked to find a type parameter, by place.
-        let mut checked_early: Vec<Option<Expr>> = Vec::new();
+        let mut checked_early: Vec<Option<thir::Expr>> = Vec::new();
         let type_parameters = match found {
             Some((Callee::Function(function), _)) => {
-                function_declaration(self.checker.modules, function.definition)
+                model::program::function_declaration(self.checker.modules, function.definition)
                     .signature
                     .type_parameters
                     .len()
@@ -164,9 +123,10 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
         let found = match found {
             Some((Callee::Function(function), _))
                 if let definition = function.definition
-                    && let declared = function_declaration(self.checker.modules, definition)
+                    && let declared =
+                        model::program::function_declaration(self.checker.modules, definition)
                     && let tree = &self.checker.modules[definition.module.index()].ast
-                    && first_copy_parameter(tree, declared.signature).is_some() =>
+                    && generics::first_copy_parameter(tree, declared.signature).is_some() =>
             {
                 let early = &mut checked_early;
                 let copied = self.copy_called(
@@ -182,7 +142,7 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
                 // few arguments, and a type with an error are of no copy.
                 if let Some((Callee::Function(copy), ty)) = copied
                     && copy.arguments != ConstArguments::NONE
-                    && ty != TypeId::INVALID
+                    && ty != semantic_types::TypeId::INVALID
                 {
                     self.checker.record_copy(callee_span.end, copy, ty);
                 }
@@ -195,7 +155,7 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
         let Some((
             callee,
             signature,
-            Type::Function {
+            semantic_types::Type::Function {
                 parameters,
                 result,
                 variadic,
@@ -214,7 +174,7 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
                 };
                 self.add_expr(argument, None); // for its own errors
             }
-            return Expr::INVALID;
+            return thir::Expr::INVALID;
         };
         let fixed = parameters.len() - usize::from(variadic) - first;
         // A `const` parameter is not among the type's, but takes an argument.
@@ -225,15 +185,17 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
             arguments.len() == all
         };
         if !arity_matches {
-            let message = argument_count_message(text, "argument", all, variadic, arguments.len());
+            let message =
+                crate::argument_count_message(text, "argument", all, variadic, arguments.len());
             self.checker
                 .error(diagnostics::WRONG_ARGUMENT_COUNT, message, span);
         }
-        let mut checked: Vec<NonZeroU32> = Vec::with_capacity(parameters.len());
+        let mut checked: Vec<num::NonZeroU32> = Vec::with_capacity(parameters.len());
         if let Some(place) = receiver {
             // `self` takes the value itself; `&self` and `&mut self` borrow it.
             let argument = match self.checker.types[parameters[0]] {
-                Type::Reference { mutable, .. } | Type::InterfaceReference { mutable, .. } => {
+                semantic_types::Type::Reference { mutable, .. }
+                | semantic_types::Type::InterfaceReference { mutable, .. } => {
                     let span = self.body.exprs.span(place);
                     let borrowed = self.check_borrow(mutable, place);
                     self.body.add(borrowed, span)
@@ -268,49 +230,49 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
             }
         }
         if !arity_matches {
-            return Expr::INVALID;
+            return thir::Expr::INVALID;
         }
         if let Callee::Function(function) = callee
             && model::program::is_builtin(self.checker.modules, function.definition)
         {
             // Its answer is known now, wherever the call is.
             let Some(value) = self.checker.evaluate_call(function, &[], span) else {
-                return Expr::INVALID; // reported
+                return thir::Expr::INVALID; // reported
             };
             let ty = match value {
-                Value::Bool(_) => TypeId::BOOL,
+                constant::Value::Bool(_) => semantic_types::TypeId::BOOL,
                 _ => self.checker.types.usize,
             };
-            let kind = ExprKind::Constant(value);
-            return Expr { ty, kind };
+            let kind = thir::ExprKind::Constant(value);
+            return thir::Expr { ty, kind };
         }
         let arguments = self.body.children.lists.add(&checked);
         // In a constant's value, a call on constants runs now.
         let constant_arguments = || {
             let values = self.body.children.lists.items(arguments).map(|argument| {
                 match &self.body.exprs[argument].kind {
-                    ExprKind::Constant(value) => Some(value.clone()),
+                    thir::ExprKind::Constant(value) => Some(value.clone()),
                     _ => None,
                 }
             });
-            values.collect::<Option<Vec<Value>>>()
+            values.collect::<Option<Vec<constant::Value>>>()
         };
         if let Callee::Function(function) = callee
             && self.in_constant
-            && result != TypeId::VOID
+            && result != semantic_types::TypeId::VOID
             && let Some(values) = constant_arguments()
         {
             return match self.checker.evaluate_call(function, &values, span) {
-                Some(value) => Expr {
+                Some(value) => thir::Expr {
                     ty: result,
-                    kind: ExprKind::Constant(value),
+                    kind: thir::ExprKind::Constant(value),
                 },
-                None => Expr::INVALID,
+                None => thir::Expr::INVALID,
             };
         }
-        Expr {
+        thir::Expr {
             ty: result,
-            kind: ExprKind::Call {
+            kind: thir::ExprKind::Call {
                 callee,
                 signature,
                 arguments,
@@ -318,33 +280,16 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
         }
     }
 
-    /// The type `argument`, written in the body for a type (a `const T:
-    /// type` argument, a constraint's subject), names. A local of its name
-    /// is a value, reported; a type of its name elsewhere is still the type.
-    pub(crate) fn written_type_argument(&mut self, argument: Id<ast::Expr<L>>) -> TypeId {
-        let tree = &self.checker.module().ast;
-        let written = tree.exprs.span(argument);
-        if let ast::Expr::Name = tree.exprs[argument]
-            && let name = tree.file.slice(written)
-            && let Some(&position) = self.innermost.get(name)
-            && self.checker.resolve_global(name).is_none()
-        {
-            let local = Symbol::Local(self.names[position].local);
-            return self.checker.type_named_by(local, written);
-        }
-        self.checker.resolve_type_argument(argument)
-    }
-
     /// What the function `symbol`, called at `span`, is: its callee and
     /// type. `None` when it is not a function, reported, or when finding it
     /// reported an error.
     pub(crate) fn function_called(
         &mut self,
-        symbol: Option<Symbol>,
+        symbol: Option<thir::Symbol>,
         span: Span,
-    ) -> Option<(Callee, TypeId)> {
+    ) -> Option<(Callee, semantic_types::TypeId)> {
         match symbol {
-            Some(Symbol::Function(definition)) => {
+            Some(thir::Symbol::Function(definition)) => {
                 let ty = self.checker.function_type(definition, span);
                 let function = DeclarationCopy {
                     definition,
@@ -372,14 +317,14 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
     fn method(
         &mut self,
         value: Id<ast::Expr<L>>,
-        name: Ident,
+        name: ast::Ident,
         span: Span,
-    ) -> Option<(Id<Expr>, Callee, TypeId)> {
+    ) -> Option<(Id<thir::Expr>, Callee, semantic_types::TypeId)> {
         let value = self.add_expr(value, None);
         let ty = self.body.exprs[value].ty;
         let interface = match self.checker.types[ty] {
-            Type::InterfaceReference { interface, .. } => Some(interface),
-            Type::Interface { .. } => Some(ty),
+            semantic_types::Type::InterfaceReference { interface, .. } => Some(interface),
+            semantic_types::Type::Interface { .. } => Some(ty),
             _ => None,
         };
         if let Some(interface) = interface
@@ -394,7 +339,7 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
         let place = self.through_pointer(value, self.body.exprs.span(value));
         let ty = self.body.exprs[place].ty;
         let Some(definition) = self.checker.types[ty].definition() else {
-            if ty != TypeId::INVALID {
+            if ty != semantic_types::TypeId::INVALID {
                 let message = format!("`{}` has no functions", self.checker.type_text(ty));
                 self.checker
                     .error(diagnostics::INVALID_OPERATION, message, name.span);
@@ -417,196 +362,23 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
             .then_some((place, callee, signature))
     }
 
-    /// The copy of the function `definition` that its call at `span` with
-    /// the written `arguments`, after `first` of the receiver, asks for,
-    /// and its type. The argument in the place of each `const` parameter,
-    /// put in `const_places`, is what the copy is made for: a type for
-    /// `const T: type` (`resolve_type_argument`), else a value of the
-    /// parameter's type known when compiling. A type parameter, `<T>`,
-    /// takes no argument: its type is written at the call, in
-    /// `type_arguments`, or found from the arguments of the parameters
-    /// whose types name it (`find_type_argument`), each checked here, once,
-    /// until every type parameter is found, and left in `checked_early` at
-    /// its place for `check_call` to take. When a `const` one is missing, the
-    /// function itself and its own type, for `check_call` to report the
-    /// count. `None` when one has an error, or the function's signature
-    /// has one, reported.
-    #[expect(clippy::too_many_arguments, reason = "each is one fact of the call")]
-    fn copy_called(
-        &mut self,
-        definition: DefId,
-        type_arguments: List<ast::Type<L>>,
-        arguments: &[Id<ast::Expr<L>>],
-        first: usize,
-        const_places: &mut Vec<usize>,
-        checked_early: &mut Vec<Option<Expr>>,
-        span: Span,
-    ) -> Option<(Callee, TypeId)> {
-        let modules = self.checker.modules;
-        let tree = &modules[definition.module.index()].ast;
-        let declared = function_declaration(modules, definition);
-        let parameters = tree.children.lists.items(declared.signature.parameters);
-        // The parameters past the receiver, each with its written argument's place.
-        let written_parameters: Vec<(usize, ast::Param<L>)> = (parameters.skip(first))
-            .map(|parameter| tree.children.params[parameter])
-            .enumerate()
-            .collect();
-        let const_parameters = (written_parameters.iter().copied())
-            .filter(|(_, parameter)| parameter.constant)
-            .collect::<Vec<_>>();
-        const_places.extend(const_parameters.iter().map(|&(place, _)| place));
-        let pattern = self.checker.function_type(definition, span);
-        if pattern == TypeId::INVALID {
-            return None; // reported
-        }
-        // Too few arguments: `check_call` reports it, by the function's own type.
-        let required = (written_parameters.iter())
-            .filter(|(_, parameter)| {
-                !matches!(tree.types[parameter.ty], ast::Type::Variadic { .. })
-            })
-            .count();
-        if arguments.len() < required {
-            let function = DeclarationCopy {
-                definition,
-                arguments: ConstArguments::NONE,
-            };
-            return Some((Callee::Function(function), pattern));
-        }
-        // Its type parameters, `<T>`, which take no argument of their own:
-        // the types written at the call, or else found from the arguments.
-        let names: Vec<&str> = (tree.children.lists)
-            .items(declared.signature.type_parameters)
-            .map(|parameter| tree.file.slice(tree.children.names.span(parameter)))
-            .collect();
-        let calling = &self.checker.module().ast;
-        let written_types: Vec<Id<ast::Type<L>>> =
-            calling.children.lists.items(type_arguments).collect();
-        let function = model::program::declared_path(modules, definition);
-        let mut failed = false;
-        let mut types_found = vec![None; names.len()];
-        if !written_types.is_empty() {
-            if written_types.len() == names.len() {
-                for (found, &written) in types_found.iter_mut().zip(&written_types) {
-                    *found = Some(self.checker.resolve_value_type(written));
-                }
-            } else {
-                let (count, given) = (names.len(), written_types.len());
-                let message =
-                    argument_count_message(&function, "type argument", count, false, given);
-                self.checker
-                    .error(diagnostics::WRONG_ARGUMENT_COUNT, message, span);
-                failed = true;
-            }
-        } else if !names.is_empty() {
-            checked_early.resize(arguments.len(), None);
-            for &(place, parameter) in &written_parameters {
-                // The rest are checked as the copy's parameters, so a
-                // literal takes the found type: `Max(small, 1)`.
-                if types_found.iter().all(Option::is_some) {
-                    break;
-                }
-                // shortcut: the arguments of a `...T` do not say what `T` is,
-                // as `check_variadic` checks them; find it from them when a
-                // function needs it.
-                if parameter.constant
-                    || place >= arguments.len()
-                    || matches!(tree.types[parameter.ty], ast::Type::Variadic { .. })
-                    || !names_type_parameter(tree, parameter.ty, &names)
-                {
-                    continue;
-                }
-                let checked = self.check_expr(arguments[place], None);
-                if checked.ty == TypeId::VOID {
-                    let written = self.checker.module().ast.exprs.span(arguments[place]);
-                    let message = "this expression has no value to pass";
-                    self.checker
-                        .error(diagnostics::INVALID_OPERATION, message, written);
-                    failed = true;
-                }
-                failed |= checked.ty == TypeId::INVALID; // reported
-                let types = &self.checker.types;
-                find_type_argument(
-                    tree,
-                    types,
-                    parameter.ty,
-                    checked.ty,
-                    &names,
-                    &mut types_found,
-                );
-                checked_early[place] = Some(checked);
-            }
-        }
-        let mut given = Vec::with_capacity(names.len() + const_parameters.len());
-        for (name, found) in names.iter().zip(types_found) {
-            match found {
-                Some(ty) => {
-                    let ty = self.checker.type_argument(ty, span);
-                    failed |= ty == TypeId::INVALID;
-                    given.push(ConstArgument::Type(ty));
-                }
-                None if failed => {}
-                None => {
-                    // No parameter names it, so only the call can.
-                    let named = (written_parameters.iter())
-                        .any(|(_, parameter)| names_type_parameter(tree, parameter.ty, &[name]));
-                    let hint = if named {
-                        String::new()
-                    } else {
-                        format!(": write it at the call, `{function}::<...>(...)`")
-                    };
-                    let message = format!(
-                        "the arguments of `{function}` do not say what its `{name}` is{hint}"
-                    );
-                    self.checker
-                        .error(diagnostics::INVALID_OPERATION, message, span);
-                    failed = true;
-                }
-            }
-        }
-        for (place, parameter) in const_parameters {
-            let argument = arguments[place];
-            if let ast::Type::Type = tree.types[parameter.ty] {
-                let ty = self.written_type_argument(argument);
-                failed |= ty == TypeId::INVALID;
-                given.push(ConstArgument::Type(self.checker.types.real(ty)));
-                continue;
-            }
-            let ty = self
-                .checker
-                .const_value_type(definition, parameter.ty, span);
-            match self.check_constant_value(argument, Some(ty)) {
-                Some(constant) => given.push(ConstArgument::Value(constant)),
-                None => failed = true, // reported
-            }
-        }
-        if failed {
-            return None;
-        }
-        let copy = DeclarationCopy {
-            definition,
-            arguments: self.checker.types.const_arguments(&given),
-        };
-        let ty = self.checker.copy_type(copy, span);
-        Some((Callee::Function(copy), ty))
-    }
-
     /// The method `name` of `interface` that `value`, an interface or a
     /// reference to one, calls, as `method` gives it: its place in the
     /// interface's table. A method taking `self` whole is called only on an
     /// interface, which it takes.
     fn interface_method(
         &mut self,
-        value: Id<Expr>,
-        interface: TypeId,
-        name: Ident,
-    ) -> Option<(Id<Expr>, Callee, TypeId)> {
-        let (Type::Named { definition, .. } | Type::Interface { definition, .. }) =
-            self.checker.types[interface]
+        value: Id<thir::Expr>,
+        interface: semantic_types::TypeId,
+        name: ast::Ident,
+    ) -> Option<(Id<thir::Expr>, Callee, semantic_types::TypeId)> {
+        let (semantic_types::Type::Named { definition, .. }
+        | semantic_types::Type::Interface { definition, .. }) = self.checker.types[interface]
         else {
             unreachable!("an interface reference refers to an interface")
         };
         // Checked first, so the place's type is the interface, not its name.
-        if self.checker.declared_type(definition, name.span) == TypeId::INVALID {
+        if self.checker.declared_type(definition, name.span) == semantic_types::TypeId::INVALID {
             return None;
         }
         let modules = self.checker.modules;
@@ -631,20 +403,23 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
                 .report_unknown(diagnostics::UNDEFINED_NAME, name.span, message, meant);
             return None;
         };
-        let Type::Interface { methods, .. } = &self.checker.types[interface] else {
+        let semantic_types::Type::Interface { methods, .. } = &self.checker.types[interface] else {
             unreachable!("a checked interface is `Type::Interface`")
         };
         let signature = methods[slot];
-        let Type::Function { parameters, .. } = &self.checker.types[signature] else {
+        let semantic_types::Type::Function { parameters, .. } = &self.checker.types[signature]
+        else {
             unreachable!("a method's type is a function type")
         };
         let callee = Callee::Method(slot as u32);
-        let Type::InterfaceReference { .. } = self.checker.types[self.body.exprs[value].ty] else {
+        let semantic_types::Type::InterfaceReference { .. } =
+            self.checker.types[self.body.exprs[value].ty]
+        else {
             return Some((value, callee, signature)); // an interface, the place itself
         };
         if !matches!(
             self.checker.types[parameters[0]],
-            Type::InterfaceReference { .. }
+            semantic_types::Type::InterfaceReference { .. }
         ) {
             let message =
                 format!("`{text}` takes `self` whole, so it cannot be called through `&{head}`");
@@ -661,7 +436,7 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
     fn takes_self(&mut self, function: DefId, span: Span) -> bool {
         let modules = self.checker.modules;
         let tree = &modules[function.module.index()].ast;
-        let declared = function_declaration(modules, function);
+        let declared = model::program::function_declaration(modules, function);
         let first = tree
             .children
             .lists
@@ -677,32 +452,4 @@ impl<L: Checked> ThirBuilder<'_, '_, L> {
             .error(diagnostics::INVALID_OPERATION, message, span);
         false
     }
-}
-
-/// The value of a constant (`Checker::constant`) as an expression.
-fn constant_expr(constant: Option<Constant>) -> Expr {
-    match constant {
-        Some(Constant { ty, value }) => Expr {
-            ty,
-            kind: ExprKind::Constant(value),
-        },
-        None => Expr::INVALID,
-    }
-}
-
-/// Why a call of `callee` with `given` arguments is wrong, when it takes
-/// `fixed` of them, or at least that many when `variadic`.
-pub(crate) fn argument_count_message(
-    callee: &str,
-    what: &str,
-    fixed: usize,
-    variadic: bool,
-    given: usize,
-) -> String {
-    format!(
-        "`{callee}` takes {}{fixed} {what}{}, but {given} {} given",
-        if variadic { "at least " } else { "" },
-        if fixed == 1 { "" } else { "s" },
-        if given == 1 { "was" } else { "were" },
-    )
 }

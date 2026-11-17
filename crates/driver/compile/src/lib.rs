@@ -441,7 +441,7 @@ fn compile_module(
             // its types are is reported here, once, though no call copies
             // it, and an editor asks about its text.
             ast::Decl::Function(function)
-                if check::declaration::first_copy_parameter(tree, function.signature).is_some() =>
+                if check::generics::first_copy_parameter(tree, function.signature).is_some() =>
             {
                 let name = function.name.span;
                 checker.function_type(definition, name);
@@ -563,7 +563,7 @@ fn interface(checker: &Checker<Peeper>, module: ModuleId, done: &[ModuleResults]
                 .hash(&mut hasher);
             // Another module's call builds a copy of its body, so the body
             // is what that module sees.
-            if check::declaration::first_copy_parameter(tree, function.signature).is_some() {
+            if check::generics::first_copy_parameter(tree, function.signature).is_some() {
                 tree.file
                     .slice(tree.decls.span(declaration))
                     .hash(&mut hasher);
