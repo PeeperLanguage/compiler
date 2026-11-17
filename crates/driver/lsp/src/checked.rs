@@ -145,6 +145,9 @@ pub(crate) enum CachedKind {
         position: u32,
         copy: Option<String>,
     },
+    /// A use of a type parameter, `<T>` or `const T: type`, of the function
+    /// whose text holds it, declared at `declared`.
+    TypeParameter { declared: Span },
     /// The module read from this file.
     Module(PathBuf),
     /// A built-in type, named as written.
@@ -202,7 +205,10 @@ impl CachedFact {
                 position: function.definition.index,
                 copy: Some(copy_signature(program, function, ty, types)),
             },
-            FactKind::Name(Symbol::Builtin(_) | Symbol::TypeArgument(_)) => CachedKind::Builtin,
+            FactKind::Name(Symbol::TypeArgument { declared, .. }) => {
+                CachedKind::TypeParameter { declared }
+            }
+            FactKind::Name(Symbol::Builtin(_)) => CachedKind::Builtin,
         };
         CachedFact {
             span: fact.span,

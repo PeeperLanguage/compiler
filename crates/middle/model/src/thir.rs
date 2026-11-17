@@ -83,10 +83,11 @@ pub enum Symbol {
     Local(Local),
     /// A built-in type, such as `i32`, which no declaration hides.
     Builtin(TypeId),
-    /// A `const T: type` parameter of the function being checked: the type
-    /// its copy is given, invalid in the function's own signature. It hides
-    /// a built-in type of its name.
-    TypeArgument(TypeId),
+    /// A type parameter, `<T>` or `const T: type`, of the function being
+    /// checked: the type its copy is given, invalid in the function's own
+    /// check, and its name where declared. It hides a built-in type of its
+    /// name.
+    TypeArgument { ty: TypeId, declared: Span },
 }
 
 /// A name declared in a body, by its kind: checked in place with the

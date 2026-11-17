@@ -1,0 +1,4 @@
+// Each item after `where` is `name: Bound`.
+fn Bare<T>(value: T) where T {} //~ error[P0002]: expected `:`, found `{`
+
+fn Empty<T>(value: T) where {} //~ error[P0002]: expected `identifier`, found `{`

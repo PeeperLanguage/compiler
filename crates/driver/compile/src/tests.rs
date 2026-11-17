@@ -1266,6 +1266,68 @@ fn copies_report_once_to_the_calling_module() {
     );
 }
 
+/// A constraint false for what a call gives is the error of each such call,
+/// in the module the call is written in, marked at the call, with the
+/// constraint marked in its function's module; the function's own module
+/// reports nothing.
+#[test]
+fn a_false_constraint_is_reported_at_each_call() {
+    let program = load(&[
+        (
+            "app:list",
+            "#[builtin]
+            fn is_int(const T: type) -> bool;
+            fn Number(const T: type) -> bool { return is_int(T); }
+            fn Largest<T>(a: T, b: T) -> T where T: Number { return a; }",
+        ),
+        (
+            "app:main",
+            "import \"app:list\";
+            fn main() { list::Largest(true, false); list::Largest(1, 2); list::Largest(false, true); }",
+        ),
+    ]);
+    let results = run(
+        &program,
+        x86_64(),
+        Results::default(),
+        Options::default(),
+        &mut |_| {},
+    );
+    let found = |module: &ModuleResults| -> Vec<(String, Vec<String>)> {
+        let label = |label: &diagnostics::Label| {
+            let module = label.file.path.rsplit('/').next().unwrap_or_default();
+            format!(
+                "{module}: {} {}",
+                label.file.slice(label.span),
+                label.message
+            )
+        };
+        let diagnostics = module.diagnostics.iter();
+        diagnostics
+            .map(|diagnostic| {
+                (
+                    diagnostic.message.clone(),
+                    diagnostic.labels.iter().map(label).collect(),
+                )
+            })
+            .collect()
+    };
+    assert_eq!(found(&results.modules[0]), []);
+    let at = |call: &str| {
+        (
+            "`Largest` needs `T: Number`, which is false for `Largest<bool>`".to_string(),
+            vec![
+                format!("main.peep: list::Largest({call}) "),
+                "list.peep: T: Number ".to_string(),
+            ],
+        )
+    };
+    assert_eq!(
+        found(&results.modules[1]),
+        [at("true, false"), at("false, true")]
+    );
+}
+
 /// An importer's call builds a copy of a function with `const T: type`
 /// parameters, so an edit of its body checks the importer again.
 #[test]

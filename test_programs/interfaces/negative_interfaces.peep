@@ -12,6 +12,10 @@ iface Bad {
     fn generic<T>(&self, value: T) //~ error[P0005]: a call through an interface reference cannot pick a copy, so an interface method takes no type or `const` parameter
 }
 
+iface Bounded {
+    fn area(&self) -> i32 where Limit: Positive //~ error[P0005]: an interface method has no body, so it takes no `where`
+}
+
 struct Square { side: f64 }
 fn Square::area(&self) -> f64 { return self.side * self.side; }
 fn Square::grow(&mut self, by: f64) { self.side = self.side + by; }

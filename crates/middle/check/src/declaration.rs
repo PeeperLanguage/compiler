@@ -3,21 +3,27 @@
 //! value.
 
 use arena::Id;
+use arena::List;
+use bigint::Limbs;
 use diagnostics::Diagnostic;
 use model::ConstArguments;
 use model::DefId;
+use model::FunctionCopy;
+use model::constant::Value;
 use model::layout::layout;
 use model::program::BUILTIN_ATTRIBUTE;
 use model::program::EXTERN_ATTRIBUTE;
 use model::semantic_types;
 use model::semantic_types::ConstArgument;
 use model::semantic_types::Constant;
+use model::semantic_types::Float;
 use model::semantic_types::ImplementationId;
 use model::semantic_types::Integer;
 use model::semantic_types::Members;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
 use model::semantic_types::Types;
+use model::thir::Block;
 use model::thir::Body;
 use model::thir::FactKind;
 use model::thir::Symbol;
@@ -181,6 +187,13 @@ impl<L: Checked> Checker<'_, L> {
         if builtin && !self.is_builtin_declared(definition, ty) {
             return TypeId::INVALID; // reported
         }
+        if body.is_none() && !signature.constraints.is_empty() {
+            let first = tree.children.lists.get(signature.constraints, 0);
+            let span = tree.children.constraints.span(first);
+            let message =
+                "`where` is checked with a function's body, so one without a body takes none";
+            return self.error(diagnostics::INVALID_DECLARATION, message, span);
+        }
         if (external || builtin) == body.is_some() {
             let message = if external {
                 "an `extern` function is defined in C, so it has no body"
@@ -196,6 +209,69 @@ impl<L: Checked> Checker<'_, L> {
             return TypeId::INVALID;
         }
         ty
+    }
+
+    /// What the `#[builtin]` function `function`, a copy for the type it
+    /// is given, answers when its call at `span` runs (`evaluate_call`): the
+    /// fact of that type its name asks for. `None` for a type the fact is
+    /// not of, reported.
+    pub(crate) fn builtin_value(&mut self, function: FunctionCopy, span: Span) -> Option<Value> {
+        let &[ConstArgument::Type(ty)] = self.types.arguments(function.arguments) else {
+            unreachable!("a `#[builtin]` function takes one type")
+        };
+        let (name, file) = model::program::declared_name(self.modules, function.definition);
+        let name = name.text(file);
+        let fact = type_fact(name).expect("a `#[builtin]` function is one the compiler has");
+        let (size, align) = layout(&self.types, ty, self.target);
+        let number = |value: u64| Value::Integer(Limbs::new(self.target.pointer_bits, &[value]));
+        Some(match (fact, &self.types[ty]) {
+            (TypeFact::Size, _) => number(size),
+            (TypeFact::Align, _) => number(align),
+            (TypeFact::Bits, Type::Integer(integer)) => number(u64::from(integer.bits)),
+            (TypeFact::Bits, Type::Float(Float::F32)) => number(32),
+            (TypeFact::Bits, Type::Float(Float::F64)) => number(64),
+            (TypeFact::Signed, Type::Integer(integer)) => Value::Bool(integer.signed),
+            (TypeFact::IsInteger, kind) => Value::Bool(matches!(kind, Type::Integer(_))),
+            (TypeFact::IsFloat, kind) => Value::Bool(matches!(kind, Type::Float(_))),
+            (TypeFact::IsText, kind) => Value::Bool(matches!(kind, Type::Str)),
+            (TypeFact::IsBool, kind) => Value::Bool(matches!(kind, Type::Bool)),
+            (TypeFact::IsPointer, kind) => Value::Bool(matches!(kind, Type::RawPointer { .. })),
+            (TypeFact::Bits | TypeFact::Signed, _) => {
+                let kinds = match fact {
+                    TypeFact::Bits => "an integer or a float",
+                    _ => "an integer",
+                };
+                let found = self.type_text(ty);
+                let message = format!("`{name}` takes {kinds} type, found `{found}`");
+                self.error(diagnostics::INVALID_OPERATION, message, span);
+                return None;
+            }
+        })
+    }
+
+    /// Whether the constraints of `signature`, after `where`, hold for the
+    /// copy being checked, whose parameters are of the types `parameters`,
+    /// with what its call gives (`ThirBuilder::check_constraints`). A
+    /// function's own check asks them in its body, where their names get
+    /// the body's facts.
+    fn constraints_hold(&mut self, signature: ast::Signature<L>, parameters: &[TypeId]) -> bool {
+        let arguments = (self.internals.declarations_being_checked.last())
+            .expect("a function is being checked")
+            .arguments;
+        let tree = &self.module().ast;
+        let first = tree.children.lists.get(signature.constraints, 0);
+        let span = tree.children.constraints.span(first);
+        let mut body = Body::default();
+        let mut builder = ThirBuilder::new(self, &mut body, TypeId::VOID);
+        let scope = builder.body.add(
+            Block {
+                parent: None,
+                statements: List::EMPTY,
+            },
+            span,
+        );
+        builder.declare_parameters(signature, arguments, parameters, scope);
+        builder.check_constraints(signature, true)
     }
 
     /// Whether the `#[builtin]` function `definition`, of the type `ty`, is
@@ -276,6 +352,7 @@ impl<L: Checked> Checker<'_, L> {
                 return TypeId::INVALID;
             }
         }
+        let tree = &self.module().ast;
         let mut parameters = Vec::with_capacity(signature.parameters.len());
         let mut variadic = false;
         for (position, parameter) in tree.children.lists.items(signature.parameters).enumerate() {
@@ -339,6 +416,12 @@ impl<L: Checked> Checker<'_, L> {
         let Some(origins) = self.result_origins(&signature, &parameters, result) else {
             return TypeId::INVALID;
         };
+        if !signature.constraints.is_empty()
+            && self.in_copy()
+            && !self.constraints_hold(signature, &parameters)
+        {
+            return TypeId::INVALID;
+        }
         let parameters = parameters.into();
         self.types.intern(Type::Function {
             parameters,
@@ -832,7 +915,7 @@ impl<L: Checked> Checker<'_, L> {
     /// module or another. An error when it is not a type.
     pub(crate) fn type_named_by(&mut self, symbol: Symbol, span: Span) -> TypeId {
         let what = match symbol {
-            Symbol::Builtin(ty) | Symbol::TypeArgument(ty) => return ty,
+            Symbol::Builtin(ty) | Symbol::TypeArgument { ty, .. } => return ty,
             Symbol::Type(definition) => return self.named_type(definition, span),
             Symbol::Function(_) | Symbol::Constant(_) | Symbol::Local(_) => "a value",
             Symbol::Module(_) => "a module",

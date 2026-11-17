@@ -6,6 +6,7 @@ use arena::List;
 use diagnostics::Diagnostic;
 use source::Span;
 use syntax::ast::Attribute;
+use syntax::ast::Constraint;
 use syntax::ast::Decl;
 use syntax::ast::Expr;
 use syntax::ast::Function;
@@ -23,6 +24,7 @@ use token::TokenKind;
 use crate::Grammar;
 use crate::Parser;
 use crate::Rules;
+use crate::expr::name_or_path;
 use crate::expr::starts_expression;
 use crate::is_name;
 use crate::types::starts_type;
@@ -221,13 +223,57 @@ impl<L: Grammar> Parser<L> {
         })
     }
 
-    /// Reads `name<T>(parameters) -> Result in origins` after a function's
-    /// `fn` and owner: its name and signature.
+    /// Reads `name<T>(parameters) -> Result in origins where T: Bound`
+    /// after a function's `fn` and owner: its name and signature.
     pub fn named_signature(&mut self) -> (Ident, Signature<L>) {
         let name = self.name();
         let type_parameters = self.type_parameters();
-        let signature = self.signature(type_parameters, starts_parameter::<L>, Self::parameter);
+        let mut signature = self.signature(type_parameters, starts_parameter::<L>, Self::parameter);
+        if self.at(TokenKind::Where) {
+            self.next();
+            let mark = self.list_items.len();
+            loop {
+                let constraint = self.constraint();
+                self.list_items.push(constraint.into());
+                if !self.at(TokenKind::Comma) {
+                    break;
+                }
+                self.next();
+            }
+            signature.constraints = self.finish_list(mark);
+        }
         (name, signature)
+    }
+
+    /// Reads `T: Bound` or `T: Bound(arguments)`, a constraint after `where`.
+    fn constraint(&mut self) -> Id<Constraint<L>> {
+        let start = self.tok().span.start;
+        let subject = self.name();
+        let subject = self.tree.add(Expr::Name, subject.span);
+        self.expect(TokenKind::Colon);
+        let bound = if self.at(TokenKind::Ident) {
+            name_or_path(self)
+        } else {
+            let missing = self.name(); // reported
+            self.tree.add(Expr::Name, missing.span)
+        };
+        let mut arguments = List::EMPTY;
+        if self.at(TokenKind::LeftParen) {
+            arguments = self.delimited(
+                TokenKind::LeftParen,
+                TokenKind::RightParen,
+                false,
+                starts_expression::<L>,
+                |p| p.expr(Precedence::Lowest),
+            );
+        }
+        let constraint = Constraint {
+            subject,
+            bound,
+            arguments,
+        };
+        let span = Span::new(start as usize, self.last_end as usize);
+        self.tree.children.constraints.push(constraint, span)
     }
 
     /// Reads a name into a node of its own: a type parameter or an origin.
@@ -402,8 +448,8 @@ impl<L: Grammar> Parser<L> {
 
     /// Reads `(parameters) -> Type in origins`, each parameter with
     /// `parameter`, into a signature with the `type_parameters` read before
-    /// it. The result and the origins of a returned reference,
-    /// `in name` or `in (a, b)`, may be left out.
+    /// it and no constraints. The result and the origins of a returned
+    /// reference, `in name` or `in (a, b)`, may be left out.
     pub(crate) fn signature(
         &mut self,
         type_parameters: List<Name>,
@@ -458,11 +504,12 @@ impl<L: Grammar> Parser<L> {
             parameters,
             result,
             origins,
+            constraints: List::EMPTY,
         }
     }
 }
 
-/// Reads `fn name<T>(parameters) -> Result in origins`, with `Owner::`
+/// Reads `fn name<T>(parameters) -> Result in origins where T: Bound`, with `Owner::`
 /// before the name for a function of the type `Owner`, followed by a body,
 /// or by `;` for a function defined elsewhere.
 fn function_decl<L: Grammar>(p: &mut Parser<L>, metadata: Metadata<L>) -> Id<Decl<L>> {

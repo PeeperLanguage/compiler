@@ -108,7 +108,7 @@ fn declaration_errors() {
 /// A literal with a type, without one, and as an argument.
 #[test]
 fn parses_expressions() {
-    let text = "fn f() {\n    Point.{ x = 1, y = -2 };\n    .{ a = &mut v, b = !flag };\n    line(.{ end = Box<i32>::new(1) });\n}\n";
+    let text = "fn f() {\n    Point.{ x = 1, y = -2 };\n    .{ a = &mut v, b = !flag };\n    line(.{ end = Box::<i32>::new(1) });\n}\n";
     let (tree, errors) = parse_text(text);
     assert!(errors.is_empty(), "{errors:?}");
     let found = statements(&tree);
@@ -126,7 +126,7 @@ fn parses_expressions() {
     let argument = tree.children.lists.items(arguments).next().unwrap();
     assert_eq!(
         literal(&tree, argument),
-        (None, vec!["end = Box<i32>::new(1)".into()])
+        (None, vec!["end = Box::<i32>::new(1)".into()])
     );
 }
 
@@ -139,14 +139,14 @@ fn expression_errors() {
     );
 }
 
-/// `<` begins type arguments when `.{` follows the matching `>`.
+/// In an expression, type arguments follow `::`, before `.{` too.
 #[test]
 fn comparison_is_not_type_arguments() {
-    let (tree, errors) = parse_text("fn f() { Pair<A, B>.{}; }");
+    let (tree, errors) = parse_text("fn f() { Pair::<A, B>.{}; }");
     assert!(errors.is_empty(), "{errors:?}");
     assert_eq!(
         literal(&tree, statements(&tree)[0]),
-        (Some("Pair<A, B>"), Vec::new())
+        (Some("Pair::<A, B>"), Vec::new())
     );
 }
 
@@ -157,7 +157,7 @@ fn spans_lie_in_the_text() {
     for text in [
         "fn f() { .{ a = }; }",
         "fn f() { .{ a: 1, b: 2 }; }",
-        "fn f() { a<b>.{}; }",
+        "fn f() { a::<b>.{}; }",
         "struct",
         "struct S {",
         "struct S { a: }",

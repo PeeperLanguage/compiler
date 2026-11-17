@@ -563,14 +563,14 @@ impl<'p, L: Checked> Checker<'p, L> {
             // Only a function is given `const` arguments.
             let function = function_declaration(self.modules, checking.definition);
             let tree = &self.module().ast;
-            let mut parameters = model::program::copy_parameters(tree, function.signature);
-            let names_it = |parameter: Option<Span>| {
+            let parameters = model::program::copy_parameters(tree, function.signature);
+            let names_it = |(_, parameter): &(usize, Option<Span>)| {
                 parameter.is_some_and(|written| tree.file.slice(written) == name)
             };
-            if let Some(place) = parameters.position(names_it)
+            if let Some((place, Some(declared))) = parameters.enumerate().find(names_it)
                 && let ConstArgument::Type(ty) = self.types.arguments(checking.arguments)[place]
             {
-                return Some(Symbol::TypeArgument(ty));
+                return Some(Symbol::TypeArgument { ty, declared });
             }
         }
         if let Some(builtin) = self.types.builtin(name) {
@@ -629,7 +629,7 @@ impl<'p, L: Checked> Checker<'p, L> {
             let (place, module) = match (symbol, owner) {
                 (Symbol::Module(imported), _) => ("module", imported),
                 (_, Some(owner)) => ("type", owner.module),
-                (Symbol::Type(_) | Symbol::Builtin(_) | Symbol::TypeArgument(_), None) => {
+                (Symbol::Type(_) | Symbol::Builtin(_) | Symbol::TypeArgument { .. }, None) => {
                     let message = format!("`{head}` has no functions");
                     self.error(diagnostics::INVALID_OPERATION, message, head_span);
                     return None;

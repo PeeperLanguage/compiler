@@ -267,10 +267,21 @@ fn declaration_of<'a>(
         CachedKind::Constant { text } => {
             let (tree, declared) = (&module.ast, span);
             let mut declarations = tree.decls.ids();
-            let declaration = declarations
-                .find(|&declaration| tree.decls[declaration].name().span == declared)?;
-            let hover =
-                declaration_hover(tree, declaration, &module.path, text.as_ref(), None, false);
+            let declaration =
+                declarations.find(|&declaration| tree.decls[declaration].name().span == declared);
+            let hover = if let Some(declaration) = declaration {
+                declaration_hover(tree, declaration, &module.path, text.as_ref(), None, false)
+            } else {
+                // A `const` parameter, as written: only a copy knows its value.
+                let params = &tree.children.params;
+                let parameter = (params.ids()).find(|&parameter| {
+                    params[parameter]
+                        .name
+                        .is_some_and(|name| name.span == declared)
+                })?;
+                let written = tree.file.slice(params.span(parameter));
+                hover_text(&tree.file, &module.path, declared, written, None, None)
+            };
             Some((&tree.file, declared, hover))
         }
         CachedKind::Declaration {
@@ -295,6 +306,13 @@ fn declaration_of<'a>(
             let copy = copy.as_deref();
             let hover = declaration_hover(tree, declaration, path, constant, copy, elsewhere);
             Some((&tree.file, declared, hover))
+        }
+        CachedKind::TypeParameter { declared } => {
+            // Only a copy knows its type.
+            let file = &module.ast.file;
+            let binding = binding(false, file.slice(declared), Some("type"));
+            let hover = hover_text(file, &module.path, declared, &binding, None, None);
+            Some((file, declared, hover))
         }
         CachedKind::Local { .. } => unreachable!("`name_at` gives a local's declaration"),
         CachedKind::Literal { .. } => unreachable!("`name_at` gives no literal"),

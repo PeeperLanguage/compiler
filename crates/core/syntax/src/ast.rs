@@ -120,6 +120,7 @@ pub struct Tree<L: Language> {
 /// that holds it, never by an id from elsewhere.
 pub struct Children<L: Language> {
     pub names: Arena<Name>,
+    pub constraints: Arena<Constraint<L>>,
     pub attributes: Arena<Attribute<L>>,
     pub params: Arena<Param<L>>,
     pub fields: Arena<Field<L>>,
@@ -134,6 +135,7 @@ impl<L: Language> Default for Children<L> {
     fn default() -> Children<L> {
         Children {
             names: Arena::default(),
+            constraints: Arena::default(),
             attributes: Arena::default(),
             params: Arena::default(),
             fields: Arena::default(),
@@ -290,7 +292,7 @@ impl<L: Language> Decl<L> {
     }
 }
 
-/// `fn Owner::name<T>(parameters) -> Result in origins { body }`, or with
+/// `fn Owner::name<T>(parameters) -> Result in origins where T: Bound { body }`, or with
 /// `;` for a body defined elsewhere; an interface method has no body.
 /// Everything but the owner, the name and the body is its signature.
 #[derive(Clone, Copy, Debug)]
@@ -303,16 +305,31 @@ pub struct Function<L: Language> {
     pub body: Option<Id<Block<L>>>,
 }
 
-/// A function's type: its type parameters, parameters, result and the
-/// origins of a returned reference. A function type `fn(T) -> R in a` has no
-/// type parameters, and its parameters only a name and a type. A method's
-/// first parameter is `self`, of the type `Type::Owner`.
+/// A function's type: its type parameters, parameters, result, the origins
+/// of a returned reference and its constraints. A function type
+/// `fn(T) -> R in a` has no type parameters and no constraints, and its
+/// parameters only a name and a type. A method's first parameter is `self`,
+/// of the type `Type::Owner`.
 #[derive(Clone, Copy, Debug)]
 pub struct Signature<L: Language> {
     pub type_parameters: List<Name>,
     pub parameters: List<Param<L>>,
     pub result: Option<Id<Type<L>>>,
     pub origins: List<Name>, // what a returned reference may point into
+    /// After `where`: what the types and `const` values a call gives must
+    /// satisfy.
+    pub constraints: List<Constraint<L>>,
+}
+
+/// `T: Shape` or `T: Sized(8)` after `where`: the `subject`, a type
+/// parameter or a `const` value, must implement the interface `bound`, or
+/// `bound` is a function that gives `true` when called with the subject
+/// first, then the `arguments`.
+#[derive(Clone, Copy, Debug)]
+pub struct Constraint<L: Language> {
+    pub subject: Id<Expr<L>>,
+    pub bound: Id<Expr<L>>,
+    pub arguments: List<Expr<L>>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -480,7 +497,7 @@ pub enum Pattern<L: Language> {
 pub enum Expr<L: Language> {
     /// a use of a declared name; its text is its span
     Name,
-    /// a path such as `a::B` or `Box<T>::new`; the type is a `Type::Path` or a
+    /// a path such as `a::B` or `Box::<T>::new`; the type is a `Type::Path` or a
     /// `Type::Generic`
     Path(Id<Type<L>>),
     /// the number is its text
@@ -497,9 +514,11 @@ pub enum Expr<L: Language> {
     Unary { op: UnaryOp, value: Id<Expr<L>> },
     /// `&x` or `&mut x`
     Reference { mutable: bool, value: Id<Expr<L>> },
-    /// `f(arguments)`
+    /// `f(arguments)`, or `f::<T>(arguments)` with the types its type
+    /// parameters are given
     Call {
         callee: Id<Expr<L>>,
+        type_arguments: List<Type<L>>,
         arguments: List<Expr<L>>,
     },
     /// `x.name`

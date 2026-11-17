@@ -71,7 +71,7 @@ fn parses_two_references_written_as_one_token() {
 
 #[test]
 fn parses_signatures() {
-    let text = "fn Counter::Add<T, U>(&mut self, mut delta: i32, scale: f64 = 1, &Counter) -> &T in (self, delta) {}
+    let text = "fn Counter::Add<T, U>(&mut self, mut delta: i32, scale: f64 = 1, &Counter) -> &T in (self, delta) where T: Shape, U: Sized(8) {}
 fn Counter::Get(&self) {}
 fn Counter::Into(self) {}
 fn Counter::Doubled(mut self) {}
@@ -102,6 +102,13 @@ fn Use(callback: fn(value: &Box, i32) -> &Box in value, view: &[]u8, edit: &mut 
       type name T
     name reference self
     name reference delta
+    constraint
+      name reference T
+      name reference Shape
+    constraint
+      name reference U
+      name reference Sized
+      number literal 8
     block {}
   function declaration
     owner type Counter

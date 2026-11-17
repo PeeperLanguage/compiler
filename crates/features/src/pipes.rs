@@ -55,7 +55,12 @@ impl ExprNode for Pipe {
         _expected: Option<TypeId>,
     ) -> thir::Expr {
         let tree = &builder.checker.module().ast;
-        let ast::Expr::Call { callee, arguments } = tree.exprs[self.target] else {
+        let ast::Expr::Call {
+            callee,
+            type_arguments,
+            arguments,
+        } = tree.exprs[self.target]
+        else {
             let target = tree.exprs.span(self.target);
             let message = "a pipe's target must be a call";
             builder
@@ -66,7 +71,7 @@ impl ExprNode for Pipe {
         };
         let mut given = vec![self.value];
         given.extend(tree.children.lists.items(arguments));
-        builder.check_call(callee, &given, span)
+        builder.check_call(callee, type_arguments, &given, span)
     }
 }
 

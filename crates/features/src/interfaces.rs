@@ -49,6 +49,17 @@ fn interface_type(p: &mut Parser<Peeper>, start: u32) -> Id<ast::Type<Peeper>> {
         |p| {
             let start = p.next().span.start;
             let (name, signature) = p.named_signature();
+            if !signature.constraints.is_empty() {
+                let first = p.tree.children.lists.get(signature.constraints, 0);
+                let span = p.tree.children.constraints.span(first);
+                p.repair(
+                    Diagnostic::new(
+                        diagnostics::INVALID_DECLARATION,
+                        "an interface method has no body, so it takes no `where`",
+                    )
+                    .label(&p.tree.file, span, ""),
+                );
+            }
             let parameters: Vec<_> = p.tree.children.lists.items(signature.parameters).collect();
             for parameter in parameters {
                 if let Some(value) = p.tree.children.params[parameter].default {

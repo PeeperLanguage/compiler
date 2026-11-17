@@ -95,49 +95,11 @@ impl<L: Checked> Checker<'_, L> {
                 },
                 tree.blocks.span(block),
             );
-            // Empty, so nothing is allocated, for a function without `const` parameters.
-            let mut given = builder
-                .checker
-                .types
-                .arguments(arguments)
-                .to_vec()
-                .into_iter()
-                // A type parameter, `<T>`, is a type (`resolve_global`); those
-                // come first (`copy_parameters`).
-                .skip(function.signature.type_parameters.len());
-            let mut types = parameters.iter();
-            for parameter in tree.children.lists.items(function.signature.parameters) {
-                let parameter = tree.children.params[parameter];
-                let name = parameter.name.unwrap_or_default();
-                // A `const` value is a constant of the body; a `const T: type`
-                // is a type (`resolve_global`).
-                if parameter.constant {
-                    let is_type = matches!(tree.types[parameter.ty], ast::Type::Type);
-                    let constant = match given.next() {
-                        Some(ConstArgument::Value(constant)) => Some(constant),
-                        // The function's own body: a value no call gave.
-                        _ => None,
-                    };
-                    if !is_type {
-                        let constant = builder.body.constants.push(constant, name.span);
-                        builder.declare(name, Local::Constant(constant));
-                    }
-                    continue;
-                }
-                let ty = *types
-                    .next()
-                    .expect("the signature has each parameter that is not `const`");
-                let variable = builder.body.add(
-                    Variable {
-                        ty,
-                        mutable: parameter.mutable,
-                        initialized: true,
-                        scope: outermost,
-                        hidden: false,
-                    },
-                    name.span,
-                );
-                builder.declare(name, Local::Variable(variable));
+            builder.declare_parameters(function.signature, arguments, &parameters, outermost);
+            // A copy's were asked with its signature (`constraints_hold`).
+            if !function.signature.constraints.is_empty() && !builder.checker.in_copy() {
+                let known = copy.arguments == ConstArguments::NONE;
+                builder.check_constraints(function.signature, known);
             }
             let statements = builder.check_statements(None, tree.blocks[block].statements);
             builder.body.blocks[outermost].statements = statements;
@@ -156,6 +118,56 @@ impl<L: Checked> Checker<'_, L> {
 }
 
 impl<'a, 'p, L: Checked> ThirBuilder<'a, 'p, L> {
+    /// Declares the parameters of `signature`, of the function being
+    /// checked, in `scope`: each one that is not `const` as a variable of
+    /// its type in `types`, and each `const` value as a constant, the value
+    /// `arguments` give it or, in the function's own body or signature
+    /// (`own_arguments`), one no call gave. A type parameter, `<T>` or
+    /// `const T: type`, is a type (`resolve_global`).
+    pub(crate) fn declare_parameters(
+        &mut self,
+        signature: ast::Signature<L>,
+        arguments: ConstArguments,
+        types: &[TypeId],
+        scope: Id<Block>,
+    ) {
+        let tree = &self.checker.module().ast;
+        // Empty, so nothing is allocated, for a function without `const` parameters.
+        let given = self.checker.types.arguments(arguments).to_vec();
+        // A `<T>` comes first (`copy_parameters`).
+        let mut given = given.into_iter().skip(signature.type_parameters.len());
+        let mut types = types.iter();
+        for parameter in tree.children.lists.items(signature.parameters) {
+            let parameter = tree.children.params[parameter];
+            let name = parameter.name.unwrap_or_default();
+            if !parameter.constant {
+                let ty = *types
+                    .next()
+                    .expect("the signature has each parameter that is not `const`");
+                let variable = self.body.add(
+                    Variable {
+                        ty,
+                        mutable: parameter.mutable,
+                        initialized: true,
+                        scope,
+                        hidden: false,
+                    },
+                    name.span,
+                );
+                self.declare(name, Local::Variable(variable));
+                continue;
+            }
+            let constant = match given.next() {
+                Some(ConstArgument::Value(constant)) => Some(constant),
+                _ => None,
+            };
+            if !matches!(tree.types[parameter.ty], ast::Type::Type) {
+                let constant = self.body.constants.push(constant, name.span);
+                self.declare(name, Local::Constant(constant));
+            }
+        }
+    }
+
     /// The THIR of `statements`, in the current block, after `first`, a
     /// statement the checker made for the block. In a copy, the statements
     /// after an `if` its constants decided that always leaves the block are
@@ -314,7 +326,7 @@ impl<'a, 'p, L: Checked> ThirBuilder<'a, 'p, L> {
         }
         // No local holds a type's name, so only top-level names can clash.
         let ty = match self.checker.resolve_global(text) {
-            Some(Symbol::Builtin(_) | Symbol::TypeArgument(_)) => None,
+            Some(Symbol::Builtin(_) | Symbol::TypeArgument { .. }) => None,
             Some(Symbol::Type(definition)) => Some(definition),
             _ => {
                 self.checker

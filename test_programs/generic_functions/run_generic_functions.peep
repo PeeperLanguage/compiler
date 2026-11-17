@@ -44,6 +44,19 @@ fn Second<T, U>(first: T, second: U) -> U {
     return second;
 }
 
+fn Sum<T>(values: range[T]) -> T {
+    let mut sum: T = 0;
+    for v in values {
+        sum = sum + v;
+    }
+    return sum;
+}
+
+// No argument shows `T`: a call writes it.
+fn Zero<T>() -> T {
+    return 0;
+}
+
 // The copy knows its type: what the compiler answers about it is a constant.
 fn Kind<T>(value: T) {
     if is_int(T) {
@@ -76,6 +89,10 @@ fn main() {
     let big: i64 = 9;
     // The first argument that says what `T` is decides; the next converts.
     println(Max(3, 7), Max(big, 2), Max(1.5, 0.5));
+    // Types written at the call, after `::`, decide; each argument converts.
+    println(Max::<f64>(1, 2.5), Zero::<u8>(), Zero::<f64>(), Second::<i8, f32>(1, 2));
+    // Without `::`, `<` and `>` compare.
+    println(big < 10, big > (2), big < 10 == big > (20));
     let numbers = [3]i32{4, 5, 6};
     let view: &[]i32 = &numbers;
     // A reference to an array is taken as a slice of its elements.
@@ -84,6 +101,7 @@ fn main() {
     Set(&mut count, 8);
     // A `&mut` is lent as the `&T` the copy takes.
     println(Read(&count), Read(&mut count), At(@count));
+    println(Sum(1u8..4), Sum(0..10:5));
     println(Second(1, 2.5), Scaled(3, big), Point.{ x = 1 }.With(2.5), SEVEN, Twice(4));
     Kind(7);
     Kind(true);

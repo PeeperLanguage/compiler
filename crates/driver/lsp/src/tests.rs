@@ -878,6 +878,16 @@ fn Unused(const T: type, given: T) -> T {
 }
 fn Keep<T>(kept: &T, rest: ...i32) -> &T in kept { return kept; }
 fn Caller() -> i32 { let one = Pick(0, 1); return Keep(&one, 2).*; }
+fn Positive(const N: usize) -> bool { return N > 0; }
+fn Sized(const T: type, const N: usize) -> bool { return true; }
+fn Fits<Item>(value: Item, const COUNT: usize) -> Item
+where
+    Item: Sized(8),
+    COUNT: Positive
+{
+    let copied: Item = value;
+    return copied;
+}
 ";
     let main = "import \"app:utils\";
 fn main() {
@@ -980,12 +990,31 @@ fn main() {
         );
         assert_eq!(hover(&server, utils, "given", 1), shown("given", 8));
         assert_eq!(hover(&server, utils, "held", 0), shown("mut held", 9));
+        // A type parameter shows where it is declared; only a copy knows its type.
+        let item = shown("Item: type", 16);
+        assert_eq!(hover(&server, utils, "Item", 3), item); // after `where`
+        assert_eq!(hover(&server, utils, "Item", 4), item); // in the body
+        assert_eq!(
+            hover(&server, utils, "Sized", 1),
+            shown(
+                "fn Sized(const T: type, const N: usize) -> bool { /* ... */ }",
+                15
+            )
+        );
+        assert_eq!(
+            hover(&server, utils, "Positive", 1),
+            shown("fn Positive(const N: usize) -> bool { /* ... */ }", 14)
+        );
+        assert_eq!(
+            hover(&server, utils, "COUNT", 1),
+            shown("const COUNT: usize", 16)
+        );
         // Each name once: the copies of `Pick` add none.
         let facts = &server.checked[&folder].facts[&utils_file];
         let declarations = facts
             .iter()
             .filter(|fact| matches!(fact.kind, CachedKind::Declaration { .. }));
-        assert_eq!(declarations.count(), 7); // `Caller` calls two
+        assert_eq!(declarations.count(), 9); // `Caller` calls two, `Fits` asks two
     }
     // What a body with no type for its `T` reports is not shown.
     assert_eq!(server.checked[&folder].results.diagnostics().count(), 0);
