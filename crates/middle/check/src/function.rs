@@ -87,8 +87,16 @@ impl<L: Checked> Checker<'_, L> {
         if copy.arguments == ConstArguments::NONE || pattern == TypeId::INVALID {
             return pattern;
         }
-        if let Some(copied) = self.internals.function_copies.get(&copy) {
-            return copied.signature;
+        if let Some(&Copied { signature, .. }) = self.internals.function_copies.get(&copy) {
+            // Invalid only while its signature is checked, as one with an
+            // error is not kept: asked for again there, as a `where` can.
+            if signature == TypeId::INVALID {
+                let mut checking = self.internals.declarations_being_checked.iter();
+                let start = (checking.position(|checking| checking.copy() == copy))
+                    .expect("a copy without a signature is being checked");
+                self.report_cycle(start, used_at);
+            }
+            return signature;
         }
         let made_inside = self
             .internals
