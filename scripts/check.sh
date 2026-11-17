@@ -36,19 +36,20 @@ check "runtime clippy" clippy-driver --edition=2024 -Cpanic=abort --crate-type=s
 # which Cargo checks.
 front='semantic_types|thir|program|layout'
 check "middle boundary" bash -c "
-    ! grep -rnE 'crate::($front)' crates/middle/model/src/{mir,machine,constant}.rs &&
-    ! grep -nE '^use crate::' crates/middle/model/src/lib.rs &&
-    ! grep -rnE 'model::($front)' crates/middle/eval crates/middle/flow &&
+    ! grep -rnE 'crate::($front)' crates/kernel/model/src/{mir,machine,constant}.rs &&
+    ! grep -nE '^use crate::' crates/kernel/model/src/lib.rs &&
+    ! grep -rnE 'model::($front)' crates/kernel/eval crates/kernel/flow &&
     ! grep -rnE --exclude=tests.rs 'model::($front)' crates/backend/llvm &&
-    ! grep -rnE '\bsyntax::' crates/middle/model/src/{mir,machine,constant,lib}.rs \
-        crates/middle/{eval,flow} crates/backend/llvm"
+    ! grep -rnE '\bsyntax::' crates/kernel/model/src/{mir,machine,constant,lib}.rs \
+        crates/kernel/{eval,flow} crates/backend/llvm"
 # A phase names no feature: only its tests may use the `features` crate
 # (docs/feature-front.md section 7); Cargo refuses the cycle for the crates
 # `features` depends on, this the others. And a feature's file names no
 # other feature: of its own crate, only the list's `Peeper` and enums, so
 # no module's path (`crate::bools`).
 check "feature boundary" bash -c "
-    for manifest in crates/{base,core,frontend,middle,backend}/*/Cargo.toml; do
+    for manifest in crates/{base,backend}/*/Cargo.toml crates/kernel/syntax/*/Cargo.toml \\
+        crates/kernel/{semantic,model,lower,flow,eval}/Cargo.toml crates/driver/project/Cargo.toml; do
         sed '/^\[dev-dependencies\]/,\$d' \$manifest | grep -H --label=\$manifest '^features\b' && exit 1
     done
     ! grep -nE '\bcrate::[a-z_]' crates/features/src/*.rs crates/features/src/*/tests.rs |

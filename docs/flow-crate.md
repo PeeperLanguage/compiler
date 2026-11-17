@@ -1,5 +1,8 @@
 # The `flow` crate
 
+> The crates have moved since this was written: `middle/*` and
+> `core/syntax` are now under `crates/kernel/` (docs/structure-mapping.md).
+
 The path checks: errors that depend on which routes execution can take
 through one function. Source: `crates/middle/flow/src/`: `lib.rs` (the
 shared engine), `missing_return.rs`, `unreachable.rs`, `variable_state.rs`,

@@ -462,13 +462,20 @@ crate (step 19): with none, it cannot fail.
 ```text
 crates/
   base/       arena, bigint, diagnostics, literal, source, runtime_abi
-  core/       syntax: the tree and the `Language` trait
-  frontend/   token, lexer, parser (the engine and its rule table), project
-  middle/     check, lower, flow, eval, and model (THIR, MIR, layout, machine)
+  kernel/
+    syntax/   token, lexer, tree (the `syntax` crate: the tree and the
+              `Language` trait), parser (the engine and its rule table)
+    semantic  the `check` crate
+    model     THIR, MIR, layout, machine
+    lower, flow, eval
   features/   one crate: `src/lib.rs` lists the features, one file each
   backend/    llvm
-  driver/     compile, peeper, lsp, browser, test_programs
+  driver/     compile, peeper, lsp, browser, test_programs, project
 ```
+
+Until 2026-11-18 the kernel crates were `core/` (syntax), `frontend/`
+(token, lexer, parser, project) and `middle/` (check, lower, flow, eval,
+model); docs/structure-mapping.md has the move.
 
 One crate per feature lets Cargo refuse a dependency between features for
 free; one file per feature in a single crate needs a grep check instead.
@@ -478,7 +485,8 @@ build and link, and the grep check ("feature boundary" in
 `scripts/check.sh`) keeps a feature file from naming another.
 
 This also answers plan item 10: the syntax tree leaves `model`; its core
-part goes to `core/syntax`, each feature's nodes to the feature.
+part goes to the `syntax` crate (`kernel/syntax/tree`), each feature's
+nodes to the feature.
 
 A consequence for tests: a crate's own tests cannot use a crate that
 depends on it, so the core's tests cannot write a feature's syntax. Each

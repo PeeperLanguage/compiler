@@ -1,5 +1,8 @@
 # Semantic design: check, THIR, MIR, LLVM
 
+> The crates have moved since this was written: `middle/*` and
+> `core/syntax` are now under `crates/kernel/` (docs/structure-mapping.md).
+
 Status: PROPOSAL. Decided by the owner (2026-10-17): the points marked
 **decided**. Open points are listed at the end.
 

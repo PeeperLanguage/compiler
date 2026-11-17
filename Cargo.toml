@@ -1,10 +1,13 @@
 [workspace]
 members = [
     "crates/base/*",
-    "crates/core/*",
+    "crates/kernel/syntax/*",
+    "crates/kernel/semantic",
+    "crates/kernel/model",
+    "crates/kernel/lower",
+    "crates/kernel/flow",
+    "crates/kernel/eval",
     "crates/features",
-    "crates/frontend/*",
-    "crates/middle/*",
     "crates/backend/*",
     "crates/driver/*",
     "crates/tools/*",
@@ -20,24 +23,24 @@ publish = false
 [workspace.dependencies]
 source = { path = "crates/base/source" }
 diagnostics = { path = "crates/base/diagnostics" }
-token = { path = "crates/frontend/token" }
-lexer = { path = "crates/frontend/lexer" }
+token = { path = "crates/kernel/syntax/token" }
+lexer = { path = "crates/kernel/syntax/lexer" }
 arena = { path = "crates/base/arena" }
 bigint = { path = "crates/base/bigint" }
 runtime_abi = { path = "crates/base/runtime_abi" }
-parser = { path = "crates/frontend/parser" }
+parser = { path = "crates/kernel/syntax/parser" }
 literal = { path = "crates/base/literal" }
-syntax = { path = "crates/core/syntax" }
+syntax = { path = "crates/kernel/syntax/tree" }
 test_programs = { path = "crates/driver/test_programs" }
-model = { path = "crates/middle/model" }
-eval = { path = "crates/middle/eval" }
-check = { path = "crates/middle/check" }
-lower = { path = "crates/middle/lower" }
-flow = { path = "crates/middle/flow" }
+model = { path = "crates/kernel/model" }
+eval = { path = "crates/kernel/eval" }
+check = { path = "crates/kernel/semantic" }
+lower = { path = "crates/kernel/lower" }
+flow = { path = "crates/kernel/flow" }
 llvm = { path = "crates/backend/llvm" }
 compile = { path = "crates/driver/compile" }
 features = { path = "crates/features" }
-project = { path = "crates/frontend/project" }
+project = { path = "crates/driver/project" }
 lsp = { path = "crates/driver/lsp" }
 unicode-general-category = "1.1.0"
 stacker = "0.1.25"
