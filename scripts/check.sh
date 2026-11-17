@@ -44,16 +44,26 @@ check "middle boundary" bash -c "
         crates/kernel/{eval,flow} crates/backend/llvm"
 # A phase names no feature: only its tests may use the `features` crate
 # (docs/feature-front.md section 7); Cargo refuses the cycle for the crates
-# `features` depends on, this the others. And a feature's file names no
-# other feature: of its own crate, only the list's `Peeper` and enums, so
-# no module's path (`crate::structs`).
-check "feature boundary" bash -c "
-    for manifest in crates/{base,backend}/*/Cargo.toml crates/kernel/syntax/*/Cargo.toml \\
+# `features` depends on, this the others. And a feature's files, nested ones
+# too, name no other feature: of its own crate, only the list's `Peeper` and
+# enums, so no module's path (`crate::structs`, `crate::{structs}`) and no
+# `super` path to another feature (`super::structs`, `super::super::structs`).
+feature_boundary() {
+    local manifest file own others
+    for manifest in crates/{base,backend}/*/Cargo.toml crates/kernel/syntax/*/Cargo.toml \
         crates/kernel/{semantic,model,lower,flow,eval}/Cargo.toml crates/driver/project/Cargo.toml; do
-        sed '/^\[dev-dependencies\]/,\$d' \$manifest | grep -H --label=\$manifest '^features\b' && exit 1
+        sed '/^\[dev-dependencies\]/,$d' "$manifest" | grep -H --label="$manifest" '^features\b' && return 1
     done
-    ! grep -nE '\bcrate::[a-z_]' crates/features/src/*.rs crates/features/src/*/tests.rs |
-        grep -vE '^crates/features/src/(lib|testing)\.rs:|crate::testing\b'"
+    for file in $(find crates/features/src -name '*.rs' ! -name lib.rs ! -name testing.rs); do
+        own=${file#crates/features/src/}
+        own=${own%%[./]*}
+        others=$(sed -nE 's/^pub mod ([a-z_]+);$/\1/p' crates/features/src/lib.rs | grep -vx "$own" | paste -sd'|')
+        grep -HnE '\bcrate::([a-z_]|\{)' "$file" | grep -vE 'crate::testing\b' && return 1
+        grep -HnE "\bsuper(::super)*::(\{[^}]*)?\b($others)\b" "$file" && return 1
+    done
+    return 0
+}
+check "feature boundary" feature_boundary
 check "tests" cargo test --workspace --no-fail-fast
 check "bundle" bash scripts/build.sh
 check "test programs on the bundle" env PEEPER="$PWD/build/bin/peeper" \
