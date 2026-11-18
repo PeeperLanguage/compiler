@@ -29,8 +29,11 @@ stateDiagram-v2
 
 - `compile_module` walks the module's declarations in order: a function goes
   through `Checker::build_function` and out as `Output::Function` (THIR, MIR,
-  facts); a constant through `Checker::constant` as `Output::Constant`; last
-  the module's remaining `Output::Facts`.
+  and only its own facts, `Checker::function_facts`); a constant through
+  `Checker::constant` as `Output::Constant`; last `Output::Facts`, the facts
+  no function took (`Checker::other_facts`), with no names of locals. The
+  checker keeps facts by the declaration they were found in, so a fact
+  naming a local always goes out with the body that declares it.
 - A `ModuleResults` keeps only the file, interface hash, diagnostics,
   `reused`, `changed` and `ran_modules` between compiles; ids, types, THIR and
   MIR are rebuilt every compile.

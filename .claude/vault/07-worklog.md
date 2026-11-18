@@ -1,3 +1,25 @@
+## Facts go with their own function (2026-11-17, 4a133f60, merged 35ebc893)
+
+- Found in Zed: the LSP died at start. `negative_where_conditions.peep`
+  (PR #191) panicked it at `lsp/src/checked.rs:175`, and so did valid code
+  where an earlier function calls one whose `where` names its parameters.
+- Cause: the checker kept one fact list per module and the driver handed
+  "the facts found so far" to the next function built. A `where` is
+  checked when its signature is first asked for, often inside another
+  body, so its facts about locals were read against that other body:
+  a panic, or a wrong hover (`main`'s `const Ratio` shown for `Pick`'s `N`).
+- Fix: the checker keeps facts by the declaration they were found in and
+  owns the rule; `Checker::function_facts` (a function's own, a copy none)
+  and `Checker::other_facts` (the rest, by declaration, no locals). The
+  driver only calls them. A first version put the rule in the driver
+  through a `pub` field; the owner rejected it as scattered responsibility.
+- Tests: `checks_every_test_program` (LSP opens every test program, fails
+  on a panic; ~8 s) and `names_after_where_are_of_their_own_function`;
+  both fail on the old code. Two driver tests changed to the new pairing,
+  every fact still present. `check.sh` passes.
+- Review lesson: the PR #191 review ran only `check`/`run`/`check.sh`, none
+  of which records facts; a review now drives `peeper lsp` too.
+
 
 - Review fixes (Fuad: "fix all"), all from step 11's lowering, found by
   the review of the speed work: (1) a constant of the class `Wide` was
