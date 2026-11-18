@@ -28,47 +28,38 @@ check "clippy" cargo clippy --workspace --all-targets -- -D warnings
 check "runtime format" rustfmt --edition 2024 --check runtime/peeper_rt.rs
 check "runtime clippy" clippy-driver --edition=2024 -Cpanic=abort --crate-type=staticlib \
     --emit=metadata --out-dir target/runtime-clippy -D warnings runtime/peeper_rt.rs
-# The phases after lowering read only the MIR of core concepts
-# (docs/feature-front.md section 8): `model`'s core files name no front
-# module, and eval, flow and llvm name only those. llvm's tests load and
-# compile a whole program, so they may.
-# shortcut: this is a grep; replace it with the crate split of section 9,
-# which Cargo checks.
-front='semantic_types|thir|program|layout'
-check "middle boundary" bash -c "
-    ! grep -rnE 'crate::($front)' crates/kernel/model/src/{mir,machine,constant}.rs &&
-    ! grep -nE '^use crate::' crates/kernel/model/src/lib.rs &&
-    ! grep -rnE 'model::($front)' crates/kernel/eval crates/kernel/flow &&
-    ! grep -rnE --exclude=tests.rs 'model::($front)' crates/backend/llvm &&
-    ! grep -rnE '\bsyntax::' crates/kernel/model/src/{mir,machine,constant,lib}.rs \
-        crates/kernel/{eval,flow} crates/backend/llvm"
-# A phase names no feature: only its tests may use the `features` crate
-# (docs/structure-mapping.md, step 7); Cargo refuses the cycle for the crates
-# `features` depends on, this the others. The tree lists every feature's node,
-# but only the tree's own shape answers (`ast.rs`) and the `features` crate
-# name one (`FeatureExpr::Range`): elsewhere a node is only `Feature(_)`,
-# handed to its feature. And a feature's files, nested ones too, name no
-# other feature: of their own crate, no module's path (`crate::structs`,
-# `crate::{structs}`) and no `super` path to another feature
-# (`super::structs`, `super::super::structs`).
-feature_boundary() {
-    local manifest file own others
-    for manifest in crates/{base,backend}/*/Cargo.toml crates/kernel/syntax/*/Cargo.toml \
-        crates/kernel/{semantic,model,lower,flow,eval}/Cargo.toml crates/driver/project/Cargo.toml; do
-        sed '/^\[dev-dependencies\]/,$d' "$manifest" | grep -H --label="$manifest" '^features\b' && return 1
+# The phases after lowering read only MIR (docs/compiler-layout.md, rule
+# 6): `model`'s MIR files name none of the modules before MIR, and eval,
+# flow and llvm name only the MIR files. llvm's tests load and compile a
+# whole program, so they may.
+# shortcut: this is a grep; a crate of its own for MIR would let Cargo
+# check it.
+before_mir='semantic_types|thir|program|layout'
+check "MIR readers read only MIR" bash -c "
+    ! grep -rnE 'crate::($before_mir)' crates/model/src/{mir,machine,constant}.rs &&
+    ! grep -nE '^use crate::' crates/model/src/lib.rs &&
+    ! grep -rnE 'model::($before_mir)' crates/eval crates/flow &&
+    ! grep -rnE --exclude=tests.rs 'model::($before_mir)' crates/backend/llvm &&
+    ! grep -rnE '\btree::' crates/model/src/{mir,machine,constant,lib}.rs \
+        crates/{eval,flow} crates/backend/llvm"
+# Rust skips a source file no `mod` line names, so a concept file left out
+# of its crate's list builds clean and does nothing.
+unlisted_files() {
+    local file dir stem parent found=0
+    for file in $(find crates -path '*/src/*' -name '*.rs' ! -path '*/src/bin/*' \
+        ! -name lib.rs ! -name main.rs); do
+        dir=${file%/*} stem=${file##*/} stem=${stem%.rs}
+        if [ "$stem" = mod ]; then stem=${dir##*/} dir=${dir%/*}; fi
+        if [ "${dir##*/}" = src ]; then parent="$dir/lib.rs $dir/main.rs"
+        else parent="$dir.rs $dir/mod.rs"; fi
+        # shellcheck disable=SC2086
+        parent=$(ls $parent 2>/dev/null)
+        [ -n "$parent" ] && grep -qE "\bmod $stem;" $parent ||
+            { echo "$file: no \`mod $stem;\` names it"; found=1; }
     done
-    grep -rnE --include='*.rs' '\bFeature(Expr|Stmt|Type)::[A-Z]' crates |
-        grep -vE '^crates/(features/|kernel/syntax/tree/src/ast\.rs:)' && return 1
-    for file in $(find crates/features/src -name '*.rs' ! -name lib.rs ! -name testing.rs); do
-        own=${file#crates/features/src/}
-        own=${own%%[./]*}
-        others=$(sed -nE 's/^pub mod ([a-z_]+);$/\1/p' crates/features/src/lib.rs | grep -vx "$own" | paste -sd'|')
-        grep -HnE '\bcrate::([a-z_]|\{)' "$file" | grep -vE 'crate::testing\b' && return 1
-        grep -HnE "\bsuper(::super)*::(\{[^}]*)?\b($others)\b" "$file" && return 1
-    done
-    return 0
+    return $found
 }
-check "feature boundary" feature_boundary
+check "every source file in a module" unlisted_files
 check "tests" cargo test --workspace --no-fail-fast
 check "bundle" bash scripts/build.sh
 check "test programs on the bundle" env PEEPER="$PWD/build/bin/peeper" \

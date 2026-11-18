@@ -11,12 +11,11 @@ source.workspace = true
 diagnostics.workspace = true
 literal.workspace = true
 model.workspace = true
-syntax.workspace = true
+tree.workspace = true
 parser.workspace = true
 toml_edit.workspace = true
 
 [dev-dependencies]
-features.workspace = true
 
 [lints]
 workspace = true

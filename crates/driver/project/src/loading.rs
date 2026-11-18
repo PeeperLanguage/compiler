@@ -15,10 +15,9 @@ use model::program::Import;
 use model::program::ImportKind;
 use model::program::Module;
 use model::program::default_alias;
-use parser::Rules;
 use source::SourceFile;
 use source::Span;
-use syntax::ast::Tree;
+use tree::ast::Tree;
 
 use crate::PRELUDE_PATH;
 use crate::packages::SOURCE_EXTENSION;
@@ -41,13 +40,12 @@ pub(crate) struct Job {
     pub(crate) standalone: bool, // a file in no package, checked on its own: it cannot import
 }
 
-/// Reads, parses with `rules` and resolves the imports of one module, taking
+/// Reads, parses and resolves the imports of one module, taking
 /// its text from `open_files` when it is open there. A file that cannot be
 /// read, or is not UTF-8, gets an empty tree and one error.
 pub(crate) fn load_module(
     packages: &HashMap<String, PathBuf>,
     open_files: &HashMap<PathBuf, impl AsRef<str>>,
-    rules: &'static Rules,
     job: Job,
     with_prelude: bool,
 ) -> Loaded {
@@ -64,7 +62,7 @@ pub(crate) fn load_module(
         text => text,
     };
     let (ast, diagnostics) = match text.map(String::from_utf8) {
-        Ok(Ok(text)) => parser::parse(&Arc::new(SourceFile::new(path, text)), rules),
+        Ok(Ok(text)) => parser::parse(&Arc::new(SourceFile::new(path, text))),
         Ok(Err(error)) => {
             // The text up to the bad byte is kept as is, so the error points at it.
             let at = error.utf8_error().valid_up_to();

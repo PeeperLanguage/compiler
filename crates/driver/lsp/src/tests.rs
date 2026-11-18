@@ -21,8 +21,8 @@ use lsp_types::Url;
 use serde_json::json;
 use source::SourceFile;
 use source::Span;
-use syntax::operators::BinaryOp;
-use syntax::operators::UnaryOp;
+use tree::operators::BinaryOp;
+use tree::operators::UnaryOp;
 
 use crate::DEBOUNCE;
 use crate::OpenFile;

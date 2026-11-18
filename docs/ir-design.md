@@ -1,7 +1,8 @@
 # Semantic design: check, THIR, MIR, LLVM
 
-> The crates have moved since this was written: `middle/*` and
-> `core/syntax` are now under `crates/kernel/` (docs/structure-mapping.md).
+> The crates have moved since this was written: the phases are now
+> `crates/syntax/*` (the tree crate is `tree`), `crates/check`,
+> `crates/model`, `crates/lower`, `crates/flow` and `crates/eval`.
 
 Status: PROPOSAL. Decided by the owner (2026-10-17): the points marked
 **decided**. Open points are listed at the end.
@@ -50,7 +51,7 @@ scheduled per declaration, on demand (Zig, Rust), not module by module.
   (`parser`, `check`, `lower` and later `llvm`) hold only logic. THIR and
   MIR keep their own node types: a tree and a graph have different shapes.
   Changed 2026-11-13: the syntax tree and the operator kinds left `model`
-  for the `syntax` crate (`crates/core/syntax`), so the parser does not
+  for the `tree` crate (`crates/syntax/tree`), so the parser does not
   depend on `model` (`docs/feature-front.md`, section 9).
   (Until 2026-10-17 this was an `ir` crate, with the tree in `ast` and THIR in
   `thir`.)
@@ -90,14 +91,14 @@ peeper ─► build ─► project ─► parser ─► syntax ─► arena
             └─► llvm ──► model, runtime_abi   MIR -> LLVM text; clang
 ```
 
-The parser writes the tree in `syntax`; every later phase reads and writes
+The parser writes the tree in `tree`; every later phase reads and writes
 its data in `model`; only `lower` reads THIR, and
 `llvm` and the interpreter read MIR and signatures. Signatures (struct fields,
 enum variants, function types) are `model` data, written by check.
 
 | crate | owns |
 |---|---|
-| `syntax` | the syntax tree (`ast`) and operator kinds (`operators`: `BinaryOp`, `UnaryOp`, `Precedence`) |
+| `tree` | the syntax tree (`ast`) and operator kinds (`operators`: `BinaryOp`, `UnaryOp`, `Precedence`) |
 | `model` | data only: `thir` (THIR nodes), `mir` (MIR graphs); `semantic_types` (`TypeId`, the type interner, the built-in types table); `constant` (constant values); `ModuleId`, `DefId`; signatures |
 | `check` | the checker: scopes, name lookup, building THIR, writing signatures; the declaration tables (`Checker`); folding operators and `as` on constants (`fold`: `binary`, `unary`, `convert`, `known_trap`) |
 | `eval` | what each MIR operation gives on register values (`operations`), which folding computes with; the MIR interpreter (`interpreter::run_function` for a constant's call, `interpreter::program::run` for a whole program) |

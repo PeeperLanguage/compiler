@@ -16,10 +16,9 @@ use lsp_types::CodeActionParams;
 use lsp_types::Location;
 use lsp_types::TextDocumentPositionParams;
 use lsp_types::Url;
-use model::semantic_types::builtin_doc;
 use source::SourceFile;
 use source::Span;
-use syntax::ast;
+use tree::ast;
 
 use crate::checked::CachedFact;
 use crate::checked::CachedKind;
@@ -33,6 +32,7 @@ use crate::hover::hover_text;
 use crate::hover::markdown_hover;
 use crate::server::Server;
 use crate::server::file_path;
+use model::semantic_types;
 impl Server<'_> {
     /// Answers go to definition with where the name at the given place is
     /// declared, and hover with what it is, or what the keyword there does;
@@ -65,7 +65,7 @@ impl Server<'_> {
                     return None; // declared nowhere
                 }
                 let written = module.ast.file.slice(name.span);
-                let doc = builtin_doc(written, host().pointer_bits)?;
+                let doc = semantic_types::builtin::builtin_doc(written, host().pointer_bits)?;
                 return markdown_hover(doc_hover(written, &doc));
             }
             let (file, declared, hover) = declaration_of(checked, module, name)?;

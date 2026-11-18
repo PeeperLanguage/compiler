@@ -11,45 +11,17 @@ use std::fmt::Write;
 
 use arena::Id;
 use model::DeclarationCopy;
-use model::mir::Block;
-use model::mir::Body;
-use model::mir::CPassing;
-use model::mir::CSignature;
-use model::mir::Callee;
-use model::mir::Class;
-use model::mir::Comparison;
-use model::mir::Conversion;
-use model::mir::DebugScope;
-use model::mir::DebugTypes;
-use model::mir::Extension;
-use model::mir::FloatOp;
-use model::mir::Global;
-use model::mir::Instruction;
-use model::mir::InstructionKind;
-use model::mir::IntegerOp;
-use model::mir::Operand;
-use model::mir::Passing;
-use model::mir::Place;
-use model::mir::Root;
-use model::mir::Signature;
-use model::mir::Slot;
-use model::mir::Step;
-use model::mir::Terminator;
-use model::mir::constant_value;
-use runtime_abi::abi::PANIC_EXIT_CODE;
-use runtime_abi::abi::STDERR;
-use runtime_abi::messages::panic_text;
-use runtime_abi::symbols::Runtime;
+use model::mir;
+use runtime_abi::abi;
+use runtime_abi::messages;
+use runtime_abi::symbols;
 use rustc_hash::FxHashMap;
 use source::SourceFile;
 use source::Span;
 
 use crate::Module;
-use crate::debug_info::DebugLocation;
-use crate::debug_info::debug_position;
-use crate::text::comma_separated;
-use crate::text::global;
-use crate::text::quoted;
+use crate::debug_info;
+use crate::text;
 
 /// The intrinsic that copies bytes from one place to another.
 const MEMCPY: &str = "llvm.memcpy.p0.p0.i64";
@@ -63,7 +35,7 @@ pub(crate) struct Defined {
     /// Where its name is declared, for its line in a debugger; empty in a
     /// release build.
     pub(crate) declared_at: Span,
-    pub(crate) body: Body,
+    pub(crate) body: mir::Body,
 }
 
 impl Module<'_> {
@@ -76,7 +48,7 @@ impl Module<'_> {
         defined: &Defined,
         file: &SourceFile,
         symbols: &FxHashMap<DeclarationCopy, String>,
-        debug_types: &DebugTypes,
+        debug_types: &mir::DebugTypes,
     ) {
         let Defined {
             copy,
@@ -87,8 +59,8 @@ impl Module<'_> {
         let symbol = &symbols[copy];
         let globals = (body.globals.iter())
             .map(|global| match global {
-                Global::Bytes(bytes) => self.add_string(bytes),
-                Global::Functions(entries) => self.add_table(entries, symbols),
+                mir::Global::Bytes(bytes) => self.add_string(bytes),
+                mir::Global::Functions(entries) => self.add_table(entries, symbols),
             })
             .collect();
         let (subprogram, scopes) = self
@@ -126,8 +98,8 @@ impl Module<'_> {
         _ = write!(
             out,
             "define {result} {}({})",
-            global(symbol),
-            comma_separated(parameters)
+            text::global(symbol),
+            text::comma_separated(parameters)
         );
         if let Some(subprogram) = subprogram {
             _ = write!(out, " !dbg !{subprogram}");
@@ -158,11 +130,11 @@ impl Module<'_> {
 
     /// Notes the `declare` of `symbol`, a function taking and giving values
     /// as `signature` says, in Peeper's convention, and gives its LLVM name.
-    fn declare_function(&mut self, symbol: &str, signature: &Signature) -> String {
-        let callee = global(symbol);
+    fn declare_function(&mut self, symbol: &str, signature: &mir::Signature) -> String {
+        let callee = text::global(symbol);
         self.declare(symbol, || {
             let (result, parameters) = peeper_types(signature);
-            let parameters = comma_separated(parameters.iter());
+            let parameters = text::comma_separated(parameters.iter());
             format!("declare {result} {callee}({parameters})\n\n")
         });
         callee
@@ -172,7 +144,7 @@ impl Module<'_> {
     /// per module, with a `declare` of each.
     fn add_table(
         &mut self,
-        entries: &[(DeclarationCopy, Signature)],
+        entries: &[(DeclarationCopy, mir::Signature)],
         symbols: &FxHashMap<DeclarationCopy, String>,
     ) -> String {
         let mut constant = format!("[{} x ptr] [", entries.len());
@@ -199,10 +171,10 @@ impl Module<'_> {
 }
 
 /// The LLVM type of a register of `class`.
-fn llvm_type(class: Class) -> impl Display {
+fn llvm_type(class: mir::Class) -> impl Display {
     fmt::from_fn(move |out| match class {
-        Class::F32 => out.write_str("float"),
-        Class::F64 => out.write_str("double"),
+        mir::Class::F32 => out.write_str("float"),
+        mir::Class::F64 => out.write_str("double"),
         // `i32`, `i200`, `ptr`, as the MIR's dump names them.
         _ => class.fmt(out),
     })
@@ -210,67 +182,67 @@ fn llvm_type(class: Class) -> impl Display {
 
 /// The instruction an `Integer` of `operation` is; a signed division by
 /// what may be -1 is `signed_division`'s lines.
-pub fn integer_instruction(operation: IntegerOp) -> &'static str {
+pub fn integer_instruction(operation: mir::IntegerOp) -> &'static str {
     match operation {
-        IntegerOp::Add => "add",
-        IntegerOp::Subtract => "sub",
-        IntegerOp::Multiply => "mul",
-        IntegerOp::SignedDivide => "sdiv",
-        IntegerOp::UnsignedDivide => "udiv",
-        IntegerOp::SignedRemainder => "srem",
-        IntegerOp::UnsignedRemainder => "urem",
-        IntegerOp::ShiftLeft => "shl",
-        IntegerOp::SignedShiftRight => "ashr",
-        IntegerOp::UnsignedShiftRight => "lshr",
-        IntegerOp::And => "and",
-        IntegerOp::Or => "or",
-        IntegerOp::Xor => "xor",
+        mir::IntegerOp::Add => "add",
+        mir::IntegerOp::Subtract => "sub",
+        mir::IntegerOp::Multiply => "mul",
+        mir::IntegerOp::SignedDivide => "sdiv",
+        mir::IntegerOp::UnsignedDivide => "udiv",
+        mir::IntegerOp::SignedRemainder => "srem",
+        mir::IntegerOp::UnsignedRemainder => "urem",
+        mir::IntegerOp::ShiftLeft => "shl",
+        mir::IntegerOp::SignedShiftRight => "ashr",
+        mir::IntegerOp::UnsignedShiftRight => "lshr",
+        mir::IntegerOp::And => "and",
+        mir::IntegerOp::Or => "or",
+        mir::IntegerOp::Xor => "xor",
     }
 }
 
 /// The instruction a `Float` of `operation` is.
-pub fn float_instruction(operation: FloatOp) -> &'static str {
+pub fn float_instruction(operation: mir::FloatOp) -> &'static str {
     match operation {
-        FloatOp::Add => "fadd",
-        FloatOp::Subtract => "fsub",
-        FloatOp::Multiply => "fmul",
-        FloatOp::Divide => "fdiv",
-        FloatOp::Remainder => "frem",
+        mir::FloatOp::Add => "fadd",
+        mir::FloatOp::Subtract => "fsub",
+        mir::FloatOp::Multiply => "fmul",
+        mir::FloatOp::Divide => "fdiv",
+        mir::FloatOp::Remainder => "frem",
     }
 }
 
 /// The `icmp` or `fcmp` with its condition that compares two registers of
 /// `class` as `comparison`.
-pub fn comparison_instruction(comparison: Comparison, class: Class) -> &'static str {
-    let float = matches!(class, Class::F32 | Class::F64);
+pub fn comparison_instruction(comparison: mir::Comparison, class: mir::Class) -> &'static str {
+    let float = matches!(class, mir::Class::F32 | mir::Class::F64);
     match comparison {
-        Comparison::Equal if float => "fcmp oeq",
-        Comparison::NotEqual if float => "fcmp une",
-        Comparison::Equal => "icmp eq",
-        Comparison::NotEqual => "icmp ne",
-        Comparison::SignedLess => "icmp slt",
-        Comparison::SignedLessOrEqual => "icmp sle",
-        Comparison::UnsignedLess => "icmp ult",
-        Comparison::UnsignedLessOrEqual => "icmp ule",
-        Comparison::FloatLess => "fcmp olt",
-        Comparison::FloatLessOrEqual => "fcmp ole",
+        mir::Comparison::Equal if float => "fcmp oeq",
+        mir::Comparison::NotEqual if float => "fcmp une",
+        mir::Comparison::Equal => "icmp eq",
+        mir::Comparison::NotEqual => "icmp ne",
+        mir::Comparison::SignedLess => "icmp slt",
+        mir::Comparison::SignedLessOrEqual => "icmp sle",
+        mir::Comparison::UnsignedLess => "icmp ult",
+        mir::Comparison::UnsignedLessOrEqual => "icmp ule",
+        mir::Comparison::FloatLess => "fcmp olt",
+        mir::Comparison::FloatLessOrEqual => "fcmp ole",
     }
 }
 
-/// The cast instruction of `conversion`; a float to an integer is the
-/// saturating intrinsic `saturating_conversion` names instead.
-pub fn conversion_instruction(conversion: Conversion) -> &'static str {
-    match conversion {
-        Conversion::SignExtend => "sext",
-        Conversion::ZeroExtend => "zext",
-        Conversion::Truncate => "trunc",
-        Conversion::SignedToFloat => "sitofp",
-        Conversion::UnsignedToFloat => "uitofp",
-        Conversion::FloatWiden => "fpext",
-        Conversion::FloatNarrow => "fptrunc",
-        Conversion::PointerCast => "bitcast",
-        Conversion::FloatToSigned { .. } | Conversion::FloatToUnsigned { .. } => {
-            unreachable!("a float becomes an integer by `saturating_conversion`")
+/// The cast instruction of `cast`; a float to an integer is the
+/// saturating intrinsic `saturating_cast` names instead.
+pub fn cast_instruction(cast: mir::Cast) -> &'static str {
+    match cast {
+        mir::Cast::SignExtend => "sext",
+        mir::Cast::ZeroExtend => "zext",
+        mir::Cast::Truncate => "trunc",
+        mir::Cast::SignedToFloat => "sitofp",
+        mir::Cast::UnsignedToFloat => "uitofp",
+        mir::Cast::FloatWiden => "fpext",
+        mir::Cast::FloatNarrow => "fptrunc",
+        mir::Cast::PointerCast => "bitcast",
+        mir::Cast::FloatToSigned { .. } | mir::Cast::FloatToUnsigned { .. } => {
+            unreachable!("a float becomes an integer by `saturating_cast`")
         }
     }
 }
@@ -278,14 +250,18 @@ pub fn conversion_instruction(conversion: Conversion) -> &'static str {
 /// The intrinsic that converts a float of `from` to an integer of `bits`
 /// bits, toward zero and to the nearest end of its range, for a
 /// `FloatTo*` conversion, and whether it is signed.
-pub fn saturating_conversion(conversion: Conversion, from: Class) -> (String, bool) {
-    let (bits, signed) = match conversion {
-        Conversion::FloatToSigned { bits } => (bits, true),
-        Conversion::FloatToUnsigned { bits } => (bits, false),
+pub fn saturating_cast(cast: mir::Cast, from: mir::Class) -> (String, bool) {
+    let (bits, signed) = match cast {
+        mir::Cast::FloatToSigned { bits } => (bits, true),
+        mir::Cast::FloatToUnsigned { bits } => (bits, false),
         _ => unreachable!("only a float to an integer saturates"),
     };
     let kind = if signed { "fptosi" } else { "fptoui" };
-    let float = if from == Class::F32 { "f32" } else { "f64" };
+    let float = if from == mir::Class::F32 {
+        "f32"
+    } else {
+        "f64"
+    };
     (format!("llvm.{kind}.sat.i{bits}.{float}"), signed)
 }
 
@@ -295,7 +271,7 @@ pub fn saturating_conversion(conversion: Conversion, from: Class) -> (String, bo
 /// by 1 instead and negates, so the remainder is 0 as it should be.
 pub fn signed_division(
     name: &str,
-    operation: IntegerOp,
+    operation: mir::IntegerOp,
     ty: &dyn Display,
     left: &dyn Display,
     right: &dyn Display,
@@ -305,7 +281,7 @@ pub fn signed_division(
         "  {name}.m = icmp eq {ty} {right}, -1{location}\n  \
          {name}.d = select i1 {name}.m, {ty} 1, {ty} {right}{location}\n"
     );
-    if operation == IntegerOp::SignedRemainder {
+    if operation == mir::IntegerOp::SignedRemainder {
         _ = writeln!(out, "  {name} = srem {ty} {left}, {name}.d{location}");
         return out;
     }
@@ -322,20 +298,20 @@ pub fn signed_division(
 /// values must match LLVM"): an integer in decimal, read as signed, a float
 /// as the hexadecimal of its value as an `f64`, as LLVM reads a `float`
 /// too, and the pointer 0 as `null`.
-pub fn constant_text(class: Class, bits: [u64; 2]) -> impl Display {
+pub fn constant_text(class: mir::Class, bits: [u64; 2]) -> impl Display {
     fmt::from_fn(move |out| match class {
-        Class::I128 => write!(out, "{}", constant_value(bits) as i128),
-        Class::I8 | Class::I16 | Class::I32 | Class::I64 => {
+        mir::Class::I128 => write!(out, "{}", mir::constant_value(bits) as i128),
+        mir::Class::I8 | mir::Class::I16 | mir::Class::I32 | mir::Class::I64 => {
             let unused = 64 - class.bits();
             write!(out, "{}", ((bits[0] << unused) as i64) >> unused)
         }
-        Class::F32 => write!(out, "0x{:016X}", widened(bits[0] as u32)),
-        Class::F64 => write!(out, "0x{:016X}", bits[0]),
-        Class::Pointer => {
+        mir::Class::F32 => write!(out, "0x{:016X}", widened(bits[0] as u32)),
+        mir::Class::F64 => write!(out, "0x{:016X}", bits[0]),
+        mir::Class::Pointer => {
             assert_eq!(bits[0], 0, "a pointer constant is null");
             out.write_str("null")
         }
-        Class::Wide(_) => unreachable!("a wide constant is read-only data"),
+        mir::Class::Wide(_) => unreachable!("a wide constant is read-only data"),
     })
 }
 
@@ -353,11 +329,11 @@ fn widened(bits: u32) -> u64 {
 /// The LLVM types a function of `signature` gives and takes, in Peeper's
 /// convention: a value in memory by its address, a result in memory where
 /// a hidden first parameter points.
-fn peeper_types(signature: &Signature) -> (String, Vec<String>) {
+fn peeper_types(signature: &mir::Signature) -> (String, Vec<String>) {
     let mut parameters = Vec::with_capacity(signature.parameters.len() + 1);
     let result = match signature.result {
-        Some(Passing::Register { class, .. }) => llvm_type(class).to_string(),
-        Some(Passing::Memory { .. }) => {
+        Some(mir::Passing::Register { class, .. }) => llvm_type(class).to_string(),
+        Some(mir::Passing::Memory { .. }) => {
             parameters.push("ptr".to_string());
             "void".to_string()
         }
@@ -373,10 +349,10 @@ fn peeper_types(signature: &Signature) -> (String, Vec<String>) {
 /// The LLVM type of a register of `class` C widens as `extension` says,
 /// with the attribute that tells so: after the type for a parameter
 /// (`i8 zeroext`), before it for a `result` (`zeroext i8`).
-fn c_register_type(class: Class, extension: Option<Extension>, result: bool) -> String {
+fn c_register_type(class: mir::Class, extension: Option<mir::Extension>, result: bool) -> String {
     let attribute = match extension {
-        Some(Extension::Sign) => "signext",
-        Some(Extension::Zero) => "zeroext",
+        Some(mir::Extension::Sign) => "signext",
+        Some(mir::Extension::Zero) => "zeroext",
         None => return llvm_type(class).to_string(),
     };
     let ty = llvm_type(class);
@@ -390,7 +366,7 @@ fn c_register_type(class: Class, extension: Option<Extension>, result: bool) -> 
 /// Writing one function's `define`, into the `out` its methods are given.
 struct Writer<'m, 'p, 'b> {
     module: &'m mut Module<'p>,
-    body: &'b Body,
+    body: &'b mir::Body,
     file: &'b SourceFile, // the function's own, which a copy's module may not be
     symbols: &'b FxHashMap<DeclarationCopy, String>,
     globals: Vec<String>,                      // each global's address
@@ -400,9 +376,9 @@ struct Writer<'m, 'p, 'b> {
     /// The `alloca` of the memory a C call passes a value in, for the entry
     /// block, so a loop reuses it.
     memory: String,
-    block: usize,            // the MIR block being written
-    checked: usize,          // its checks so far, each of which starts a block
-    targets: Vec<Id<Block>>, // where a jump to each block goes (`jump_targets`)
+    block: usize,                 // the MIR block being written
+    checked: usize,               // its checks so far, each of which starts a block
+    targets: Vec<Id<mir::Block>>, // where a jump to each block goes (`jump_targets`)
     /// By instruction, whether its value is read as a byte, not only as a
     /// truth; a comparison is widened to a byte only then.
     read: Vec<bool>,
@@ -411,7 +387,7 @@ struct Writer<'m, 'p, 'b> {
 impl Writer<'_, '_, '_> {
     /// The `alloca` of each slot and, in a debug build, the debug
     /// declaration of each one a debugger shows.
-    fn write_slots(&mut self, out: &mut String, debug_types: &DebugTypes) {
+    fn write_slots(&mut self, out: &mut String, debug_types: &mir::DebugTypes) {
         let body = self.body;
         for slot in body.slots.ids() {
             let index = slot.index();
@@ -439,7 +415,7 @@ impl Writer<'_, '_, '_> {
             };
             let declared = metadata.add(format_args!(
                 "!DILocalVariable(name: {}, {argument}scope: !{}, file: !{file_metadata}, line: {line}, type: !{debug_type})",
-                quoted(self.file.slice(span).as_bytes()),
+                text::quoted(self.file.slice(span).as_bytes()),
                 self.scopes[data.debug_scope.index()],
             ));
             let location = self.location(span, data.debug_scope);
@@ -454,9 +430,13 @@ impl Writer<'_, '_, '_> {
 
     /// The DILocation of where `span` starts, in the debug scope
     /// `debug_scope`, as the end of a line; nothing in a release build.
-    fn location(&mut self, span: Span, debug_scope: Id<DebugScope>) -> DebugLocation {
+    fn location(
+        &mut self,
+        span: Span,
+        debug_scope: Id<mir::DebugScope>,
+    ) -> debug_info::DebugLocation {
         let Some(metadata) = &mut self.module.metadata else {
-            return DebugLocation(None);
+            return debug_info::DebugLocation(None);
         };
         let scope = self.scopes[debug_scope.index()];
         let file = self.file;
@@ -466,47 +446,48 @@ impl Writer<'_, '_, '_> {
             .locations
             .entry((scope, span.start))
             .or_insert_with(|| {
-                let (line, column) = debug_position(file, span.start as usize);
+                let (line, column) = debug_info::debug_position(file, span.start as usize);
                 metadata.add(format_args!(
                     "!DILocation(line: {line}, column: {column}, scope: !{scope})"
                 ))
             });
-        DebugLocation(Some(id))
+        debug_info::DebugLocation(Some(id))
     }
 
-    fn operand(&self, operand: Operand) -> impl Display {
+    fn operand(&self, operand: mir::Operand) -> impl Display {
         fmt::from_fn(move |out| self.write_operand(out, operand))
     }
 
     /// Writes `operand`. The address of a place no step moves from is its
     /// root's, which no instruction computes (`write_place`).
-    fn write_operand(&self, out: &mut fmt::Formatter, operand: Operand) -> fmt::Result {
+    fn write_operand(&self, out: &mut fmt::Formatter, operand: mir::Operand) -> fmt::Result {
         match operand {
-            Operand::Value(id) => match &self.body.instructions[id].kind {
-                InstructionKind::Address { place, .. } | InstructionKind::Borrow { place, .. }
+            mir::Operand::Value(id) => match &self.body.instructions[id].kind {
+                mir::InstructionKind::Address { place, .. }
+                | mir::InstructionKind::Borrow { place, .. }
                     if place.steps.iter().all(|&step| folded(step).is_none()) =>
                 {
                     self.root(place.root).fmt(out)
                 }
                 _ => write!(out, "%i{}", id.index()),
             },
-            Operand::Constant { class, bits } => constant_text(class, bits).fmt(out),
-            Operand::Parameter(index) => write!(out, "%a{index}"),
-            Operand::Global(index) => out.write_str(&self.globals[index as usize]),
+            mir::Operand::Constant { class, bits } => constant_text(class, bits).fmt(out),
+            mir::Operand::Parameter(index) => write!(out, "%a{index}"),
+            mir::Operand::Global(index) => out.write_str(&self.globals[index as usize]),
         }
     }
 
     /// The address `root` names.
-    fn root(&self, root: Root) -> impl Display {
+    fn root(&self, root: mir::Root) -> impl Display {
         fmt::from_fn(move |out| match root {
-            Root::Slot(slot) => out.write_str(&slot_name(self.body, slot)),
-            Root::At(at) => self.write_operand(out, at),
-            Root::Result => out.write_str("%result"),
+            mir::Root::Slot(slot) => out.write_str(&slot_name(self.body, slot)),
+            mir::Root::At(at) => self.write_operand(out, at),
+            mir::Root::Result => out.write_str("%result"),
         })
     }
 
     /// `operand` with its type before it, as an argument.
-    fn typed(&self, operand: Operand) -> impl Display {
+    fn typed(&self, operand: mir::Operand) -> impl Display {
         let class = self
             .body
             .class_of(operand)
@@ -520,12 +501,12 @@ impl Writer<'_, '_, '_> {
     fn write_truth(
         &self,
         out: &mut String,
-        condition: Operand,
+        condition: mir::Operand,
         name: &str,
-        location: &DebugLocation,
+        location: &debug_info::DebugLocation,
     ) -> String {
-        if let Operand::Value(id) = condition
-            && let InstructionKind::Compare { .. } = self.body.instructions[id].kind
+        if let mir::Operand::Value(id) = condition
+            && let mir::InstructionKind::Compare { .. } = self.body.instructions[id].kind
         {
             return format!("%i{}.c", id.index());
         }
@@ -543,16 +524,16 @@ impl Writer<'_, '_, '_> {
     fn write_place(
         &mut self,
         out: &mut String,
-        place: &Place,
+        place: &mir::Place,
         name: &str,
-        location: &DebugLocation,
+        location: &debug_info::DebugLocation,
     ) -> String {
         let mut at = self.root(place.root).to_string();
         // Offsets in a row, with constant indexes, add up to one.
-        let mut steps: Vec<Step> = Vec::with_capacity(place.steps.len());
+        let mut steps: Vec<mir::Step> = Vec::with_capacity(place.steps.len());
         for step in place.steps.iter().filter_map(|&step| folded(step)) {
             match (step, steps.last_mut()) {
-                (Step::Offset(bytes), Some(Step::Offset(sum))) => *sum += bytes,
+                (mir::Step::Offset(bytes), Some(mir::Step::Offset(sum))) => *sum += bytes,
                 _ => steps.push(step),
             }
         }
@@ -563,15 +544,15 @@ impl Writer<'_, '_, '_> {
                 format!("{name}.{}", position + 1)
             };
             match step {
-                Step::Offset(bytes) => {
+                mir::Step::Offset(bytes) => {
                     _ = writeln!(
                         out,
                         "  {to} = getelementptr inbounds i8, ptr {at}, i64 {bytes}{location}"
                     );
                 }
-                Step::Through => _ = writeln!(out, "  {to} = load ptr, ptr {at}{location}"),
+                mir::Step::Through => _ = writeln!(out, "  {to} = load ptr, ptr {at}{location}"),
                 // Lowering checked the index is inside.
-                Step::Index { index, size, .. } => {
+                mir::Step::Index { index, size, .. } => {
                     _ = writeln!(
                         out,
                         "  {to} = getelementptr inbounds [{size} x i8], ptr {at}, {}{location}",
@@ -584,7 +565,7 @@ impl Writer<'_, '_, '_> {
         at
     }
 
-    fn write_block(&mut self, out: &mut String, block: Id<Block>) {
+    fn write_block(&mut self, out: &mut String, block: Id<mir::Block>) {
         _ = writeln!(out, "bb{}:", block.index());
         let body = self.body;
         let data = &body.blocks[block];
@@ -594,12 +575,12 @@ impl Writer<'_, '_, '_> {
         }
         // The line, then the location of its span, if it has one.
         let span = match &data.terminator {
-            &Terminator::Jump(target) => {
+            &mir::Terminator::Jump(target) => {
                 let target = self.targets[target.index()];
                 _ = write!(out, "  br label %bb{}", target.index());
                 None
             }
-            &Terminator::Branch {
+            &mir::Terminator::Branch {
                 condition,
                 span,
                 then,
@@ -616,45 +597,49 @@ impl Writer<'_, '_, '_> {
                 );
                 Some(span)
             }
-            &Terminator::Return {
+            &mir::Terminator::Return {
                 value: Some(value),
                 span,
             } => {
                 _ = write!(out, "  ret {}", self.typed(value));
                 Some(span)
             }
-            Terminator::Panic { message, span } => {
+            mir::Terminator::Panic { message, span } => {
                 self.write_panic(out, message, *span, data.debug_scope);
                 None
             }
             // The missing-return check gives such a function an error, and
             // a function with an error is not written.
-            &Terminator::FallOff(_) if body.signature.result.is_some() => {
+            &mir::Terminator::FallOff(_) if body.signature.result.is_some() => {
                 unreachable!("a function with a result falls off its end")
             }
-            &Terminator::Return { value: None, span } | &Terminator::FallOff(span) => {
+            &mir::Terminator::Return { value: None, span } | &mir::Terminator::FallOff(span) => {
                 out.push_str("  ret void");
                 Some(span)
             }
         };
-        let location = span.map_or(DebugLocation(None), |span| {
+        let location = span.map_or(debug_info::DebugLocation(None), |span| {
             self.location(span, data.debug_scope)
         });
         _ = writeln!(out, "{location}");
     }
 
-    fn write_instruction(&mut self, out: &mut String, id: Id<Instruction>) {
+    #[deny(
+        clippy::wildcard_enum_match_arm,
+        clippy::match_wildcard_for_single_variants
+    )]
+    fn write_instruction(&mut self, out: &mut String, id: Id<mir::Instruction>) {
         let body = self.body;
-        let Instruction { kind, debug_scope } = &body.instructions[id];
+        let mir::Instruction { kind, debug_scope } = &body.instructions[id];
         if !kind.runs() {
             return; // for the path checks only
         }
         let location = self.location(body.instructions.span(id), *debug_scope);
         let name = format!("%i{}", id.index());
         match kind {
-            InstructionKind::Integer {
-                operation: IntegerOp::Add,
-                class: Class::Pointer,
+            mir::InstructionKind::Integer {
+                operation: mir::IntegerOp::Add,
+                class: mir::Class::Pointer,
                 left,
                 right,
             } => {
@@ -666,8 +651,9 @@ impl Writer<'_, '_, '_> {
                     self.typed(*right)
                 );
             }
-            &InstructionKind::Integer {
-                operation: operation @ (IntegerOp::SignedDivide | IntegerOp::SignedRemainder),
+            &mir::InstructionKind::Integer {
+                operation:
+                    operation @ (mir::IntegerOp::SignedDivide | mir::IntegerOp::SignedRemainder),
                 class,
                 left,
                 right,
@@ -682,7 +668,7 @@ impl Writer<'_, '_, '_> {
                     &location,
                 ));
             }
-            InstructionKind::Integer {
+            mir::InstructionKind::Integer {
                 operation,
                 class,
                 left,
@@ -697,7 +683,7 @@ impl Writer<'_, '_, '_> {
                     self.operand(*right)
                 );
             }
-            InstructionKind::Float {
+            mir::InstructionKind::Float {
                 operation,
                 class,
                 left,
@@ -712,7 +698,7 @@ impl Writer<'_, '_, '_> {
                     self.operand(*right)
                 );
             }
-            InstructionKind::Compare {
+            mir::InstructionKind::Compare {
                 comparison,
                 class,
                 left,
@@ -730,15 +716,14 @@ impl Writer<'_, '_, '_> {
                     _ = writeln!(out, "  {name} = zext i1 {name}.c to i8{location}");
                 }
             }
-            &InstructionKind::Convert {
-                conversion:
-                    conversion @ (Conversion::FloatToSigned { bits }
-                    | Conversion::FloatToUnsigned { bits }),
+            &mir::InstructionKind::Convert {
+                cast:
+                    cast @ (mir::Cast::FloatToSigned { bits } | mir::Cast::FloatToUnsigned { bits }),
                 from,
                 to,
                 value,
             } => {
-                let (intrinsic, signed) = saturating_conversion(conversion, from);
+                let (intrinsic, signed) = saturating_cast(cast, from);
                 let (from_text, saturated) = (llvm_type(from), format!("i{bits}"));
                 self.module.declare(&intrinsic, || {
                     format!("declare {saturated} @{intrinsic}({from_text})\n\n")
@@ -762,8 +747,8 @@ impl Writer<'_, '_, '_> {
                     );
                 }
             }
-            InstructionKind::Convert {
-                conversion,
+            mir::InstructionKind::Convert {
+                cast,
                 from,
                 to,
                 value,
@@ -771,18 +756,19 @@ impl Writer<'_, '_, '_> {
                 _ = writeln!(
                     out,
                     "  {name} = {} {} {} to {}{location}",
-                    conversion_instruction(*conversion),
+                    cast_instruction(*cast),
                     llvm_type(*from),
                     self.operand(*value),
                     llvm_type(*to)
                 );
             }
-            InstructionKind::Load { class, place } => {
+            mir::InstructionKind::Load { class, place } => {
                 let address = self.write_place(out, place, &format!("{name}.a"), &location);
                 // Read-only data is bytes, aligned to none.
-                let align = match place.root {
-                    Root::At(Operand::Global(_)) => ", align 1",
-                    _ => "",
+                let align = if let mir::Root::At(mir::Operand::Global(_)) = place.root {
+                    ", align 1"
+                } else {
+                    ""
                 };
                 _ = writeln!(
                     out,
@@ -790,7 +776,7 @@ impl Writer<'_, '_, '_> {
                     llvm_type(*class)
                 );
             }
-            InstructionKind::Store {
+            mir::InstructionKind::Store {
                 class,
                 place,
                 value,
@@ -803,7 +789,7 @@ impl Writer<'_, '_, '_> {
                     self.operand(*value)
                 );
             }
-            InstructionKind::Copy { to, from, size } => {
+            mir::InstructionKind::Copy { to, from, size } => {
                 let to = self.write_place(out, to, &format!("{name}.t"), &location);
                 let from = self.write_place(out, from, &format!("{name}.f"), &location);
                 self.module.declare(MEMCPY, || {
@@ -815,10 +801,11 @@ impl Writer<'_, '_, '_> {
                 );
             }
             // With no step, the address is the root's (`write_operand`).
-            InstructionKind::Address { place, .. } | InstructionKind::Borrow { place, .. } => {
+            mir::InstructionKind::Address { place, .. }
+            | mir::InstructionKind::Borrow { place, .. } => {
                 self.write_place(out, place, &name, &location);
             }
-            InstructionKind::Call {
+            mir::InstructionKind::Call {
                 callee,
                 signature,
                 arguments,
@@ -838,7 +825,7 @@ impl Writer<'_, '_, '_> {
                     self.write_call(out, &name, callee, signature, at, arguments, &location);
                 }
             }
-            InstructionKind::Check { failed, message } => {
+            mir::InstructionKind::Check { failed, message } => {
                 self.checked += 1;
                 let next = format!("bb{}.{}", self.block, self.checked);
                 let panic = format!("{next}.panic");
@@ -854,7 +841,7 @@ impl Writer<'_, '_, '_> {
                 panics.push('\n');
                 self.panics = panics;
             }
-            InstructionKind::Moved { .. } | InstructionKind::Dead(_) => {
+            mir::InstructionKind::Moved { .. } | mir::InstructionKind::Dead(_) => {
                 unreachable!("returned above")
             }
         }
@@ -862,12 +849,12 @@ impl Writer<'_, '_, '_> {
 
     /// Whether `divisor`, of `class`, is a constant other than -1, by which
     /// a signed division cannot overflow.
-    fn divides_by_other_than_minus_one(&self, divisor: Operand, class: Class) -> bool {
-        let Operand::Constant { bits, .. } = divisor else {
+    fn divides_by_other_than_minus_one(&self, divisor: mir::Operand, class: mir::Class) -> bool {
+        let mir::Operand::Constant { bits, .. } = divisor else {
             return false;
         };
         let all = u128::MAX >> (128 - class.bits());
-        constant_value(bits) != all
+        mir::constant_value(bits) != all
     }
 
     /// Writes the call, as `name`, of `callee` in Peeper's convention, with
@@ -878,17 +865,17 @@ impl Writer<'_, '_, '_> {
         &mut self,
         out: &mut String,
         name: &str,
-        callee: Callee,
-        signature: &Signature,
+        callee: mir::Callee,
+        signature: &mir::Signature,
         result_at: Option<&str>,
-        arguments: &[Operand],
-        location: &DebugLocation,
+        arguments: &[mir::Operand],
+        location: &debug_info::DebugLocation,
     ) {
         let callee = match callee {
-            Callee::Function(function) => self
+            mir::Callee::Function(function) => self
                 .module
                 .declare_function(&self.symbols[&function], signature),
-            Callee::Pointer(address) => self.operand(address).to_string(),
+            mir::Callee::Pointer(address) => self.operand(address).to_string(),
         };
         let (result, _) = peeper_types(signature);
         let separator = if arguments.is_empty() { "" } else { ", " };
@@ -896,9 +883,10 @@ impl Writer<'_, '_, '_> {
             Some(address) => write!(out, "ptr {address}{separator}"),
             None => Ok(()),
         });
-        let arguments = comma_separated(arguments.iter().map(|&argument| self.typed(argument)));
+        let arguments =
+            text::comma_separated(arguments.iter().map(|&argument| self.typed(argument)));
         out.push_str("  ");
-        if let Some(Passing::Register { .. }) = signature.result {
+        if let Some(mir::Passing::Register { .. }) = signature.result {
             _ = write!(out, "{name} = ");
         }
         _ = writeln!(
@@ -915,15 +903,15 @@ impl Writer<'_, '_, '_> {
         &mut self,
         out: &mut String,
         name: &str,
-        signature: &Signature,
-        c: &CSignature,
-        arguments: &[Operand],
-        location: &DebugLocation,
+        signature: &mir::Signature,
+        c: &mir::CSignature,
+        arguments: &[mir::Operand],
+        location: &debug_info::DebugLocation,
     ) {
         // The memory a result C gives there or in pieces is read from.
         let returned = format!("{name}.r");
         let (mut declared, mut passed) = (Vec::new(), Vec::new());
-        if let Some(CPassing::Memory { size, align, .. }) = c.result {
+        if let Some(mir::CPassing::Memory { size, align, .. }) = c.result {
             _ = writeln!(
                 self.memory,
                 "  {returned} = alloca [{size} x i8], align {align}"
@@ -937,7 +925,7 @@ impl Writer<'_, '_, '_> {
             .zip(&c.parameters)
             .zip(&signature.parameters);
         for (index, ((&argument, &passing), &peeper)) in parameters.enumerate() {
-            let Passing::Register { class, signed } = peeper else {
+            let mir::Passing::Register { class, signed } = peeper else {
                 unreachable!("only a scalar passes to C")
             };
             let (path, value) = (
@@ -945,12 +933,12 @@ impl Writer<'_, '_, '_> {
                 self.operand(argument).to_string(),
             );
             match passing {
-                CPassing::Register { extension } => {
+                mir::CPassing::Register { extension } => {
                     let parameter = c_register_type(class, extension, false);
                     passed.push(format!("{parameter} {value}"));
                     declared.push(parameter);
                 }
-                CPassing::Pieces { count, bits } => {
+                mir::CPassing::Pieces { count, bits } => {
                     let width = count * bits;
                     let whole = format!("{path}.x");
                     let whole =
@@ -967,7 +955,7 @@ impl Writer<'_, '_, '_> {
                     }
                 }
                 // A copy C may change.
-                CPassing::Memory {
+                mir::CPassing::Memory {
                     size,
                     align,
                     by_value,
@@ -992,25 +980,25 @@ impl Writer<'_, '_, '_> {
                     passed.push(format!("{parameter} {path}"));
                     declared.push(parameter);
                 }
-                CPassing::Vector { .. } => unreachable!("only a result is passed as a vector"),
+                mir::CPassing::Vector { .. } => unreachable!("only a result is passed as a vector"),
             }
         }
         let result = match c.result {
-            None | Some(CPassing::Memory { .. }) => "void".to_string(),
-            Some(CPassing::Register { extension }) => {
-                let Some(Passing::Register { class, .. }) = signature.result else {
+            None | Some(mir::CPassing::Memory { .. }) => "void".to_string(),
+            Some(mir::CPassing::Register { extension }) => {
+                let Some(mir::Passing::Register { class, .. }) = signature.result else {
                     unreachable!("C gives a scalar")
                 };
                 c_register_type(class, extension, true)
             }
-            Some(CPassing::Pieces { count, bits }) => {
+            Some(mir::CPassing::Pieces { count, bits }) => {
                 let pieces = vec![format!("i{bits}"); count as usize];
                 format!("{{ {} }}", pieces.join(", "))
             }
-            Some(CPassing::Vector { count, bits }) => format!("<{count} x i{bits}>"),
+            Some(mir::CPassing::Vector { count, bits }) => format!("<{count} x i{bits}>"),
         };
         let symbol = &*c.symbol;
-        let callee = global(symbol);
+        let callee = text::global(symbol);
         self.module.declare(symbol, || {
             format!("declare {result} {callee}({})\n\n", declared.join(", "))
         });
@@ -1022,15 +1010,15 @@ impl Writer<'_, '_, '_> {
                 _ = writeln!(out, "  {call}{location}");
                 return;
             }
-            Some(CPassing::Register { .. }) => {
+            Some(mir::CPassing::Register { .. }) => {
                 _ = writeln!(out, "  {name} = {call}{location}");
                 return;
             }
-            Some(CPassing::Memory { size, align, .. }) => {
+            Some(mir::CPassing::Memory { size, align, .. }) => {
                 _ = writeln!(out, "  {call}{location}");
                 (size, align)
             }
-            Some(CPassing::Pieces { count, bits } | CPassing::Vector { count, bits }) => {
+            Some(mir::CPassing::Pieces { count, bits } | mir::CPassing::Vector { count, bits }) => {
                 let size = u64::from(count * bits / 8);
                 _ = writeln!(self.memory, "  {returned} = alloca [{size} x i8], align 16");
                 _ = writeln!(
@@ -1041,7 +1029,7 @@ impl Writer<'_, '_, '_> {
                 (size, 16)
             }
         };
-        let Some(Passing::Register { class, signed }) = signature.result else {
+        let Some(mir::Passing::Register { class, signed }) = signature.result else {
             unreachable!("C gives a scalar")
         };
         let width = (size * 8) as u32;
@@ -1068,19 +1056,19 @@ impl Writer<'_, '_, '_> {
         out: &mut String,
         message: &[u8],
         span: Span,
-        debug_scope: Id<DebugScope>,
+        debug_scope: Id<mir::DebugScope>,
     ) {
         let location = self.location(span, debug_scope);
-        let text = panic_text(self.module.root, self.file, message, span);
+        let text = messages::panic_text(self.module.root, self.file, message, span);
         let string = self.module.add_string(&text);
         let (stderr, length, code) = (
-            STDERR.to_string(),
+            abi::STDERR.to_string(),
             text.len().to_string(),
-            PANIC_EXIT_CODE.to_string(),
+            abi::PANIC_EXIT_CODE.to_string(),
         );
         let written: [&str; 3] = [&stderr, &string, &length];
-        self.write_runtime_call(out, Runtime::PanicWrite, &written, &location);
-        self.write_runtime_call(out, Runtime::PanicExit, &[&code], &location);
+        self.write_runtime_call(out, symbols::Runtime::PanicWrite, &written, &location);
+        self.write_runtime_call(out, symbols::Runtime::PanicExit, &[&code], &location);
         out.push_str("  unreachable");
     }
 
@@ -1090,12 +1078,12 @@ impl Writer<'_, '_, '_> {
     fn write_runtime_call(
         &mut self,
         out: &mut String,
-        runtime: Runtime,
+        runtime: symbols::Runtime,
         arguments: &[&str],
-        location: &DebugLocation,
+        location: &debug_info::DebugLocation,
     ) {
-        let usize = Class::integer(self.module.target.pointer_bits);
-        let signature = Signature::of_runtime(runtime, usize);
+        let usize = mir::Class::integer(self.module.target.pointer_bits);
+        let signature = mir::Signature::of_runtime(runtime, usize);
         assert_eq!(arguments.len(), signature.parameters.len(), "{runtime:?}");
         let callee = self
             .module
@@ -1106,7 +1094,7 @@ impl Writer<'_, '_, '_> {
         _ = writeln!(
             out,
             "  call {result} {callee}({}){location}",
-            comma_separated(arguments)
+            text::comma_separated(arguments)
         );
     }
 }
@@ -1116,10 +1104,10 @@ impl Writer<'_, '_, '_> {
 /// branch holding only `break`. The path checks keep these blocks in the
 /// MIR; LLVM needs none of them. A jump into an endless loop of such blocks
 /// stops on one of them.
-fn jump_targets(body: &Body) -> Vec<Id<Block>> {
-    let passed_through = |block: Id<Block>| {
+fn jump_targets(body: &mir::Body) -> Vec<Id<mir::Block>> {
+    let passed_through = |block: Id<mir::Block>| {
         let data = &body.blocks[block];
-        let Terminator::Jump(next) = data.terminator else {
+        let mir::Terminator::Jump(next) = data.terminator else {
             return None;
         };
         let writes =
@@ -1127,7 +1115,7 @@ fn jump_targets(body: &Body) -> Vec<Id<Block>> {
         (!writes).then_some(next)
     };
     // Each block is followed once: a chain found is kept for every block on it.
-    let mut targets: Vec<Option<Id<Block>>> = vec![None; body.blocks.len()];
+    let mut targets: Vec<Option<Id<mir::Block>>> = vec![None; body.blocks.len()];
     let mut on_path = vec![false; body.blocks.len()];
     let mut path = Vec::new();
     for start in body.blocks.ids() {
@@ -1159,17 +1147,17 @@ fn jump_targets(body: &Body) -> Vec<Id<Block>> {
 /// By instruction, whether its value is read as a byte: by anything but a
 /// `Branch`'s condition or a `Check`'s, which read a comparison's `i1`
 /// (`Writer::write_truth`).
-fn values_read(body: &Body) -> Vec<bool> {
+fn values_read(body: &mir::Body) -> Vec<bool> {
     let mut operands = Vec::new();
     for id in body.instructions.ids() {
         let kind = &body.instructions[id].kind;
-        if !matches!(kind, InstructionKind::Check { .. }) {
+        if !matches!(kind, mir::InstructionKind::Check { .. }) {
             kind.operands(|operand| operands.push(operand));
         }
         kind.accesses(|access| operands.extend(access.place.operands()));
     }
     for block in body.blocks.ids() {
-        if let Terminator::Return {
+        if let mir::Terminator::Return {
             value: Some(value), ..
         } = body.blocks[block].terminator
         {
@@ -1178,7 +1166,7 @@ fn values_read(body: &Body) -> Vec<bool> {
     }
     let mut read = vec![false; body.instructions.len()];
     for operand in operands {
-        if let Operand::Value(id) = operand {
+        if let mir::Operand::Value(id) = operand {
             read[id.index()] = true;
         }
     }
@@ -1187,7 +1175,7 @@ fn values_read(body: &Body) -> Vec<bool> {
 
 /// The LLVM name of the address of `slot` of `body`: its `alloca`, or the
 /// parameter it is when passed in memory (`Body::parameter_in_memory`).
-fn slot_name(body: &Body, slot: Id<Slot>) -> String {
+fn slot_name(body: &mir::Body, slot: Id<mir::Slot>) -> String {
     match body.parameter_in_memory(slot) {
         Some(parameter) => format!("%a{parameter}"),
         None => format!("%s{}", slot.index()),
@@ -1196,16 +1184,16 @@ fn slot_name(body: &Body, slot: Id<Slot>) -> String {
 
 /// `step` with a constant index as the offset it is, as `write_place`
 /// writes it; `None` when it moves nowhere.
-fn folded(step: Step) -> Option<Step> {
+fn folded(step: mir::Step) -> Option<mir::Step> {
     let step = match step {
-        Step::Index {
-            index: Operand::Constant { bits, .. },
+        mir::Step::Index {
+            index: mir::Operand::Constant { bits, .. },
             size,
             ..
-        } => Step::Offset(bits[0] * size),
+        } => mir::Step::Offset(bits[0] * size),
         step => step,
     };
-    (step != Step::Offset(0)).then_some(step)
+    (step != mir::Step::Offset(0)).then_some(step)
 }
 
 /// Writes `value`, an integer of `from` bits, as one of `to` bits named
@@ -1218,7 +1206,7 @@ fn write_resized(
     from: u32,
     to: u32,
     signed: bool,
-    location: &DebugLocation,
+    location: &debug_info::DebugLocation,
 ) -> String {
     let instruction = match (from.cmp(&to), signed) {
         (std::cmp::Ordering::Equal, _) => return value.to_string(),

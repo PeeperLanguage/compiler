@@ -21,7 +21,7 @@ use model::thir::Local;
 use model::thir::Symbol;
 use source::Span;
 use std::fmt::Write;
-use syntax::ast;
+use tree::ast;
 
 use crate::host;
 

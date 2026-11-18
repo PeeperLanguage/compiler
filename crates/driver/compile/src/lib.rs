@@ -37,7 +37,7 @@ use runtime_abi::abi::PANIC_EXIT_CODE;
 use runtime_abi::messages::panic_text;
 use source::SourceFile;
 use source::Span;
-use syntax::ast;
+use tree::ast;
 
 /// What a compile found, kept for the next compile of the same program.
 #[derive(Default)]
@@ -248,12 +248,7 @@ pub fn run(
         return Results::default();
     }
     let modules = program.modules.as_slice();
-    let mut checker = Checker::new(
-        modules,
-        target,
-        options.record_facts,
-        &features::CHECK_HOOKS,
-    );
+    let mut checker = Checker::new(modules, target, options.record_facts);
     let mut results: Vec<ModuleResults> = modules
         .iter()
         .map(|module| ModuleResults::new(module.ast.file.clone()))

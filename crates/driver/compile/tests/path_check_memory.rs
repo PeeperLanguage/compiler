@@ -36,7 +36,7 @@ fn compile_growth_kb(text: String) -> u64 {
     };
     std::fs::write("/proc/self/clear_refs", "5").unwrap(); // resets `VmHWM`
     let before = status_kb("VmRSS:");
-    let program = project::load(&project, &HashMap::from([(main, text)]), &features::RULES);
+    let program = project::load(&project, &HashMap::from([(main, text)]));
     assert!(program.checkable);
     let target = model::machine::Machine::named("x86_64-linux").unwrap();
     let results = compile::run(

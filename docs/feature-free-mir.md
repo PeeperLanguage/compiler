@@ -1,7 +1,8 @@
 # Design page: a MIR of core concepts only
 
-> The crates have moved since this was written: `middle/*` and
-> `core/syntax` are now under `crates/kernel/` (docs/structure-mapping.md).
+> The crates have moved since this was written: the phases are now
+> `crates/syntax/*` (the tree crate is `tree`), `crates/check`,
+> `crates/model`, `crates/lower`, `crates/flow` and `crates/eval`.
 
 Status: **done 2026-11-11.** Agreed 2026-11-10 (section 9) and built in
 order B; the old MIR, its lowering and `flow::cleanup` are deleted, and the

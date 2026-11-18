@@ -155,7 +155,7 @@ impl Server<'_> {
         project: project::Project,
         file: &Path,
     ) -> Result<(), BoxError> {
-        let program = project::load(&project, &self.open_files, &features::RULES);
+        let program = project::load(&project, &self.open_files);
         let mut checked = self.checked.remove(&key).unwrap_or_default();
         let mut all: Vec<&diagnostics::Diagnostic> = program.diagnostics.iter().collect();
         // A program that cannot be checked keeps the last compile for the next.

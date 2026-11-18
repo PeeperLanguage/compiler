@@ -1,5 +1,9 @@
 # Structure mapping: from today's crates to `kernel/` and `features/`
 
+> Replaced on 2026-11-18 by docs/compiler-layout.md: the `features` crate
+> is gone, its files are concept files of `parser` and `semantic`. Kept as
+> the record of how the front got here.
+
 Status: agreed by Fuad, GPT and Claude. Steps 1 to 4, 6 and 7 are done;
 step 5 waits for enums.
 

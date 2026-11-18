@@ -76,7 +76,7 @@ fn main() {
     let mut clang = Vec::new();
     for _ in 0..runs {
         let start = Instant::now();
-        let program = project::load(&project, &files, &features::RULES);
+        let program = project::load(&project, &files);
         load.push(start.elapsed());
         assert!(program.checkable, "{:?}", program.diagnostics);
         let start = Instant::now();

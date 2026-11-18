@@ -9,7 +9,7 @@ use lsp_types::MarkupContent;
 use lsp_types::MarkupKind;
 use source::SourceFile;
 use source::Span;
-use syntax::ast;
+use tree::ast;
 
 use crate::checked::ConstantText;
 
@@ -70,7 +70,8 @@ pub(crate) fn declaration_hover(
             let signature = written(tree.blocks.span(*body).start);
             (format!("{signature} {{ {HIDDEN} }}"), None)
         }
-        (ast::Decl::Type(declared), _) if matches!(tree.types[declared.ty], ast::Type::Feature(ty) if ty.fields().is_some()) =>
+        (ast::Decl::Type(declared), _)
+            if matches!(tree.types[declared.ty], ast::Type::Struct { .. }) =>
         {
             let mut facts = written(span.end).to_string();
             write_functions(tree, declared.name, from_elsewhere, &mut facts);

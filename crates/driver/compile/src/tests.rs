@@ -43,7 +43,7 @@ fn load(modules: &[(&str, &str)]) -> model::program::Program {
         root: PathBuf::from("/peeper-build-test"),
         name: "app".to_string(),
     };
-    let program = project::load(&project, &open_files, &features::RULES);
+    let program = project::load(&project, &open_files);
     let reported: Vec<&str> = program
         .diagnostics
         .iter()

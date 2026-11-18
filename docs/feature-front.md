@@ -1,5 +1,9 @@
 # Design page: a front split by feature
 
+> Replaced on 2026-11-18 by docs/compiler-layout.md: the `features` crate
+> is gone, its files are concept files of `parser` and `semantic`. Kept as
+> the record of how the front got here.
+
 Since 2026-11-13 the features are files of one crate, not a crate each,
 and since 2026-11-18 the phases are not generic over `L`
 (docs/structure-mapping.md, step 7): the tree lists every feature's node

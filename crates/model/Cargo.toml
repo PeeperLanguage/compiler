@@ -1,0 +1,20 @@
+[package]
+name = "model"
+description = "The program's data after parsing: THIR, MIR, types, constant values and the shared ids"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+publish.workspace = true
+
+[dependencies]
+arena.workspace = true
+bigint.workspace = true
+diagnostics.workspace = true
+literal.workspace = true
+runtime_abi.workspace = true
+rustc-hash.workspace = true
+source.workspace = true
+tree.workspace = true
+
+[lints]
+workspace = true

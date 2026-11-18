@@ -93,7 +93,7 @@ fn load(project: &project::Project, files: HashMap<String, String>) -> model::pr
     let library_files = (LIBRARY_FILES.iter())
         .map(|&(path, text)| (Path::new(LIBRARY_ROOT).join(path), text.to_string()));
     let open_files: HashMap<PathBuf, String> = page_files.chain(library_files).collect();
-    project::load(project, &open_files, &features::RULES)
+    project::load(project, &open_files)
 }
 
 /// The diagnostics of the program `files` make up, as `peeper check` finds
