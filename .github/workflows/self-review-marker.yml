@@ -11,6 +11,10 @@ on:
       - reopened
       - synchronize
       - ready_for_review
+  # A queued PR passed this check to join the queue. On the queue's commit
+  # the job is skipped (it has no `pull_request`), which a required check
+  # counts as passed; without this trigger the queue would wait for it.
+  merge_group:
 
 permissions:
   contents: read

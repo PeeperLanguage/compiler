@@ -4,7 +4,19 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    # One PR a week for every patch release. A minor or major release comes
+    # alone: for a 0.x crate a minor release may change its API, and one
+    # bump that breaks the build would hold back the whole group.
+    groups:
+      cargo-patches:
+        update-types:
+          - "patch"
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"
+    # One PR a week for every action.
+    groups:
+      actions:
+        patterns:
+          - "*"

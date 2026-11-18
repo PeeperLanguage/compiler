@@ -116,7 +116,8 @@ artifacts, clear ownership, and regression resistance over minimizing edited
 call sites.
 
 Every pull request must be approved by a human repository collaborator other than
-the author, enforced by branch protection. New commits make older approval stale.
+the author, and reaches `main` through the merge queue, which runs CI again on it
+merged onto the newest `main`. New commits make older approval stale.
 
 Before opening a pull request that touches source files, add these as the first two
 lines of `README.md` if not already present:
