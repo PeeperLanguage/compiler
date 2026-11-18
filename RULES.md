@@ -227,7 +227,7 @@ Do not implement feature directly on `main` or `master`. Use `feature/<name>` fo
 
 ### 10.1 Pull-request accountability
 
-Every pull request requires an approving review from a human repository collaborator who is not the pull-request author, enforced through GitHub branch protection (require a pull request before merging, require at least one approval, dismiss stale approvals on new commits). Self-review, AI review, passing CI, and checked template boxes do not satisfy this requirement.
+Every pull request reaches `main` through its merge queue, enforced by a GitHub ruleset: CI must pass on every platform on the pull request, and again on it merged onto the newest `main`, before `main` moves. A collaborator with write access queues a pull request only after reading it in full. Every pull request by someone else requires that collaborator's approving review. While the repository has one maintainer, the maintainer's own pull requests need no second reviewer; once a second collaborator has write access, the ruleset requires one approving review from a human collaborator who is not the author, and new commits make older approval stale. Self-review, AI review, passing CI, and checked template boxes do not satisfy this requirement.
 
 Every pull request that touches source files must begin with an unremoved self-review marker as the first two lines of `README.md`:
 
@@ -242,7 +242,7 @@ The same `peeper-bot[bot]` identity performs scheduled toolchain-lock and toolch
 
 The submitter owns every changed line regardless of tool use and must be able to explain its purpose, production consumer, ownership boundary, and validation.
 
-Do not bypass, disable, or game the self-review marker check or the required-review branch protection to merge a pull request.
+Do not bypass, disable, or game the self-review marker check, the merge queue, or a required review to merge a pull request.
 
 ## 11. Review checklist
 

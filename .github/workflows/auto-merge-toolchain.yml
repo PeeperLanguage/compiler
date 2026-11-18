@@ -71,8 +71,8 @@ jobs:
             exit 0
           fi
 
-          # The commit checked here is the one merged (`sha` below), so a
-          # push after this check makes the merge fail instead.
+          # The commit checked here is the one queued (`--match-head-commit`
+          # below), so a push after this check makes queueing fail instead.
           head_sha="$(jq -r '.head.sha' <<<"$pr_json")"
           echo "head_sha=$head_sha" >> "$GITHUB_OUTPUT"
 
@@ -111,7 +111,9 @@ jobs:
           app-id: ${{ secrets.PEEPER_BOT_APP_ID }}
           private-key: ${{ secrets.PEEPER_BOT_PRIVATE_KEY }}
           # Without owner and repositories, the token is for this repository only.
-      - name: Merge pull request as peeper-bot
+      # `main` takes changes only through the merge queue, so the PR joins
+      # it; `--match-head-commit` keeps the commit checked above the one queued.
+      - name: Queue pull request as peeper-bot
         if: steps.gate.outputs.ready == 'true'
         env:
           GH_TOKEN: ${{ steps.mint-token.outputs.token }}
@@ -119,8 +121,5 @@ jobs:
           PR_NUMBER: ${{ steps.gate.outputs.number }}
           HEAD_SHA: ${{ steps.gate.outputs.head_sha }}
         run: |
-          gh api --method PUT "repos/$REPOSITORY/pulls/$PR_NUMBER/merge" \
-            -f sha="$HEAD_SHA" \
-            -f merge_method=merge \
-            -f commit_title="Merge toolchain update" \
-            --jq '.merged, .sha, .message'
+          gh pr merge "$PR_NUMBER" --repo "$REPOSITORY" --merge --auto \
+            --match-head-commit "$HEAD_SHA"
