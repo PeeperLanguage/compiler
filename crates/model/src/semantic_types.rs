@@ -864,6 +864,144 @@ impl Types {
         named.iter().map(Option::is_some).collect()
     }
 
+    /// Whether some copy could make the types `a` and `b` the same: they
+    /// are, or they differ only where one has a type each copy decides
+    /// (`is_decided_per_copy`). Each such part is matched alone, so `T`
+    /// against `i32` in one place and `bool` in another still could.
+    #[deny(
+        clippy::wildcard_enum_match_arm,
+        clippy::match_wildcard_for_single_variants
+    )]
+    // TODO: simplify later
+    pub fn could_be_same(&self, a: TypeId, b: TypeId) -> bool {
+        let (a, b) = (self.real(a), self.real(b));
+        if a == b || self[a].is_decided_per_copy() || self[b].is_decided_per_copy() {
+            return true;
+        }
+        if !self.is_open(a) && !self.is_open(b) {
+            return false;
+        }
+        let part = |a: TypeId, b: TypeId| source::grow_stack(|| self.could_be_same(a, b));
+        match (&self[a], &self[b]) {
+            (
+                Type::Function {
+                    parameters,
+                    result,
+                    variadic,
+                    ..
+                },
+                Type::Function {
+                    parameters: given,
+                    result: given_result,
+                    variadic: given_variadic,
+                    ..
+                },
+            ) => {
+                variadic == given_variadic
+                    && parameters.len() == given.len()
+                    && (parameters.iter().zip(given.iter())).all(|(&a, &b)| part(a, b))
+                    && part(*result, *given_result)
+            }
+            (
+                &(Type::Named {
+                    definition,
+                    arguments,
+                }
+                | Type::Struct {
+                    definition,
+                    arguments,
+                    ..
+                }),
+                &(Type::Named {
+                    definition: given_definition,
+                    arguments: given,
+                }
+                | Type::Struct {
+                    definition: given_definition,
+                    arguments: given,
+                    ..
+                }),
+            ) => {
+                definition == given_definition
+                    && (self.arguments(arguments).iter().zip(self.arguments(given))).all(|pair| {
+                        match pair {
+                            (&ConstArgument::Type(a), &ConstArgument::Type(b)) => part(a, b),
+                            (a, b) => a == b,
+                        }
+                    })
+            }
+            (
+                &Type::Array {
+                    element, length, ..
+                },
+                &Type::Array {
+                    element: given,
+                    length: given_length,
+                    ..
+                },
+            ) => length == given_length && part(element, given),
+            (&Type::Range { element }, &Type::Range { element: given })
+            | (
+                &Type::RawPointer {
+                    target: Some(element),
+                },
+                &Type::RawPointer {
+                    target: Some(given),
+                },
+            ) => part(element, given),
+            (
+                &Type::Slice { mutable, element },
+                &Type::Slice {
+                    mutable: given_mutable,
+                    element: given,
+                },
+            )
+            | (
+                &Type::Reference {
+                    mutable,
+                    target: element,
+                },
+                &Type::Reference {
+                    mutable: given_mutable,
+                    target: given,
+                },
+            )
+            | (
+                &Type::InterfaceReference {
+                    mutable,
+                    interface: element,
+                },
+                &Type::InterfaceReference {
+                    mutable: given_mutable,
+                    interface: given,
+                },
+            ) => mutable == given_mutable && part(element, given),
+            (
+                Type::Invalid
+                | Type::Parameter { .. }
+                | Type::Undecided
+                | Type::Void
+                | Type::Bool
+                | Type::Integer(_)
+                | Type::Float(_)
+                | Type::CString
+                | Type::Str
+                | Type::Function { .. }
+                | Type::Alias { .. }
+                | Type::Named { .. }
+                | Type::Struct { .. }
+                | Type::Array { .. }
+                | Type::Range { .. }
+                | Type::Reference { .. }
+                | Type::Slice { .. }
+                | Type::Interface { .. }
+                | Type::InterfaceReference { .. }
+                | Type::RawPointer { .. },
+                _,
+            ) => false,
+        }
+    }
+
     /// Whether the type `ty`, about to be added, is open: it is a type
     /// parameter or undecided, or a part of it is open.
     #[deny(

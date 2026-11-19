@@ -16,20 +16,25 @@ parameter) is checked twice over:
 
 A type that holds a `Type::Parameter` or `Type::Undecided` is **open**
 (`Types::is_open`, stored at intern: it is asked of every type checked, and
-a type never changes once interned). An open type means "each copy
-decides". `Type::Invalid` keeps one meaning: an error was reported.
+a type never changes once interned). An open type has no copy of its
+own: no layout, and a call given one makes none. `Type::Invalid` keeps
+one meaning: an error was reported.
 
-What depends on an open type is left to each copy, silently, in the own
-check:
+What depends on a type each copy decides (a bare `T`, or `Undecided`,
+`Type::is_decided_per_copy`) is left to each copy, silently, in the own
+check. A type that only holds one, as `[2]T` or `Box<T>`, is still an
+array or a struct, and what is wrong for it whatever `T` is, is reported:
+`-pair` or `let flag: bool = pair` for `pair: [2]T`.
 
 | Case | Own check gives |
 | --- | --- |
-| `t[0]`, `t.*`, `t.x` on a bare `T` | `Type::Undecided`, `ExprKind::Undecided` |
-| `t.Name()` on a bare `T` | the arguments are checked; the call is `Undecided` |
-| a conversion to or from an open type | `Conversion::Undecided` |
-| an operator on an open operand | the operator's own result type |
-| printing an open value | the value is left out |
-| a `where` constraint on an open subject, a call run at compile time given one | not known (`None`) |
+| `t[0]`, `t.*`, `t.x`, `t.Name()` on a bare `T` | `Expr::UNDECIDED` (a call's arguments are checked) |
+| a conversion that some copy makes and another refuses: `T` to `i64`, `&mut T` to `&i32`, `&Box<T>` to an interface reference | `Conversion::Undecided` (`Types::could_be_same`) |
+| an operator on a bare `T` | the operator's own result type |
+| printing a bare `T`, or a reference to one | the value is left out |
+| `for` over a bare `T`, or a reference to one | the body is checked as a range's, its value undecided |
+| a `where` constraint on a bare `T`, a call run at compile time given an open type | not known (`None`) |
+| `x...` of a bare `T` in `[_]E{ ... }` or a `...` argument | the array literal is of `Type::Undecided`: its length is each copy's count; a `...` argument still lends it as the parameter's slice; `[N]E{ ... }` keeps its type, and more than `N` values counted now is reported |
 | a field of `Box<T>` | the written field type, re-read with `T` bound (`field_types_given`) |
 
 An open struct, such as `Box<T>` inside a generic body, stays

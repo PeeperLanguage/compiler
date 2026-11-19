@@ -218,6 +218,70 @@ fn conversions() {
     }
 }
 
+/// A pair holding a type parameter converts as written where it does for
+/// every copy, is undecided where some copy converts it, and never converts
+/// where no copy does.
+#[test]
+fn conversions_of_open_types() {
+    let mut types = Types::new(64);
+    let parameter = types.intern(Type::Parameter {
+        definition: DefId {
+            module: ModuleId::from_index(0),
+            index: 0,
+        },
+        place: 0,
+    });
+    let reference =
+        |types: &mut Types, mutable, target| types.intern(Type::Reference { mutable, target });
+    let pair = types.array(parameter, 2);
+    let to_pair = reference(&mut types, false, pair);
+    let mutable_parameter = reference(&mut types, true, parameter);
+    let shared_parameter = reference(&mut types, false, parameter);
+    let shared_i32 = reference(&mut types, false, TypeId::I32);
+    let view = |types: &mut Types, element| {
+        types.intern(Type::Slice {
+            mutable: false,
+            element,
+        })
+    };
+    let parameters = view(&mut types, parameter);
+    let numbers = view(&mut types, TypeId::I32);
+    let triple = types.array(TypeId::I32, 3);
+    let to_triple = reference(&mut types, false, triple);
+    // For every copy.
+    assert_eq!(
+        types.conversion(mutable_parameter, shared_parameter),
+        Conversion::Reborrow
+    );
+    assert_eq!(types.conversion(to_pair, parameters), Conversion::Reborrow);
+    // In some copy.
+    assert_eq!(
+        types.conversion(parameter, TypeId::I64),
+        Conversion::Undecided
+    );
+    assert_eq!(
+        types.conversion(mutable_parameter, shared_i32),
+        Conversion::Undecided
+    );
+    assert_eq!(types.conversion(to_pair, numbers), Conversion::Undecided);
+    let raw_parameter = types.intern(Type::RawPointer {
+        target: Some(parameter),
+    });
+    let raw_i32 = types.intern(Type::RawPointer {
+        target: Some(TypeId::I32),
+    });
+    assert_eq!(
+        types.conversion(raw_parameter, raw_i32),
+        Conversion::Undecided
+    );
+    let bools = types.array(TypeId::BOOL, 2);
+    assert!(types.could_be_same(pair, bools));
+    // In none: an array is never a `bool`, and lengths do not change.
+    assert_eq!(types.conversion(pair, TypeId::BOOL), Conversion::Never);
+    assert_eq!(types.conversion(to_pair, to_triple), Conversion::Never);
+    assert!(!types.could_be_same(pair, triple));
+}
+
 /// An interface keeps the id it was named by, so a `&Shape` written before
 /// it was checked is the one of after; a reference to a struct converts to
 /// a reference to it as a `&` converts to a `&`, the checker looking at the

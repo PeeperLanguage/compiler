@@ -20,6 +20,40 @@ use tree::operators::Precedence;
 use crate::builder::ThirBuilder;
 use crate::expression::unsuffixed_literal;
 
+/// How many values the entries of an array literal give, or one spread
+/// (`count_spread`).
+#[derive(Clone, Copy)]
+pub(crate) struct EntryCount {
+    /// Counted now.
+    known: u128,
+    /// The first entry counted only when the program runs, and why: `[_]`
+    /// cannot count it.
+    later: Option<(Span, &'static str)>,
+    /// Whether a spread of a type each copy decides gives more, as many as
+    /// each copy finds.
+    per_copy: bool,
+}
+
+impl EntryCount {
+    /// `known` values, all counted now.
+    fn known(known: u64) -> EntryCount {
+        EntryCount {
+            known: u128::from(known),
+            later: None,
+            per_copy: false,
+        }
+    }
+
+    /// Values counted when the program runs, from the entry written at
+    /// `entry`, which `[_]` cannot count, for `reason`.
+    fn later(entry: Span, reason: &'static str) -> EntryCount {
+        EntryCount {
+            later: Some((entry, reason)),
+            ..EntryCount::known(0)
+        }
+    }
+}
+
 impl ThirBuilder<'_, '_> {
     /// The string literal at `span`, a `&str` or with its `c` a `&cstr` (`ty`):
     /// its bytes.
@@ -60,27 +94,27 @@ impl ThirBuilder<'_, '_> {
     }
 
     /// The `entries` of an array of `element`s, each a value or a spread
-    /// (`count_spread`), checked: with how many values are known now, `None`
-    /// after an error in a spread, and the first spread not counted until the
-    /// program runs, with why. A value that mismatches is reported, with how
-    /// to spread it when it holds `element`s (`help_spread`, given `alone_in`).
-    /// Without an element type, each entry is checked for its own errors.
+    /// (`count_spread`), checked, with how many values they give; `None`
+    /// after an error in a spread. A value that mismatches is reported, with
+    /// how to spread it when it holds `element`s (`help_spread`, given
+    /// `alone_in`). Without an element type, each entry is checked for its
+    /// own errors.
     pub(crate) fn check_entries(
         &mut self,
         entries: impl Iterator<Item = Id<ast::Expr>>,
         element: TypeId,
         alone_in: Option<TypeId>,
-    ) -> (Vec<NonZeroU32>, Option<u128>, Option<(Span, &'static str)>) {
+    ) -> (Vec<NonZeroU32>, Option<EntryCount>) {
         let tree = &self.checker.module().ast;
         let hint = (element != TypeId::INVALID).then_some(element);
         let mut parts: Vec<NonZeroU32> = Vec::with_capacity(entries.size_hint().0);
-        // Each count fits a `usize`, so their sum fits a `u128`.
-        let (mut known, mut later) = (Some(0u128), None);
+        let mut total = Some(EntryCount::known(0));
         for entry in entries {
             let (part, count) = if let ast::Expr::Spread(values) = tree.exprs[entry] {
                 let spread = self.add_spread(tree.unparenthesized(values), element);
-                let Some(checked) = self.count_spread(spread, element) else {
-                    known = None;
+                let Some(checked) = self.count_spread(spread, element, tree.exprs.span(entry))
+                else {
+                    total = None;
                     continue;
                 };
                 checked
@@ -111,15 +145,17 @@ impl ThirBuilder<'_, '_> {
                         });
                     self.body.exprs[value] = coerced;
                 }
-                (value, Ok(1))
+                (value, EntryCount::known(1))
             };
-            match count {
-                Ok(count) => known = known.map(|known| known + u128::from(count)),
-                Err(reason) => later = later.or(Some((tree.exprs.span(entry), reason))),
-            }
+            // Each count fits a `usize`, so their sum fits a `u128`.
+            total = total.map(|total| EntryCount {
+                known: total.known + count.known,
+                later: total.later.or(count.later),
+                per_copy: total.per_copy || count.per_copy,
+            });
             parts.push(part.into());
         }
-        (parts, known, later)
+        (parts, total)
     }
 
     /// `mismatch`, for `written`, the array, slice or reference to one `value`
@@ -198,7 +234,7 @@ impl ThirBuilder<'_, '_> {
         let element = self.checker.types[parameter]
             .elements()
             .map_or(TypeId::INVALID, |(element, _)| element);
-        let (parts, known, later) = if let [only] = *values
+        let (parts, count) = if let [only] = *values
             && let ast::Expr::Spread(spread) = tree.exprs[only]
         {
             let written = tree.unparenthesized(spread);
@@ -211,20 +247,29 @@ impl ThirBuilder<'_, '_> {
                 self.body.exprs[spread] = self.require(slice, written, parameter);
                 return spread;
             }
-            match self.count_spread(spread, element) {
-                Some((part, Ok(count))) => (vec![part.into()], Some(u128::from(count)), None),
-                Some((_, Err(reason))) => {
-                    let span = tree.exprs.span(written);
-                    self.checker.error(diagnostics::TYPE_MISMATCH, reason, span);
-                    (Vec::new(), None, None)
+            match self.count_spread(spread, element, tree.exprs.span(written)) {
+                Some((
+                    _,
+                    EntryCount {
+                        later: Some((first, reason)),
+                        ..
+                    },
+                )) => {
+                    self.checker
+                        .error(diagnostics::TYPE_MISMATCH, reason, first);
+                    (Vec::new(), None)
                 }
-                None => (Vec::new(), None, None),
+                Some((part, count)) => (vec![part.into()], Some(count)),
+                None => (Vec::new(), None),
             }
         } else {
             let alone_in = (values.len() == 1).then_some(parameter);
             self.check_entries(values.iter().copied(), element, alone_in)
         };
-        if let Some((spread, reason)) = later {
+        let Some(count) = count.filter(|_| element != TypeId::INVALID) else {
+            return self.body.add(Expr::INVALID, span);
+        };
+        if let Some((spread, reason)) = count.later {
             let message = format!(
                 "{reason}, so a call cannot build an array around it; pass a slice as the \
                  only argument for `...`"
@@ -233,10 +278,7 @@ impl ThirBuilder<'_, '_> {
                 .error(diagnostics::TYPE_MISMATCH, message, spread);
             return self.body.add(Expr::INVALID, span);
         }
-        let Some(known) = known.filter(|_| element != TypeId::INVALID) else {
-            return self.body.add(Expr::INVALID, span);
-        };
-        let Some(ty) = self.array_literal_type(span, element, None, (known, None), span) else {
+        let Some(ty) = self.array_literal_type(span, element, None, count, span) else {
             return self.body.add(Expr::INVALID, span);
         };
         let kind = ExprKind::ArrayLiteral(self.body.children.lists.add(&parts));
@@ -247,18 +289,23 @@ impl ThirBuilder<'_, '_> {
 
     /// The type of the array literal written at `span`, its type at `written`,
     /// of `element`s, with `length` when written (`[N]`, as its type), whose
-    /// entries give `known` values now and more when the program runs if a
-    /// spread, first at `later` with why `[_]` cannot count it, is counted
-    /// then; `None` after reporting that they do not fit it
-    /// (`arrays::check_array_literal`).
+    /// entries give `count` values; `None` after reporting that they do not
+    /// fit it (`arrays::check_array_literal`). `[_]` cannot count a spread
+    /// counted when the program runs, and one each copy counts makes its
+    /// length, so its type, each copy's (`TypeId::UNDECIDED`).
     pub(crate) fn array_literal_type(
         &mut self,
         written: Span,
         element: TypeId,
         length: Option<(TypeId, u64)>,
-        (known, later): (u128, Option<(Span, &'static str)>),
+        count: EntryCount,
         span: Span,
     ) -> Option<TypeId> {
+        let EntryCount {
+            known,
+            later,
+            per_copy,
+        } = count;
         match (length, later) {
             (None, Some((spread, reason))) => {
                 let message = format!("{reason}; write the length");
@@ -266,6 +313,7 @@ impl ThirBuilder<'_, '_> {
                     .error(diagnostics::TYPE_MISMATCH, message, spread);
                 None
             }
+            (None, None) if per_copy => Some(TypeId::UNDECIDED),
             (None, None) => {
                 if !self
                     .checker
@@ -277,10 +325,12 @@ impl ThirBuilder<'_, '_> {
             }
             (Some((ty, length)), later) => {
                 let length = u128::from(length);
-                if known == length || later.is_some() && known < length {
+                // More values come from a spread counted later.
+                let more = later.is_some() || per_copy;
+                if known == length || more && known < length {
                     return Some(ty);
                 }
-                let found = if later.is_some() { "at least " } else { "" };
+                let found = if more { "at least " } else { "" };
                 let message = format!(
                     "`{}` needs {length} values, found {found}{known}",
                     self.checker.type_text(ty)
@@ -299,37 +349,43 @@ impl ThirBuilder<'_, '_> {
         self.add_expr(values, hint)
     }
 
-    /// `spread`, the values of a `values...` going into an array of
-    /// `element`s, with how many it gives when that is known now, else why
-    /// it cannot be counted; `None` after an error. An array gives its
-    /// elements, which must be `element`s; a slice copies its elements, which
-    /// must copy; a range its values, counted now when it is written with
-    /// constant ends and step; a count no array can hold is reported.
+    /// `spread`, the values of a `values...` written at `entry` going into
+    /// an array of `element`s, with how many it gives; `None` after an
+    /// error. An array gives its elements, which must be `element`s; a slice
+    /// copies its elements, which must copy; a range its values, counted now
+    /// when it is written with constant ends and step; a count no array can
+    /// hold is reported. A value of a type each copy decides gives as many
+    /// as each copy finds.
     fn count_spread(
         &mut self,
         spread: Id<Expr>,
         element: TypeId,
-    ) -> Option<(Id<Expr>, Result<u64, &'static str>)> {
+        entry: Span,
+    ) -> Option<(Id<Expr>, EntryCount)> {
         let span = self.body.exprs.span(spread);
         let ty = self.body.exprs[spread].ty;
         let types = &self.checker.types;
+        // An element of a type each copy decides may be one in some copy.
+        let gives = |from: TypeId| {
+            element == TypeId::INVALID
+                || matches!(
+                    types.conversion(from, element),
+                    Conversion::Same | Conversion::Undecided
+                )
+        };
         match types[ty] {
             Type::Invalid => return None,
             Type::Array {
                 element: from,
                 length,
                 ..
-            } if element == TypeId::INVALID
-                || types.conversion(from, element) == Conversion::Same =>
-            {
-                return Some((spread, Ok(length)));
+            } if gives(from) => {
+                return Some((spread, EntryCount::known(length)));
             }
             Type::Slice {
                 mutable,
                 element: from,
-            } if element == TypeId::INVALID
-                || types.conversion(from, element) == Conversion::Same =>
-            {
+            } if gives(from) => {
                 if !types.is_copy(from) {
                     let file = &self.checker.module().ast.file;
                     let slice_text = self.checker.type_text(ty);
@@ -360,10 +416,16 @@ impl ThirBuilder<'_, '_> {
                     self.body.exprs[spread] = self.reborrow(reference, span, shared);
                 }
                 let reason = "a slice has a length known only when the program runs";
-                return Some((spread, Err(reason)));
+                return Some((spread, EntryCount::later(entry, reason)));
             }
-            Type::Range { element: from, .. }
-                if element == TypeId::INVALID || types.same(from, element) => {}
+            Type::Range { element: from, .. } if gives(from) => {}
+            _ if types[ty].is_decided_per_copy() => {
+                let count = EntryCount {
+                    per_copy: true,
+                    ..EntryCount::known(0)
+                };
+                return Some((spread, count));
+            }
             _ => {
                 let (expected, found) = self.checker.type_texts(element, ty);
                 let message = format!(
@@ -388,11 +450,11 @@ impl ThirBuilder<'_, '_> {
             inclusive,
         } = exprs[spread].kind
         else {
-            return Some((spread, Err(uncounted))); // a range value
+            return Some((spread, EntryCount::later(entry, uncounted))); // a range value
         };
         let (Some(first), Some(last), Some(by)) = (constant(start), constant(end), constant(step))
         else {
-            return Some((spread, Err(uncounted)));
+            return Some((spread, EntryCount::later(entry, uncounted)));
         };
         let Type::Integer(integer) = types[exprs[start].ty] else {
             unreachable!("a range is of integers")
@@ -401,7 +463,7 @@ impl ThirBuilder<'_, '_> {
         if !self.checker.length_fits(count.as_slice(), span) {
             return None;
         }
-        Some((spread, Ok(count.as_slice()[0]))) // it fits a `usize`
+        Some((spread, EntryCount::known(count.as_slice()[0]))) // it fits a `usize`
     }
 
     /// A range's or slice's ends `start` and `end`, of one type: a literal

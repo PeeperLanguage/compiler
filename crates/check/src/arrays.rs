@@ -79,12 +79,11 @@ pub(crate) fn check_array_literal(
         }
     };
     let entries = tree.children.lists.items(entries);
-    let (parts, known, later) = builder.check_entries(entries, element, None);
-    let Some(known) = known.filter(|_| element != semantic_types::TypeId::INVALID) else {
+    let (parts, count) = builder.check_entries(entries, element, None);
+    let Some(count) = count.filter(|_| element != semantic_types::TypeId::INVALID) else {
         return thir::Expr::INVALID;
     };
-    let Some(ty) = builder.array_literal_type(written, element, length, (known, later), span)
-    else {
+    let Some(ty) = builder.array_literal_type(written, element, length, count, span) else {
         return thir::Expr::INVALID;
     };
     thir::Expr {

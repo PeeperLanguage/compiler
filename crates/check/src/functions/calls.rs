@@ -357,7 +357,7 @@ impl builder::ThirBuilder<'_, '_> {
         }
         let place = self.through_pointer(value, self.body.exprs.span(value));
         let ty = self.body.exprs[place].ty;
-        if self.checker.types.is_open(ty) && self.checker.types[ty].definition().is_none() {
+        if self.checker.types[ty].is_decided_per_copy() {
             return Some(None);
         }
         let Some(definition) = self.checker.types[ty].definition() else {

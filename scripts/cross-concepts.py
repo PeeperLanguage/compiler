@@ -28,7 +28,8 @@ ROOT = Path(__file__).resolve().parent.parent / "crates/check/src"
 # What each concept owns: a pattern per kind or question.
 OWNERS = {
     "generics": [r"Type::Parameter\b", r"Type::Undecided\b", r"TypeId::UNDECIDED\b",
-                 r"ExprKind::Undecided\b", r"Conversion::Undecided\b", r"\bis_open\(",
+                 r"ExprKind::Undecided\b", r"Expr::UNDECIDED\b", r"Conversion::Undecided\b",
+                 r"\bis_open\(", r"\bis_decided_per_copy\(", r"\bcould_be_same\(",
                  r"\barguments_open\(", r"\bin_own_check\(", r"\bholds_undecided\(",
                  r"\bopen_struct\(", r"\bcopy_type\(",
                  r"\bown_arguments\("],

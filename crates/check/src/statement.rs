@@ -485,11 +485,18 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
                     body,
                 } => {
                     let iterable = self.add_expr(iterable, None);
+                    let types = &self.checker.types;
                     let ty = self.body.exprs[iterable].ty;
-                    // What walking an open value means, each copy decides; the
-                    // own check, never lowered, checks the body as a range's.
-                    if matches!(self.checker.types[ty], Type::Range { .. })
-                        || self.checker.types.is_open(ty)
+                    let walked = if let Type::Reference { target, .. } = types[ty] {
+                        target
+                    } else {
+                        ty
+                    };
+                    // What walking a type each copy decides means, each copy
+                    // decides; the own check, never lowered, checks the body
+                    // as a range's.
+                    if matches!(types[ty], Type::Range { .. })
+                        || types[walked].is_decided_per_copy()
                     {
                         self.check_for_range(index, Some(value), iterable, body?)
                     } else {

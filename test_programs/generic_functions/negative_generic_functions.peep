@@ -32,6 +32,36 @@ fn Add<T>(a: T, b: T) -> T {
     return a + b; //~ error[T0004]: operator `+` cannot be applied to `bool`
 }
 
+fn Total(values: ...i32) -> i32 {
+    return 0;
+}
+
+// Never called: what is wrong whatever `T` is, is still reported. What
+// some copy accepts, each copy decides.
+fn WrongForEvery<T>(pair: [2]T, value: T, pointer: *T, list: &[]T, values: range[T]) {
+    let negated = -pair; //~ error[T0004]: operator `-` cannot be applied to `[2]T`
+    let flag: bool = pair; //~ error[T0001]: mismatched types: expected `bool`, found `[2]T`
+    pair.Area(); //~ error[T0004]: `[2]T` has no functions
+    let shape: &Shape = &pair; //~ error[T0001]: mismatched types: expected `&Shape`, found `&[2]T`
+    print(pair); //~ error[T0004]: `[2]T` cannot be printed
+    let elements: &[]i32 = &pair;
+    let held: &Shape = &value;
+    for each in &value {}
+    for each in pair {}
+    let raw: *i32 = pointer;
+    let spread = [_]i32{ pair... };
+    // How many values `value...` gives, each copy counts.
+    let counted = [_]i32{ 1, value... };
+    let written = [3]i32{ value... };
+    let total = Total(value...);
+    let more = Total(1, value...);
+    let sliced = [4]i32{ list... };
+    let ranged = [4]i32{ values... };
+    let full = [2]i32{ 1, 2, 3, value... }; //~ error[T0001]: `[2]i32` needs 2 values, found at least 3
+    let mixed = [_]i32{ elements..., value... }; //~ error[T0001]: a slice has a length known only when the program runs; write the length
+    print(value, -value, value + value);
+}
+
 #[extern("outside")]
 fn Outside<T>(value: T); //~ error[P0005]: an `extern` function takes no type or `const` parameter: C gives one function for every call
 

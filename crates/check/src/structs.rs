@@ -108,7 +108,7 @@ pub(crate) fn check_struct_literal(
         // Reported where it was written, or one each copy decides.
         (None, Some(expected))
             if expected == semantic_types::TypeId::INVALID
-                || builder.checker.types.is_open(expected) =>
+                || builder.checker.types[expected].is_decided_per_copy() =>
         {
             expected
         }
@@ -122,7 +122,7 @@ pub(crate) fn check_struct_literal(
     let (semantic_types::Type::Struct { definition, .. }
     | semantic_types::Type::Named { definition, .. }) = builder.checker.types[ty]
     else {
-        let open = builder.checker.types.is_open(ty);
+        let open = builder.checker.types[ty].is_decided_per_copy();
         if ty != semantic_types::TypeId::INVALID && !open {
             let message = format!(
                 "expected a struct type, found `{}`",

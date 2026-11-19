@@ -274,9 +274,10 @@ fn library_call(
 }
 
 /// Whether `print` writes a value of the type `ty`: a number, `bool`,
-/// `&cstr`, `&str` or raw pointer, or a reference to one. A struct or array
-/// prints only once a trait or interface lets its type say how.
-fn printable(types: &semantic_types::Types, mut ty: semantic_types::TypeId) -> bool {
+/// `&cstr`, `&str` or raw pointer, or a reference to one; `None` when each
+/// copy decides, for a type parameter or a reference to one. A struct or
+/// array prints only once a trait or interface lets its type say how.
+fn printable(types: &semantic_types::Types, mut ty: semantic_types::TypeId) -> Option<bool> {
     // A loop, not recursion: references nest as deep as the source writes.
     loop {
         match &types[ty] {
@@ -285,9 +286,10 @@ fn printable(types: &semantic_types::Types, mut ty: semantic_types::TypeId) -> b
             | semantic_types::Type::Bool
             | semantic_types::Type::CString
             | semantic_types::Type::Str
-            | semantic_types::Type::RawPointer { .. } => return true,
+            | semantic_types::Type::RawPointer { .. } => return Some(true),
             semantic_types::Type::Reference { target, .. } => ty = *target,
-            _ => return false,
+            _ if types[ty].is_decided_per_copy() => return None,
+            _ => return Some(false),
         }
     }
 }
@@ -308,13 +310,13 @@ pub(crate) fn check_print(
         let expr = builder.check_expr(value, None);
         let ty = expr.ty;
         let types = &builder.checker.types;
-        // Each copy prints a value of an open type its own way; a generic
-        // body's own check, which never runs, leaves it out.
-        if types.is_open(ty) {
+        // Each copy prints a value of a type it decides its own way; a
+        // generic body's own check, which never runs, leaves it out.
+        let Some(printable) = printable(types, ty) else {
             continue;
-        }
+        };
         // On an error the others are still checked, for their own.
-        if !printable(types, ty) {
+        if !printable {
             if ty != semantic_types::TypeId::INVALID {
                 let message = format!("`{}` cannot be printed", builder.checker.type_text(ty));
                 (builder.checker).error(diagnostics::INVALID_OPERATION, message, span);
