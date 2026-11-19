@@ -27,7 +27,7 @@ removing a feature touches the parser, check and lower, and no other crate.
 ## 2. What today's MIR carries, and who pays for it
 
 Today every instruction carries a language type (`Instruction::ty`,
-`crates/middle/model/src/mir.rs:71`), every variable does
+`crates/model/src/mir.rs:71`), every variable does
 (`Variable::ty`, `:46`), and eight of the twenty instruction kinds are
 language features: `Length`, `Borrow` of a slice, `ToInterface`,
 `Aggregate`, `ArrayParts`, `Print`, `Field`, the typed `Binary` and
