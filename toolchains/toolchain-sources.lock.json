@@ -49,12 +49,12 @@
     },
     {
       "id": "llvm-darwin-amd64",
-      "version": "23.1.4",
-      "url": "https://github.com/PeeperLanguage/compiler/releases/download/llvm-23.1.4-macos-x64/LLVM-23.1.4-macOS-X64.tar.xz",
-      "size": 58374704,
-      "sha256": "5cb0a127669f969dc4d2f25fb850df91955977df52673425eb6b34d991ede587",
+      "version": "23.1.5",
+      "url": "https://github.com/PeeperLanguage/compiler/releases/download/llvm-23.1.5-macos-x64/LLVM-23.1.5-macOS-X64.tar.xz",
+      "size": 58358912,
+      "sha256": "4292e6a9d37ec65706bbb952460b2b76b40df56f9ceea082239a0bc884efa9b5",
       "license": "Apache-2.0 WITH LLVM-exception",
-      "license_url": "https://github.com/llvm/llvm-project/blob/llvmorg-23.1.4/LICENSE.TXT"
+      "license_url": "https://github.com/llvm/llvm-project/blob/llvmorg-23.1.5/LICENSE.TXT"
     }
   ]
 }
