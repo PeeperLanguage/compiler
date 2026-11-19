@@ -3,14 +3,14 @@
   "kind": "peeper-toolchains",
   "toolchains": [
     {
-      "id": "toolchain-darwin-amd64-llvm-23.1.4-refeaa4f1aed4",
+      "id": "toolchain-darwin-amd64-llvm-23.1.5-refb2eb8e3272",
       "kind": "toolchain",
-      "version": "llvm-23.1.4-refeaa4f1aed4",
+      "version": "llvm-23.1.5-refb2eb8e3272",
       "os": "darwin",
       "arch": "amd64",
-      "url": "https://github.com/PeeperLanguage/compiler/releases/download/toolchain-darwin-amd64-llvm-23.1.4-refeaa4f1aed4/toolchain-darwin-amd64-llvm-23.1.4-refeaa4f1aed4.tar.gz",
-      "size": 82833817,
-      "sha256": "efeaa4f1aed4204db9aedff03f90df249cea954ed400a132a7611526d8f5ced3",
+      "url": "https://github.com/PeeperLanguage/compiler/releases/download/toolchain-darwin-amd64-llvm-23.1.5-refb2eb8e3272/toolchain-darwin-amd64-llvm-23.1.5-refb2eb8e3272.tar.gz",
+      "size": 82836026,
+      "sha256": "efb2eb8e32725a4fe07aeb7d7141057914928759d5f4b968816a2ed54bf21d5b",
       "format": "tar.gz"
     },
     {
