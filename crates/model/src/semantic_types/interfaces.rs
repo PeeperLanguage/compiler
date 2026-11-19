@@ -29,7 +29,7 @@ impl Types {
     /// the interface was checked, as its own methods' `&self` is, is the
     /// `&Shape` of after.
     pub fn define_interface(&mut self, named: TypeId, methods: Box<[TypeId]>) {
-        let slot = &mut self.types[named.0 as usize];
+        let slot = &mut self.types[named.0 as usize].ty;
         let Type::Named { definition, .. } = *slot else {
             unreachable!("only a declared name becomes an interface");
         };

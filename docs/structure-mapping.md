@@ -102,7 +102,7 @@ API: `Language::string_kind` is removed. Its places:
 | `declaration.rs`: `FunctionKind`, `check_function`, `is_builtin_declared`, `signature_type`, `result_origins`, `resolve_signature_type` | extract | `functions.rs` | a function's type |
 | `function.rs`: `function_declaration` | extract | `model::program`, beside `declaration` | a function as written, which `functions`, `generics`, `conformance` and `statement` look up |
 | `declaration.rs`: `implementation`, `method_type` | extract | `conformance.rs` | whether a type implements an interface; receiver substitution; the cached `ImplementationId` |
-| `declaration.rs`: `resolve_type_argument`, `type_argument`, `first_copy_parameter`, `written_inside`, `find_type_argument`, `names_type_parameter` | extract | `generics.rs` | finding and writing type arguments |
+| `declaration.rs`: `resolve_type_argument`, `type_argument`, `first_copy_parameter` | extract | `generics.rs` | finding and writing type arguments |
 | `declaration.rs`: the rest (`check_attributes` for every declaration, type declarations, constants, resolving written types, `is_interface`, `reference_type`, `array_type`, `range_type`, ...) | stays | `declaration.rs` | about 670 of its 1382 lines leave |
 | `copies.rs` | move | `generics/copies.rs` | the one copy table |
 | `constraints.rs` | move | `generics/constraints.rs` | `where`: both interface constraints (through `conformance.rs`) and predicate functions run at compile time; neither form changes |

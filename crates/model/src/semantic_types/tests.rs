@@ -2,6 +2,7 @@ use super::ConstArgument;
 use super::Conversion;
 use super::Float;
 use super::Integer;
+use super::Naming;
 use super::StructInternals;
 use super::Type;
 use super::TypeId;
@@ -296,8 +297,9 @@ fn interface_references() {
         );
     }
     let text = |ty| {
-        types.text(ty, |definition| {
-            ["Shape", "Square"][definition.index as usize]
+        types.text(ty, |naming| match naming {
+            Naming::Declaration(definition) => ["Shape", "Square"][definition.index as usize],
+            Naming::Parameter { .. } => unreachable!("no type parameter here"),
         })
     };
     assert_eq!(text(view), "&Shape");
@@ -392,8 +394,9 @@ fn type_text() {
         arguments,
     });
     let text = |ty| {
-        types.text(ty, |definition| {
-            ["Point", "Place"][definition.index as usize]
+        types.text(ty, |naming| match naming {
+            Naming::Declaration(definition) => ["Point", "Place"][definition.index as usize],
+            Naming::Parameter { .. } => unreachable!("no type parameter here"),
         })
     };
     assert_eq!(text(u24), "u24");

@@ -42,10 +42,10 @@ impl Checker<'_> {
     /// a struct, interface or enum (`declare_written_type`), or the type an
     /// alias names. One with
     /// type parameters, `struct Box<T>`, declares a type in each copy
-    /// (`copy_type`); its own check, with no type for its `T`
-    /// (`own_arguments`), reports what is wrong whatever its types are and
-    /// gives its name given nothing (`Type::Named`), which no value has;
-    /// invalid when that check reported an error.
+    /// (`copy_type`); its own check, its `T` a type parameter
+    /// (`own_arguments`), reports what is wrong whatever `T` is and gives
+    /// its name given nothing (`Type::Named`), which no value has; invalid
+    /// when that check reported an error.
     pub(crate) fn check_type_declaration(&mut self, definition: DefId) -> TypeId {
         let tree = &self.module().ast;
         let (written, is_alias) = match tree.decls[tree.declaration(definition.index)] {
@@ -62,12 +62,7 @@ impl Checker<'_> {
         if written.type_parameters.is_empty() || self.in_copy() {
             return self.declare_written_type(definition, written);
         }
-        let module = definition.module.index();
-        let reported = self.module_checks[module].diagnostics.len();
-        // Invalid whenever a field is of a type `T` names, which reports nothing.
-        self.declare_written_type(definition, written);
-        let found = &self.module_checks[module].diagnostics[reported..];
-        if found.iter().any(Diagnostic::is_error) {
+        if self.declare_written_type(definition, written) == TypeId::INVALID {
             return TypeId::INVALID;
         }
         self.types.intern(Type::Named {
@@ -187,9 +182,16 @@ impl Checker<'_> {
     }
 
     /// `resolved`, written at `span`, as a value's type: a named type, or
-    /// copy of one, is checked (`copy_type`).
+    /// copy of one, is checked (`copy_type`); one given an open type
+    /// (`open_struct`) is not copied.
     pub(crate) fn value_type_at(&mut self, resolved: TypeId, span: Span) -> TypeId {
         match self.types[resolved] {
+            Type::Named {
+                definition,
+                arguments,
+            } if self.types.is_open(resolved) => {
+                self.open_struct(resolved, definition, arguments, span)
+            }
             Type::Named {
                 definition,
                 arguments,
@@ -284,12 +286,16 @@ impl Checker<'_> {
     }
 
     /// `[length]element`, written at `span` (`element_type`), holding at
-    /// most `MOST_HOLDERS` references and slices.
+    /// most `MOST_HOLDERS` references and slices and fitting the target;
+    /// an open one's copies are checked for both.
     pub(crate) fn array_type(&mut self, element: TypeId, length: u64, span: Span) -> TypeId {
         let Some(element) = self.element_type(element) else {
             return TypeId::INVALID;
         };
         let ty = self.types.array(element, length);
+        if self.types.is_open(ty) {
+            return ty;
+        }
         if self.reports_too_many_holders(ty, self.types.holders_in(ty), span) {
             return TypeId::INVALID;
         }
@@ -608,7 +614,7 @@ impl Checker<'_> {
                         given.push(ConstArgument::Type(self.types.real(resolved)));
                     }
                     if given.contains(&ConstArgument::Type(TypeId::INVALID)) {
-                        return self.named_without_types(definition);
+                        return TypeId::INVALID; // reported
                     }
                     let arguments = self.types.const_arguments(&given);
                     return self.types.intern(Type::Named {

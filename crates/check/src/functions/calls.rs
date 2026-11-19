@@ -60,13 +60,22 @@ impl builder::ThirBuilder<'_, '_> {
                 let symbol = self.checker.resolve_path(path);
                 self.function_called(symbol, callee_span)
             }
-            ast::Expr::Selector { value, field } => {
-                self.method(value, field, callee_span)
-                    .map(|(place, callee, signature)| {
-                        receiver = Some(place);
-                        (callee, signature)
-                    })
-            }
+            ast::Expr::Selector { value, field } => match self.method(value, field, callee_span) {
+                Some(Some((place, callee, signature))) => {
+                    receiver = Some(place);
+                    Some((callee, signature))
+                }
+                // Each copy finds the function: the arguments are checked
+                // for their own errors only.
+                Some(None) => {
+                    self.call_found(None, None, callee_span, type_arguments, arguments, span);
+                    return thir::Expr {
+                        ty: semantic_types::TypeId::UNDECIDED,
+                        kind: thir::ExprKind::Undecided,
+                    };
+                }
+                None => None,
+            },
             _ => {
                 self.checker
                     .not_supported(callee_span, "calls of computed functions");
@@ -231,7 +240,12 @@ impl builder::ThirBuilder<'_, '_> {
         if !arity_matches {
             return thir::Expr::INVALID;
         }
+        // A call given an open type, as in a generic body's own check, runs
+        // in each copy only.
+        let runs_now = !matches!(callee, Callee::Function(function)
+            if self.checker.types.arguments_open(function.arguments));
         if let Callee::Function(function) = callee
+            && runs_now
             && model::program::is_builtin(self.checker.modules, function.definition)
         {
             // Its answer is known now, wherever the call is.
@@ -256,7 +270,14 @@ impl builder::ThirBuilder<'_, '_> {
             });
             values.collect::<Option<Vec<constant::Value>>>()
         };
+        if !runs_now && self.in_constant {
+            return thir::Expr {
+                ty: result,
+                kind: thir::ExprKind::Undecided,
+            };
+        }
         if let Callee::Function(function) = callee
+            && runs_now
             && self.in_constant
             && result != semantic_types::TypeId::VOID
             && let Some(values) = constant_arguments()
@@ -312,13 +333,15 @@ impl builder::ThirBuilder<'_, '_> {
     /// interface, or of what the interface reference views, which the call
     /// gives as `self`, the callee, and its type. An interface's own
     /// function (`fn Shape::name`) is found before its methods; a name
-    /// cannot be both (`scope::collect`).
+    /// cannot be both (`scope::collect`). `None` when reported; `Some(None)`
+    /// for a value of an open type (`Types::is_open`), whose function each
+    /// copy finds.
     fn method(
         &mut self,
         value: Id<ast::Expr>,
         name: ast::Ident,
         span: Span,
-    ) -> Option<(Id<thir::Expr>, Callee, semantic_types::TypeId)> {
+    ) -> Option<Option<(Id<thir::Expr>, Callee, semantic_types::TypeId)>> {
         let value = self.add_expr(value, None);
         let ty = self.body.exprs[value].ty;
         let interface = match self.checker.types[ty] {
@@ -333,10 +356,13 @@ impl builder::ThirBuilder<'_, '_> {
                 .get(Some(definition), text)
                 .is_none()
         {
-            return self.interface_method(value, interface, name);
+            return self.interface_method(value, interface, name).map(Some);
         }
         let place = self.through_pointer(value, self.body.exprs.span(value));
         let ty = self.body.exprs[place].ty;
+        if self.checker.types.is_open(ty) && self.checker.types[ty].definition().is_none() {
+            return Some(None);
+        }
         let Some(definition) = self.checker.types[ty].definition() else {
             if ty != semantic_types::TypeId::INVALID {
                 let message = format!("`{}` has no functions", self.checker.type_text(ty));
@@ -358,7 +384,7 @@ impl builder::ThirBuilder<'_, '_> {
             unreachable!("a type's member is a function")
         };
         self.takes_self(function.definition, span)
-            .then_some((place, callee, signature))
+            .then_some(Some((place, callee, signature)))
     }
 
     /// The method `name` of `interface` that `value`, an interface or a

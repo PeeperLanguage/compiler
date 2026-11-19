@@ -86,11 +86,7 @@ impl Checker<'_> {
         flow::loans::report_loan_errors(&mir, pointer_bytes, file, diagnostics);
         flow::unreachable::warn_unreachable_code(&mir, file, diagnostics);
         // Last: it points at the closing brace.
-        let result_text = || {
-            types.text(*result, |definition| {
-                model::program::declared_text(modules, definition)
-            })
-        };
+        let result_text = || model::program::type_text(modules, types, *result);
         flow::missing_return::report_missing_return(&mir, file, result_text, diagnostics);
         Some(mir)
     }

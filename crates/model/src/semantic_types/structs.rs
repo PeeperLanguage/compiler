@@ -23,7 +23,7 @@ impl Types {
             holders: self.holders_in_fields(&fields),
             mutable_holder: (fields.iter()).any(|&field| self.holds_loans(field) == Some(true)),
         };
-        let slot = &mut self.types[named.0 as usize];
+        let slot = &mut self.types[named.0 as usize].ty;
         let Type::Named {
             definition,
             arguments,

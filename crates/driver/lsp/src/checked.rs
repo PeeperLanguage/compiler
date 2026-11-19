@@ -123,8 +123,7 @@ pub(crate) struct CachedFact {
 pub(crate) enum CachedKind {
     /// A variable of a body, this name being its declaration: whether it is
     /// `mut`, and its type's text; `None` for a type the check did not
-    /// find, as after an error, or in a function's own body for a type of
-    /// its `const T: type`, which only a copy knows.
+    /// find, as after an error.
     Variable { mutable: bool, ty: Option<String> },
     /// A `const` of a body or of the module, this name being its
     /// declaration, with its checked type and value; `None` when it had an

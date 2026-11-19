@@ -18,6 +18,9 @@ impl Types {
         if self.same(from, to) {
             return Conversion::Same;
         }
+        if self.is_open(from) || self.is_open(to) {
+            return Conversion::Undecided;
+        }
         match (&self[from], &self[to]) {
             (&Type::Integer(from), &Type::Integer(to)) => {
                 let cast = from.cast_to(to);

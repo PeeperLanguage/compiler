@@ -1,6 +1,7 @@
 use model::ConstArguments;
 use model::DeclarationCopy;
 use model::DefId;
+use model::semantic_types::Naming;
 use model::thir::Body;
 use source::SourceFile;
 use tree::ast;
@@ -44,7 +45,10 @@ fn bodies(text: &str) -> (Vec<String>, Vec<Reported>) {
     let file = SourceFile::new("main.peep", text);
     // A called function's name, by its place among the declarations.
     let names: Vec<String> = (0..declared).map(|index| format!("f{index}")).collect();
-    let name = |function: DefId| names[function.index as usize].as_str();
+    let name = |naming: Naming| match naming {
+        Naming::Declaration(function) => names[function.index as usize].as_str(),
+        Naming::Parameter { .. } => unreachable!("no type parameter here"),
+    };
     let shown = bodies
         .iter()
         .map(|body| body.text(&types, &file, name))

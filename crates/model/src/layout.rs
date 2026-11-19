@@ -6,7 +6,6 @@
 
 use crate::machine::Machine;
 use crate::mir::Class;
-use crate::semantic_types;
 use crate::semantic_types::Float;
 use crate::semantic_types::Type;
 use crate::semantic_types::TypeId;
@@ -53,8 +52,8 @@ pub fn layout(types: &Types, ty: TypeId, target: &Machine) -> (u64, u64) {
             (2 * bytes, bytes)
         }
         Type::Struct { internals, .. } => (internals.size, internals.align),
-        Type::Range { element, step } => {
-            let fields = semantic_types::ranges::range_fields(*element, *step).map(|(_, ty)| ty);
+        Type::Range { element } => {
+            let fields = types.range_fields(*element).map(|(_, ty)| ty);
             let (_, size, align) = struct_layout(types, &fields, target);
             (size, align)
         }
@@ -62,8 +61,13 @@ pub fn layout(types: &Types, ty: TypeId, target: &Machine) -> (u64, u64) {
             let (size, align) = layout(types, internals.base, target);
             (size.saturating_mul(internals.count), align)
         }
-        Type::Invalid | Type::Void | Type::Function { .. } | Type::Named { .. } => {
-            unreachable!("no value is laid out with this type")
+        Type::Invalid
+        | Type::Void
+        | Type::Function { .. }
+        | Type::Named { .. }
+        | Type::Parameter { .. }
+        | Type::Undecided => {
+            unreachable!("no value is laid out with this type: a copy's types are known")
         }
         Type::Alias { .. } => unreachable!("indexing looks through aliases"),
     }
@@ -105,7 +109,9 @@ pub fn held(types: &Types, ty: TypeId) -> Held {
         | Type::Interface { .. } => Held::TwoWords,
         Type::Struct { .. } | Type::Array { .. } | Type::Range { .. } => Held::Memory,
         Type::Invalid | Type::Void | Type::Function { .. } => Held::Nothing,
-        Type::Named { .. } => unreachable!("no value has a type not checked yet"),
+        Type::Named { .. } | Type::Parameter { .. } | Type::Undecided => {
+            unreachable!("no value has a type not checked yet, or one each copy decides")
+        }
         Type::Alias { .. } => unreachable!("indexing looks through aliases"),
     }
 }
@@ -118,8 +124,8 @@ pub fn field_placed(types: &Types, ty: TypeId, index: usize, target: &Machine) -
     match &types[ty] {
         ty if let Some(members) = ty.members() => (members.offsets[index], members.fields[index]),
         Type::Str => [(0, TypeId::RAWPTR), (target.pointer_bytes(), types.usize)][index],
-        Type::Range { element, step } => {
-            let fields = semantic_types::ranges::range_fields(*element, *step).map(|(_, ty)| ty);
+        Type::Range { element } => {
+            let fields = types.range_fields(*element).map(|(_, ty)| ty);
             let (offsets, ..) = struct_layout(types, &fields, target);
             (offsets[index], fields[index])
         }

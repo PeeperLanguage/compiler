@@ -77,6 +77,7 @@ macro_rules! builtin_types {
 builtin_types! {
     INVALID => Type::Invalid,
     VOID => Type::Void,
+    UNDECIDED => Type::Undecided,
     /// A truth value: `true` or `false`.
     BOOL "bool" => Type::Bool,
     I8 "i8" => integers::integer(true, 8),

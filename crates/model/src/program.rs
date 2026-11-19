@@ -17,6 +17,7 @@ use crate::ModuleId;
 use crate::constant::Value;
 use crate::semantic_types::ConstArgument;
 use crate::semantic_types::Constant;
+use crate::semantic_types::Naming;
 use crate::semantic_types::TypeId;
 use crate::semantic_types::Types;
 use tree::ast;
@@ -52,6 +53,20 @@ pub fn declared_text(modules: &[Module], definition: DefId) -> &str {
     name.text(file)
 }
 
+/// The name `naming` asks for in `modules`: a declaration's
+/// (`declared_text`), or one of its type parameters' as written.
+pub fn named_text(modules: &[Module], naming: Naming) -> &str {
+    match naming {
+        Naming::Declaration(definition) => declared_text(modules, definition),
+        Naming::Parameter { definition, place } => {
+            let span = (declaration_copy_parameters(modules, definition).nth(place as usize))
+                .flatten()
+                .expect("a type parameter's place");
+            modules[definition.module.index()].ast.file.slice(span)
+        }
+    }
+}
+
 /// Whether other modules can use `name`: it starts with an upper case letter.
 pub fn is_exported(name: &str) -> bool {
     name.starts_with(char::is_uppercase)
@@ -75,7 +90,7 @@ pub fn declared_path(modules: &[Module], definition: DefId) -> String {
 /// The type `ty` of `types` as a message names it, each declared type by the
 /// name its declaration in `modules` gives it (`Types::text`).
 pub fn type_text(modules: &[Module], types: &Types, ty: TypeId) -> String {
-    types.text(ty, |definition| declared_text(modules, definition))
+    types.text(ty, |naming| named_text(modules, naming))
 }
 
 /// The name the declaration `definition` of `modules` declares, and the file
@@ -210,7 +225,10 @@ pub fn symbol(modules: &[Module], definition: DefId) -> String {
 /// make two names, and each float value by its bits, as two NaNs print
 /// alike.
 pub fn copy_symbol(modules: &[Module], types: &Types, copy: DeclarationCopy) -> String {
-    let qualified = |definition: DefId| {
+    let qualified = |naming: Naming| {
+        let Naming::Declaration(definition) = naming else {
+            unreachable!("a copy is made for known types")
+        };
         let path = &modules[definition.module.index()].path;
         format!("{path}.{}", declared_text(modules, definition))
     };
@@ -235,8 +253,8 @@ pub fn copy_symbol(modules: &[Module], types: &Types, copy: DeclarationCopy) -> 
 /// dumps and a debugger show.
 pub fn copy_name(modules: &[Module], types: &Types, copy: DeclarationCopy) -> String {
     let declared = declared_path(modules, copy.definition);
-    types.copy_text(declared, copy.arguments, |definition| {
-        declared_text(modules, definition)
+    types.copy_text(declared, copy.arguments, |naming| {
+        named_text(modules, naming)
     })
 }
 

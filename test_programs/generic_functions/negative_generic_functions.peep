@@ -39,6 +39,13 @@ fn Width(const T: type) -> usize {
     return size_of(T);
 }
 
+// A constant reading what only a run knows is wrong whatever `T` is, so the
+// own check reports it, with no call.
+fn RunTime<T>(value: T, n: usize) -> usize { //~ label: `n` gets its value only when the program runs
+    const Y: usize = size_of(T) + n; //~ error[T0004]: the value of a constant must be known at compile time
+    return Y;
+}
+
 fn main() {
     Make(); //~ error[T0004]: the arguments of `Make` do not say what its `T` is: write it at the call, `Make::<...>(...)`
     Id::<i32, f64>(1); //~ error[T0006]: `Id` takes 1 type argument, but 2 were given

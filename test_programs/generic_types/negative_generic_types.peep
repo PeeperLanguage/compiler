@@ -12,8 +12,10 @@ struct Grow<T> { //~ error[T0013]: `Grow` holds itself
     inner: Grow<Box<T>>,
 }
 
-// Through another struct's field too, and with two fields growing.
+// Through another struct's field too: each field that closes the cycle is
+// one report, as for any struct.
 struct Two<T> { //~ error[T0013]: `Two` holds itself
+//~ error[T0013]: `Two` holds itself
     first: Box<Two<[2]T>>,
     second: Box<Two<[3]T>>,
 }
@@ -42,9 +44,43 @@ fn Uses(g: *Grow<i32>, h: Holds<i32>, w: Wrong<i32>) {
     let grown = g.*;
 }
 
+// `T` is found in the argument's own type arguments: a struct without them
+// gives none.
+fn Take<T>(b: Box<T>) -> T {
+    return b.value;
+}
+
+// What a `T` can do, each copy decides, and reports at the copy; what is
+// wrong whatever `T` is, is reported once, with no call.
+fn Sum<T>(items: T) -> i32 {
+    let mut sum = 0;
+    for item in items { //~ error[T0043]: `for` over values other than ranges, arrays and slices are not supported yet
+        sum = sum + item;
+    }
+    return sum;
+}
+
+fn Make<T>() -> T {
+    let made: T = .{ x = 7 }; //~ error[P0007]: this struct literal needs its type: write it before `.{`
+    return made;
+}
+
+fn First<T>(items: T) -> i32 {
+    return items[0]; //~ error[T0004]: `bool` cannot be indexed
+}
+
+fn Backward<T>(items: &T) {
+    let part = &items[5..2]; //~ error[T0004]: slice `5..2` starts after it ends
+}
+
 fn main() {
+    Sum(Plain.{ x = 1 }); //~ label: in `Sum<Plain>`, the copy made here
+    Make::<i32>(); //~ label: in `Make<i32>`, the copy made here
+    First(true); //~ label: in `First<bool>`, the copy made here
     let b: Box<i32> = .{ value = true }; //~ error[T0001]: mismatched types: expected `i32`, found `bool`
     let e: Box<i32> = .{}; //~ error[T0029]: missing field `value` in `Box<i32>`
     // The literal inside reports nothing more.
     let u: Box<Unknown> = .{ value = .{ x = 1 } }; //~ error[T0002]: unknown type `Unknown`
+    let p: Plain = .{ x = 1 };
+    let t = Take(p); //~ error[T0004]: the arguments of `Take` do not say what its `T` is
 }

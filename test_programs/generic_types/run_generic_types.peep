@@ -39,6 +39,93 @@ fn Unwrap(b: Box<i32>) -> i32 {
 }
 
 // A generic function names a copy with its own `T`.
+// A type parameter is found in a generic struct's arguments: `Get(a)` with
+// `a: Box<i32>` is `Get::<i32>`, through a reference and nested copies too.
+fn Get<T>(b: Box<T>) -> T {
+    return b.value;
+}
+
+fn Second<A, B>(pair: Pair<A, B>) -> B {
+    return pair.second;
+}
+
+fn Deepest<T>(boxed: &Box<Box<T>>) -> T {
+    return boxed.value.value;
+}
+
+fn Echo<T>(boxed: &Box<T>, value: T) -> T {
+    return value;
+}
+
+// Inside a slice or an array too, and given an array where a slice is taken.
+fn FirstOf<T>(boxes: &[]Box<T>) -> T {
+    return boxes[0].value;
+}
+
+fn LastOf<T>(boxes: [2]Box<T>) -> T {
+    return boxes[1].value;
+}
+
+type IntBox = Box<i32>;
+
+// What a `T` can do, each copy decides: indexing, `.*` and a field.
+fn Head<T>(items: T) -> i32 {
+    return items[0];
+}
+
+fn Read<T>(at: T) -> i32 {
+    return at.*;
+}
+
+fn Inner<T>(boxed: T) -> i32 {
+    return boxed.value;
+}
+
+fn Sum<T>(items: T) -> i32 {
+    let mut sum = 0;
+    for item in items {
+        sum = sum + item;
+    }
+    return sum;
+}
+
+fn Middle<T>(items: &T) -> i32 {
+    let part = &items[1..3];
+    return part[0];
+}
+
+fn SetX<T>(point: &mut T) {
+    point.*.x = 2;
+}
+
+fn Make<T>() -> T {
+    let made: T = .{ x = 7 };
+    return made;
+}
+
+fn BorrowX<T>(point: &T) -> i32 {
+    let x = &point.*.x;
+    return x.*;
+}
+
+// An undecided value is given to another generic function: each copy finds
+// its `T`.
+fn Peek<T>(boxed: &Box<T>) -> T {
+    return boxed.value;
+}
+
+fn PeekFirst<T>(holder: T) -> i32 {
+    return Peek(&holder.first);
+}
+
+struct Point {
+    x: i32,
+}
+
+struct Holder {
+    first: Box<i32>,
+}
+
 fn Nest<T>(value: T) -> Box<Box<T>> {
     let made: Box<Box<T>> = .{ value = .{ value = value } };
     return made;
@@ -59,4 +146,17 @@ fn main() {
     let chain: Chain<u8> = .{ value = 4, next = .{ to = none } };
     let deep: Deep<i16> = .{ inner = .{ value = .{ value = 5 } } };
     println(chain.value, deep.inner.value.value, size_of(Chain::<u8>));
+    let c: Box<i32> = .{ value = 3 };
+    println(Get(c), Deepest(&nested), Echo(&b, 0.5), Second(pair));
+    let boxes = [2]Box<i32>{ .{ value = 10 }, .{ value = 11 } };
+    let aliased: IntBox = .{ value = 12 };
+    println(FirstOf(&boxes), LastOf(boxes), Get(aliased));
+    let items = [3]i32{13, 14, 15};
+    let d: Box<i32> = .{ value = 16 };
+    println(Head(items), Read(&items[1]), Inner(d));
+    let mut point = Point.{ x = 0 };
+    SetX(&mut point);
+    let made = Make::<Point>();
+    let holder = Holder.{ first = .{ value = 4 } };
+    println(Sum(items), Middle(&items), point.x, made.x, BorrowX(&point), PeekFirst(holder));
 }

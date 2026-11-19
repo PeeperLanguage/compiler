@@ -146,10 +146,14 @@ impl builder::ThirBuilder<'_, '_> {
                 ty: checked.ty,
                 value,
             }),
-            thir::ExprKind::Invalid => None,
+            thir::ExprKind::Invalid => None, // reported
             _ => {
                 let file = self.checker.module().ast.file.clone();
                 let unknown = self.body.first_named_variable(&checked.kind);
+                // Each copy knows it, unless it reads what only a run knows.
+                if unknown.is_none() && self.body.holds_undecided(&checked.kind) {
+                    return None;
+                }
                 let types = &self.checker.types;
                 let message = if unknown.is_some() {
                     "the value of a constant must be known at compile time"

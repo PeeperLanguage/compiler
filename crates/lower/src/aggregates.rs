@@ -545,15 +545,16 @@ impl Lowering<'_> {
         &self,
         range_type: semantic_types::TypeId,
     ) -> (semantic_types::Integer, semantic_types::Integer) {
-        let semantic_types::Type::Range { element, step } = self.types[range_type] else {
+        let semantic_types::Type::Range { element } = self.types[range_type] else {
             unreachable!("only a range has a walk")
         };
-        let (&semantic_types::Type::Integer(integer), &semantic_types::Type::Integer(step_integer)) =
+        let step = self.types.range_step(element);
+        let (&semantic_types::Type::Integer(integer), &semantic_types::Type::Integer(step)) =
             (&self.types[element], &self.types[step])
         else {
             unreachable!("a range is of integers")
         };
-        (integer, step_integer)
+        (integer, step)
     }
 
     /// Lowers the `thir::Stmt::ForRange` `statement`. On entry, once:

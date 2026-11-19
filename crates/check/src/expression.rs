@@ -132,6 +132,7 @@ impl ThirBuilder<'_, '_> {
                 }
                 _ => ExprKind::Convert(self.body.add(expr, span)),
             },
+            Conversion::Undecided => ExprKind::Convert(self.body.add(expr, span)),
             Conversion::Reborrow => return Some(self.reborrow(expr, span, to)),
             Conversion::ToInterface if let Type::Interface { .. } = self.checker.types[to] => {
                 return Some(self.owned_interface(expr, span, to));

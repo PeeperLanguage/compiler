@@ -6,8 +6,8 @@ use std::io::Write;
 use std::path::Path;
 
 use model::DeclarationCopy;
-use model::DefId;
 use model::mir;
+use model::semantic_types::Naming;
 use model::semantic_types::Types;
 use model::thir;
 
@@ -65,7 +65,10 @@ impl<'p> Dumps<'p> {
         types: &Types,
     ) {
         let modules = &self.program.modules;
-        let name = |definition: DefId| model::program::declared_path(modules, definition);
+        let name = |naming| match naming {
+            Naming::Declaration(definition) => model::program::declared_path(modules, definition),
+            Naming::Parameter { .. } => model::program::named_text(modules, naming).to_owned(),
+        };
         let copy_name = |copy| model::program::copy_name(modules, types, copy);
         let module = function.definition.module.index();
         let file = &modules[module].ast.file;

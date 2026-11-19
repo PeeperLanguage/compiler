@@ -84,6 +84,20 @@ fn Twice<T>(value: T) -> T {
 // A call on constants runs when compiling.
 const SEVEN: i32 = Id(7);
 
+// A generic body's constants: one of a known type is worked out once, in
+// its own check, which makes the copy it runs; one of `T`, and arithmetic on
+// it, each copy works out.
+fn SizeTwice(const T: type) -> usize {
+    return size_of(T) * 2;
+}
+
+fn Sizes<T>(value: T) -> i64 {
+    const KNOWN: usize = SizeTwice(i32);
+    const OWN: usize = SizeTwice(T) + 1;
+    const CAST: i64 = -(size_of(T) as i64);
+    return (KNOWN + OWN) as i64 + CAST;
+}
+
 fn main() {
     println(Id(1), Id(2.5), Id(true), Id("text"));
     let big: i64 = 9;
@@ -111,4 +125,5 @@ fn main() {
     let narrow: u7 = 1;
     Kind(narrow);
     Kind(Point.{ x = 1 });
+    println(Sizes(true), Sizes(1u16));
 }

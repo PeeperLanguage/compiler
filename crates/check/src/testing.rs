@@ -9,6 +9,7 @@ use model::DefId;
 use model::ModuleId;
 use model::machine::Machine;
 use model::program::ImportKind;
+use model::semantic_types::Naming;
 use model::semantic_types::Types;
 use model::thir;
 use source::SourceFile;
@@ -120,7 +121,10 @@ pub(crate) fn bodies(text: &str) -> (Vec<String>, Vec<Reported>) {
         let names: Vec<String> = (0..functions.len())
             .map(|index| format!("f{index}"))
             .collect();
-        let name = |function: DefId| names[function.index as usize].as_str();
+        let name = |naming: Naming| match naming {
+            Naming::Declaration(function) => names[function.index as usize].as_str(),
+            Naming::Parameter { .. } => unreachable!("no type parameter here"),
+        };
         (functions.iter())
             .map(|&(definition, span)| {
                 let copy = DeclarationCopy {

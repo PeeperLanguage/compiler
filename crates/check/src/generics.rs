@@ -77,7 +77,8 @@ impl builder::ThirBuilder<'_, '_> {
     /// parameter's type known when compiling. A type parameter, `<T>`,
     /// takes no argument: its type is written at the call, in
     /// `type_arguments`, or found from the arguments of the parameters
-    /// whose types name it (`find_type_argument`), each checked here, once,
+    /// whose types name it, each matched against its parameter's type in the
+    /// function's own type (`Types::find_parameters`), checked here, once,
     /// until every type parameter is found, and left in `checked_early` at
     /// its place for `check_call` to take. When a `const` one is missing, the
     /// function itself and its own type, for `check_call` to report the
@@ -124,6 +125,20 @@ impl builder::ThirBuilder<'_, '_> {
             };
             return Some((Callee::Function(function), pattern));
         }
+        // Each written parameter's type in the function's own type, which
+        // leaves out the `const` ones; `None` for those.
+        let semantic_types::Type::Function {
+            parameters: pattern_parameters,
+            ..
+        } = &self.checker.types[pattern]
+        else {
+            unreachable!("a function's type is a function type")
+        };
+        let mut pattern_parameters = pattern_parameters.iter().skip(first).copied();
+        let parameter_types: Vec<Option<semantic_types::TypeId>> = (written_parameters.iter())
+            .map(|(_, parameter)| (!parameter.constant).then(|| pattern_parameters.next()))
+            .map(Option::flatten)
+            .collect();
         // Its type parameters, `<T>`, which take no argument of their own:
         // the types written at the call, or else found from the arguments.
         let names: Vec<&str> = (tree.children.lists)
@@ -151,7 +166,9 @@ impl builder::ThirBuilder<'_, '_> {
             }
         } else if !names.is_empty() {
             checked_early.resize(arguments.len(), None);
-            for &(place, parameter) in &written_parameters {
+            for (&(place, parameter), &parameter_type) in
+                written_parameters.iter().zip(&parameter_types)
+            {
                 // The rest are checked as the copy's parameters, so a
                 // literal takes the found type: `Max(small, 1)`.
                 if types_found.iter().all(Option::is_some) {
@@ -160,10 +177,14 @@ impl builder::ThirBuilder<'_, '_> {
                 // shortcut: the arguments of a `...T` do not say what `T` is,
                 // as `check_variadic` checks them; find it from them when a
                 // function needs it.
-                if parameter.constant
-                    || place >= arguments.len()
+                let Some(parameter_type) = parameter_type else {
+                    continue; // `const`
+                };
+                if place >= arguments.len()
                     || matches!(tree.types[parameter.ty], ast::Type::Variadic { .. })
-                    || !names_type_parameter(tree, parameter.ty, &names)
+                    || !(self.checker.types)
+                        .parameters_named(parameter_type, definition, names.len())
+                        .contains(&true)
                 {
                     continue;
                 }
@@ -176,20 +197,25 @@ impl builder::ThirBuilder<'_, '_> {
                     failed = true;
                 }
                 failed |= checked.ty == semantic_types::TypeId::INVALID; // reported
-                let types = &self.checker.types;
-                find_type_argument(
-                    tree,
-                    types,
-                    parameter.ty,
+                (self.checker.types).find_parameters(
+                    parameter_type,
                     checked.ty,
-                    &names,
+                    definition,
                     &mut types_found,
                 );
                 checked_early[place] = Some(checked);
             }
         }
+        // A type parameter no parameter's type names, only the call can give.
+        let mut named = vec![false; names.len()];
+        for &ty in parameter_types.iter().flatten() {
+            let found = (self.checker.types).parameters_named(ty, definition, names.len());
+            for (named, found) in named.iter_mut().zip(found) {
+                *named |= found;
+            }
+        }
         let mut given = Vec::with_capacity(names.len() + const_parameters.len());
-        for (name, found) in names.iter().zip(types_found) {
+        for ((name, found), named) in names.iter().zip(types_found).zip(named) {
             match found {
                 Some(ty) => {
                     let ty = self.checker.type_argument(ty, span);
@@ -198,9 +224,6 @@ impl builder::ThirBuilder<'_, '_> {
                 }
                 None if failed => {}
                 None => {
-                    // No parameter names it, so only the call can.
-                    let named = (written_parameters.iter())
-                        .any(|(_, parameter)| names_type_parameter(tree, parameter.ty, &[name]));
                     let hint = if named {
                         String::new()
                     } else {
@@ -240,7 +263,17 @@ impl builder::ThirBuilder<'_, '_> {
             definition,
             arguments: self.checker.types.const_arguments(&given),
         };
-        let ty = self.checker.copy_type(copy, span);
+        // Given an open type, as in a generic body's own check, no copy is
+        // made: the call is of the function's own type, given what it gives.
+        // Nor is one in an own check, which is never lowered, for a call run
+        // only when the program runs; one run at compile time is made, to run.
+        let ty = if self.checker.types.arguments_open(copy.arguments)
+            || (!self.in_constant && self.checker.in_own_check())
+        {
+            (self.checker.types).substitute(pattern, definition, copy.arguments)
+        } else {
+            self.checker.copy_type(copy, span)
+        };
         Some((Callee::Function(copy), ty))
     }
 }
@@ -255,106 +288,4 @@ pub fn first_copy_parameter(tree: &ast::Tree, signature: ast::Signature) -> Opti
     let mut parameters = tree.children.lists.items(signature.parameters);
     let parameter = parameters.find(|&parameter| tree.children.params[parameter].constant)?;
     Some(tree.children.params.span(parameter))
-}
-
-/// The type written inside the type written `ty` in `tree`, where a type
-/// parameter can be named: a reference's or a pointer's target, or the
-/// element of a slice, a `...`, an array or a range. `None` for a name and
-/// for a type not looked into: a path names another module's type, and a
-/// type the checker refuses (`resolve_type`), such as `?T`, is reported.
-fn written_inside(tree: &ast::Tree, ty: Id<ast::Type>) -> Option<Id<ast::Type>> {
-    match tree.types[ty] {
-        ast::Type::Bracketed { inner: written, .. }
-        | ast::Type::Reference {
-            target: written, ..
-        }
-        | ast::Type::Slice {
-            element: written, ..
-        }
-        | ast::Type::Variadic {
-            element: written, ..
-        } => Some(written),
-        ast::Type::Pointer { target } => target,
-        ast::Type::Array { element, .. } => Some(element),
-        // shortcut: a struct's fields, an interface's methods and an enum's
-        // variants are taken to name no type parameter, as a written one is
-        // not supported yet; an optional is refused when it is checked.
-        ast::Type::Struct { .. }
-        | ast::Type::Interface { .. }
-        | ast::Type::Enum { .. }
-        | ast::Type::Optional(_) => None,
-        ast::Type::Name
-        | ast::Type::Path(_)
-        | ast::Type::Generic { .. }
-        | ast::Type::Function(_)
-        | ast::Type::Owner
-        | ast::Type::Type
-        | ast::Type::Invalid => None,
-    }
-}
-
-/// Finds the type one of the type parameters `names` of a function in
-/// `tree` stands for, from one argument: its parameter is written `written`
-/// and the argument has the type `ty`. The type is put in `found`, at the
-/// name's place, unless an earlier argument gave it one. Each type written
-/// around the name (`written_inside`) takes the argument's type one step
-/// in; an argument of another shape finds another type, or none, and the
-/// call reports the mismatch.
-pub(crate) fn find_type_argument(
-    tree: &ast::Tree,
-    types: &semantic_types::Types,
-    written: Id<ast::Type>,
-    ty: semantic_types::TypeId,
-    names: &[&str],
-    found: &mut [Option<semantic_types::TypeId>],
-) {
-    let (mut written, mut ty) = (written, ty);
-    while let Some(inside) = written_inside(tree, written) {
-        ty = match (&tree.types[written], &types[ty]) {
-            // A `&[3]T` is given where a `&[]T` is taken.
-            (ast::Type::Slice { .. }, semantic_types::Type::Reference { target, .. }) => {
-                match &types[*target] {
-                    semantic_types::Type::Array { element, .. } => *element,
-                    _ => return,
-                }
-            }
-            (_, semantic_types::Type::Reference { target, .. }) => *target,
-            (
-                _,
-                semantic_types::Type::Slice { element, .. }
-                | semantic_types::Type::Range { element, .. }
-                | semantic_types::Type::Array { element, .. },
-            ) => *element,
-            (
-                _,
-                semantic_types::Type::RawPointer {
-                    target: Some(target),
-                },
-            ) => *target,
-            _ => return,
-        };
-        written = inside;
-    }
-    let name = tree.file.slice(tree.types.span(written));
-    if let ast::Type::Name = tree.types[written]
-        && let Some(place) = names.iter().position(|&parameter| parameter == name)
-    {
-        found[place].get_or_insert(types.real(ty));
-    }
-}
-
-/// Whether the type written `ty` in `tree` names one of `parameters`, the
-/// names of a function's type parameters, `<T>` or `const T: type`, which
-/// only its copies know.
-pub(crate) fn names_type_parameter(
-    tree: &ast::Tree,
-    ty: Id<ast::Type>,
-    parameters: &[&str],
-) -> bool {
-    let mut ty = ty;
-    while let Some(inside) = written_inside(tree, ty) {
-        ty = inside;
-    }
-    matches!(tree.types[ty], ast::Type::Name)
-        && parameters.contains(&tree.file.slice(tree.types.span(ty)))
 }

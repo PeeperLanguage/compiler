@@ -61,6 +61,7 @@ use model::machine::Machine;
 use model::semantic_types::ConstArgument;
 use model::semantic_types::Constant;
 use model::semantic_types::ImplementationId;
+use model::semantic_types::Naming;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
 use model::semantic_types::Types;
@@ -112,6 +113,9 @@ struct CheckerInternals {
     /// The copies made whose bodies the compile has not built yet, in the
     /// order made; it takes them (`next_copy`).
     copies_to_build: Vec<DeclarationCopy>,
+    /// The field types of each struct given an open type, which has no copy
+    /// to hold them, read once (`field_types_given`).
+    open_struct_fields: FxHashMap<DeclarationCopy, Box<[TypeId]>>,
     /// Whether copies nested too deep (`COPY_DEPTH_LIMIT`): then no copy's
     /// body is built any more, as a function that makes two copies inside
     /// each would make twice as many at each depth.
@@ -140,15 +144,16 @@ struct Copied {
 /// function whose copy calls a copy for a new type each time would make
 /// copies without end. A type cannot: one that holds a new copy of itself,
 /// `struct S<T> { next: S<[2]T> }`, holds itself, found in its own check
-/// (`resolve_type`).
+/// (`open_struct`).
 const COPY_DEPTH_LIMIT: u32 = 64;
 
 /// A declaration being checked (`CheckerInternals::declarations_being_checked`).
 struct Checking {
     definition: DefId,
     /// What its type and `const` parameters are given, when it is a
-    /// function or a struct that has them: a copy's, or invalid types in
-    /// its own check (`own_arguments`); else `ConstArguments::NONE`.
+    /// function or a struct that has them: a copy's, or each type
+    /// parameter itself in its own check (`own_arguments`); else
+    /// `ConstArguments::NONE`.
     arguments: ConstArguments,
     /// Where its asker wrote its name (its own name, when checked for its
     /// own sake).
@@ -244,6 +249,7 @@ impl<'p> Checker<'p> {
                 built_bodies: FxHashMap::default(),
                 copies: FxHashMap::default(),
                 copies_to_build: Vec::new(),
+                open_struct_fields: FxHashMap::default(),
                 copies_too_deep: false,
             },
         }
@@ -369,8 +375,7 @@ impl<'p> Checker<'p> {
     }
 
     /// Whether the declaration being checked is a copy (`copy_type`). A
-    /// declaration's own check, with invalid types (`own_arguments`), is
-    /// none.
+    /// declaration's own check (`own_arguments`) is none.
     pub(crate) fn in_copy(&self) -> bool {
         let checking = self
             .internals
@@ -378,6 +383,15 @@ impl<'p> Checker<'p> {
             .last()
             .expect("a declaration is being checked");
         self.internals.copies.contains_key(&checking.copy())
+    }
+
+    /// Whether the declaration being checked is a generic declaration's own
+    /// check (`own_arguments`): neither a copy nor a declaration without
+    /// type or `const` parameters.
+    pub(crate) fn in_own_check(&self) -> bool {
+        let checking = (self.internals.declarations_being_checked.last())
+            .expect("a declaration is being checked");
+        checking.arguments != ConstArguments::NONE && !self.in_copy()
     }
 
     /// The type `ty` as a message names it (`Types::text`).
@@ -388,12 +402,14 @@ impl<'p> Checker<'p> {
     /// Both types as a message names them, with each one's module when two
     /// different declarations in them read the same: `a::Point`, `[1]b::Point`.
     pub(crate) fn type_texts(&self, first: TypeId, second: TypeId) -> (String, String) {
-        let name = |definition: DefId| model::program::declared_text(self.modules, definition);
+        let name = |naming: Naming| model::program::named_text(self.modules, naming);
         // `Types::text` needs a closure it can copy, so this one cannot own the list.
         let written = RefCell::new(Vec::new());
-        let plain = |definition: DefId| {
-            written.borrow_mut().push(definition);
-            name(definition)
+        let plain = |naming: Naming| {
+            if let Naming::Declaration(definition) = naming {
+                written.borrow_mut().push(definition);
+            }
+            name(naming)
         };
         let texts = (
             self.types.text(first, plain),
@@ -401,15 +417,21 @@ impl<'p> Checker<'p> {
         );
         let written = written.into_inner();
         let clash = |&one: &DefId| {
-            let same_name = |&other: &DefId| one != other && name(one) == name(other);
+            let same_name = |&other: &DefId| {
+                one != other && name(Naming::Declaration(one)) == name(Naming::Declaration(other))
+            };
             written.iter().any(same_name)
         };
         if !written.iter().any(clash) {
             return texts;
         }
-        let with_module = |definition: DefId| {
-            let module = &self.modules[definition.module.index()];
-            format!("{}::{}", module.path, name(definition))
+        // A type parameter is the one of the declaration being checked.
+        let with_module = |naming: Naming| match naming {
+            Naming::Declaration(definition) => {
+                let module = &self.modules[definition.module.index()];
+                format!("{}::{}", module.path, name(naming))
+            }
+            Naming::Parameter { .. } => name(naming).to_owned(),
         };
         (
             self.types.text(first, with_module),

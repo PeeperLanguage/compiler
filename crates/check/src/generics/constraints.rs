@@ -6,7 +6,6 @@
 use arena::Id;
 use arena::List;
 use diagnostics::Diagnostic;
-use model::ConstArguments;
 use model::constant;
 use model::semantic_types;
 use model::thir;
@@ -30,7 +29,7 @@ impl Checker<'_> {
         let checking = (self.internals.declarations_being_checked.last())
             .expect("a declaration is being checked");
         let (arguments, copy) = (checking.arguments, checking.copy());
-        let known = self.in_copy() || arguments == ConstArguments::NONE;
+        let known = !self.in_own_check();
         let module = copy.definition.module.index();
         let tree = &self.module().ast;
         let constraints: Vec<Id<ast::Constraint>> =
@@ -87,7 +86,8 @@ impl builder::ThirBuilder<'_, '_> {
     /// a type, implements the interface its bound names, or the function its
     /// bound names gives `true` when called at compile time with the subject
     /// first, then the constraint's arguments. `None` when that is not
-    /// known: after an error, reported, or for a subject only a copy knows.
+    /// known: after an error, reported, or for an open subject
+    /// (`Types::is_open`), which each copy decides.
     fn constraint_value(&mut self, constraint: Id<ast::Constraint>) -> Option<bool> {
         let tree = &self.checker.module().ast;
         let span = tree.children.constraints.span(constraint);
@@ -112,7 +112,7 @@ impl builder::ThirBuilder<'_, '_> {
                 let checked = self.call_found(found, None, bound_span, List::EMPTY, &given, span);
                 self.in_constant = outer;
                 if checked.ty == semantic_types::TypeId::INVALID {
-                    return None; // reported, or only a copy knows it
+                    return None; // reported
                 }
                 if checked.ty != semantic_types::TypeId::BOOL {
                     let ty = self.checker.type_text(checked.ty);
@@ -146,8 +146,9 @@ impl builder::ThirBuilder<'_, '_> {
                     return None;
                 }
                 let ty = self.written_type_argument(subject);
-                if ty == semantic_types::TypeId::INVALID {
-                    return None; // reported, or only a copy knows it
+                // Reported, or each copy knows it.
+                if ty == semantic_types::TypeId::INVALID || self.checker.types.is_open(ty) {
+                    return None;
                 }
                 if self.checker.types[ty].members().is_none() {
                     return Some(false);

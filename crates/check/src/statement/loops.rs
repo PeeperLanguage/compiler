@@ -64,8 +64,10 @@ impl ThirBuilder<'_, '_> {
         range: Id<Expr>,
         body: Id<ast::Block>,
     ) -> Stmt {
-        let element = match self.checker.types[self.body.exprs[range].ty] {
+        let ty = self.body.exprs[range].ty;
+        let element = match self.checker.types[ty] {
             Type::Range { element, .. } => element,
+            _ if self.checker.types.is_open(ty) => TypeId::UNDECIDED,
             _ => TypeId::INVALID,
         };
         let enclosing = self.open_block(body);

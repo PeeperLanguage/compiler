@@ -154,7 +154,7 @@ where
 }
 
 fn main() {
-    Loop(1); //~ label: in `Loop<i32>`, the copy made here
+    Loop(1);
     Max(true, false); //~ error[T0004]: `T: Number` is false for `Max<bool>`
     Whole(Point.{ x = 1 }); //~ error[T0004]: `T: is_int` is false for `Whole<Point>`
     Eight(1); //~ error[T0004]: `T: Sized(8)` is false for `Eight<i32>`
@@ -166,7 +166,7 @@ fn main() {
     Max(false, true); //~ error[T0004]: `T: Number` is false for `Max<bool>`
     // Types written at the call are asked about too.
     Max::<bool>(true, false); //~ error[T0004]: `T: Number` is false for `Max<bool>`
-    NotBool(1); //~ label: in `NotBool<i32>`, the copy made here
+    NotBool(1);
     Twice(true); //~ label: in `Twice<bool>`, the copy made here
     Negate(2.5); //~ label: in `Negate<f64>`, the copy made here
 }

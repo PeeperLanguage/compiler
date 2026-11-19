@@ -30,7 +30,9 @@ and inside a phase one list, one dispatch and one file per concept.
    it copies or holds loans, its text and hash) is one `match` in
    `semantic_types` or `layout.rs`, with the lints of rule 2, so a new
    type is a compile error at each. An answer is worked out when asked,
-   not stored: each is one `match`. The other phases read the answers and
+   not stored: each is one `match`. One is stored: whether a type is open
+   (`docs/generics.md`), asked of every type checked, is worked out once
+   when the type is interned, by the same kind of `match`. The other phases read the answers and
    do not decide them again. A `match` that asks only "is it an array?"
    keeps its `_ =>`: a new type is not an array.
 5. **Conversions are decided in one file**, `semantic_types/conversions.rs`,

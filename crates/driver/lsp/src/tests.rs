@@ -956,7 +956,7 @@ fn main() {
         // Its variables: one of a type every copy has, at a use.
         assert_eq!(hover(&server, utils, "kept", 1), shown("kept: i32", 5));
         // No call copies `Unused`. What it calls is found, a call that
-        // would make a copy too; a `T` it is given is no one type.
+        // would make a copy too; a value of its `T` is of the type `T`.
         assert_eq!(hover(&server, utils, "Small", 2), small);
         assert_eq!(
             hover(&server, utils, "Pick", 1),
@@ -988,8 +988,8 @@ fn main() {
                 12
             )
         );
-        assert_eq!(hover(&server, utils, "given", 1), shown("given", 8));
-        assert_eq!(hover(&server, utils, "held", 0), shown("mut held", 9));
+        assert_eq!(hover(&server, utils, "given", 1), shown("given: T", 8));
+        assert_eq!(hover(&server, utils, "held", 0), shown("mut held: T", 9));
         // A type parameter shows where it is declared; only a copy knows its type.
         let item = shown("Item: type", 16);
         assert_eq!(hover(&server, utils, "Item", 3), item); // after `where`

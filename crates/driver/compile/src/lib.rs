@@ -431,10 +431,10 @@ fn compile_module(
         };
         match tree.decls[declaration] {
             // A call makes a copy, built below. Its own body is checked with
-            // no type for a type parameter, where what is of such a type is
-            // unknown and reports nothing: what the body has wrong whatever
-            // its types are is reported here, once, though no call copies
-            // it, and an editor asks about its text.
+            // each type parameter standing for itself (`Type::Parameter`),
+            // where what each copy decides reports nothing: what the body has
+            // wrong whatever its types are is reported here, once, though no
+            // call copies it, and an editor asks about its text.
             ast::Decl::Function(function)
                 if check::generics::first_copy_parameter(tree, function.signature).is_some() =>
             {

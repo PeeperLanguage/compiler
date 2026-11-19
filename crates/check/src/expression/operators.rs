@@ -115,10 +115,16 @@ impl ThirBuilder<'_, '_> {
             UnaryOp::LogicalNot => *ty == Type::Bool,
             UnaryOp::BitNot => matches!(ty, Type::Integer(_)),
         };
-        if !fits(&ty) {
+        // On an open type, each copy decides whether it applies.
+        let open = self.checker.types.is_open(checked.ty);
+        if !open && !fits(&ty) {
             return self.report_invalid_operand(op.symbol(), checked.ty, operand, span, fits);
         }
-        let result = checked.ty;
+        let result = if op == UnaryOp::LogicalNot {
+            TypeId::BOOL
+        } else {
+            checked.ty
+        };
         let kind = match checked.kind {
             ExprKind::Constant(constant) => {
                 ExprKind::Constant(crate::fold::operators::unary(op, &ty, &constant))
@@ -194,7 +200,8 @@ impl ThirBuilder<'_, '_> {
             }
             BinaryOp::LogicalAnd | BinaryOp::LogicalOr => *ty == Type::Bool,
         };
-        let left_fits = fits(&left_type);
+        // On an open type, each copy decides whether it applies.
+        let left_fits = self.checker.types.is_open(left.ty) || fits(&left_type);
         // In a constant's value, `false && x` and `true || x` are the left
         // operand: `x` is checked but, as when the program runs, not run.
         let skips_right = self.in_constant
@@ -249,7 +256,8 @@ impl ThirBuilder<'_, '_> {
             return self.report_invalid_operand(op.symbol(), left.ty, left_operand, span, fits);
         }
         let right_type = self.checker.types[right.ty].clone();
-        if shift && !matches!(right_type, Type::Integer(_)) {
+        if shift && !matches!(right_type, Type::Integer(_)) && !self.checker.types.is_open(right.ty)
+        {
             let count = self.checker.type_text(right.ty);
             let message = format!("a shift count must be an integer, found `{count}`");
             let types = &self.checker.types;

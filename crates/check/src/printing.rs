@@ -302,17 +302,24 @@ pub(crate) fn check_print(
 ) -> thir::Expr {
     let tree = &builder.checker.module().ast;
     let mut checked = Vec::with_capacity(values.len());
+    let mut failed = false;
     for value in tree.children.lists.items(values) {
         let span = tree.exprs.span(value);
         let expr = builder.check_expr(value, None);
         let ty = expr.ty;
         let types = &builder.checker.types;
+        // Each copy prints a value of an open type its own way; a generic
+        // body's own check, which never runs, leaves it out.
+        if types.is_open(ty) {
+            continue;
+        }
         // On an error the others are still checked, for their own.
         if !printable(types, ty) {
             if ty != semantic_types::TypeId::INVALID {
                 let message = format!("`{}` cannot be printed", builder.checker.type_text(ty));
                 (builder.checker).error(diagnostics::INVALID_OPERATION, message, span);
             }
+            failed = true;
             continue;
         }
         let mut printed = builder.body.add(expr, span);
@@ -333,7 +340,7 @@ pub(crate) fn check_print(
         }
         checked.push(printed);
     }
-    if checked.len() < values.len() {
+    if failed {
         return thir::Expr::INVALID;
     }
     let mut written = None;

@@ -6,7 +6,6 @@ use diagnostics::Diagnostic;
 use diagnostics::suggest::nearest_name;
 use model::constant::Value;
 use model::semantic_types::Integer;
-use model::semantic_types::Members;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
 use model::thir::Expr;
@@ -83,7 +82,16 @@ impl ThirBuilder<'_, '_> {
         }
         let value = self.through_pointer(value, self.body.exprs.span(value));
         let ty = self.body.exprs[value].ty;
-        if self.checker.types[ty].members().is_none() {
+        // A struct given an open type has fields (`open_struct`); what else
+        // of an open type has, each copy decides.
+        let open_struct = matches!(self.checker.types[ty], Type::Named { .. });
+        if !open_struct && self.checker.types.is_open(ty) {
+            return Expr {
+                ty: TypeId::UNDECIDED,
+                kind: ExprKind::Undecided,
+            };
+        }
+        if !open_struct && self.checker.types[ty].members().is_none() {
             if ty != TypeId::INVALID {
                 let message = format!("`{}` has no fields", self.checker.type_text(ty));
                 self.checker
@@ -130,6 +138,13 @@ impl ThirBuilder<'_, '_> {
         let tree = &self.checker.module().ast;
         let index_span = self.body.exprs.span(index);
         let elements = self.checker.types[ty].elements();
+        // What indexing it means, each copy decides.
+        if elements.is_none() && self.checker.types.is_open(ty) {
+            return Expr {
+                ty: TypeId::UNDECIDED,
+                kind: ExprKind::Undecided,
+            };
+        }
         let (element, length) = elements.unwrap_or((TypeId::INVALID, None));
         if element == TypeId::INVALID {
             if ty != TypeId::INVALID {
@@ -239,6 +254,14 @@ impl ThirBuilder<'_, '_> {
         let array = self.through_pointer(array, tree.exprs.span(indexed));
         let ty = self.body.exprs[array].ty;
         let Some((element, length)) = self.checker.types[ty].elements() else {
+            // What slicing it means, each copy decides; the ends are checked.
+            if self.checker.types.is_open(ty) {
+                self.check_slice_ends([start, end], inclusive, ty, None, range);
+                return Expr {
+                    ty: TypeId::UNDECIDED,
+                    kind: ExprKind::Undecided,
+                };
+            }
             if ty != TypeId::INVALID {
                 let message = format!("`{}` cannot be sliced", self.checker.type_text(ty));
                 self.checker
@@ -339,6 +362,11 @@ impl ThirBuilder<'_, '_> {
         match &self.checker.types[ty] {
             pointer if let Some(target) = pointer.pointee() => self.dereference(reference, target),
             Type::Invalid => Expr::INVALID,
+            // What it reaches, each copy decides.
+            _ if self.checker.types.is_open(ty) => Expr {
+                ty: TypeId::UNDECIDED,
+                kind: ExprKind::Undecided,
+            },
             found => {
                 let message = format!(
                     "`.*` needs a reference or a typed raw pointer, found `{}`",
@@ -397,29 +425,41 @@ impl ThirBuilder<'_, '_> {
         }
     }
 
-    /// The index of the field `name` of the type `ty`, in declaration order,
-    /// and its type; `None` after reporting that the type has no such field,
-    /// with its nearest field name.
+    /// The index of the field `name` of the struct type `ty`, in
+    /// declaration order, and its type; `None` after reporting that the type
+    /// has no such field, with its nearest field name. A struct given an
+    /// open type has no copy holding its fields' types: they are read again
+    /// with what it is given (`field_types_given`).
     pub(crate) fn field_index(&mut self, ty: TypeId, name: Ident) -> Option<(usize, TypeId)> {
-        let Some(Members {
-            definition, fields, ..
-        }) = self.checker.types[ty].members()
+        let (Type::Struct { definition, .. } | Type::Named { definition, .. }) =
+            self.checker.types[ty]
         else {
-            unreachable!("only a type with members has fields")
+            unreachable!("only a struct has fields")
         };
         let file = &self.checker.module().ast.file;
         let text = name.text(file);
         let modules = self.checker.modules;
-        let found = model::program::field_names(modules, definition)
-            .position(|field| field == text)
-            .map(|index| (index, fields[index]));
-        if found.is_none() {
+        let Some(index) =
+            model::program::field_names(modules, definition).position(|field| field == text)
+        else {
             let message = format!("`{}` has no field `{text}`", self.checker.type_text(ty));
             let fields = model::program::field_names(modules, definition).map(|field| (field, 0));
             let meant = nearest_name(text, fields).map(str::to_string);
             self.checker
                 .report_unknown(diagnostics::UNKNOWN_FIELD, name.span, message, meant);
-        }
-        found
+            return None;
+        };
+        let field_type = match self.checker.types[ty] {
+            Type::Named { arguments, .. } => self
+                .checker
+                .field_types_given(definition, arguments, name.span)[index],
+            _ => {
+                self.checker.types[ty]
+                    .members()
+                    .expect("a struct has members")
+                    .fields[index]
+            }
+        };
+        Some((index, field_type))
     }
 }

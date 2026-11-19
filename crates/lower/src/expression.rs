@@ -45,6 +45,9 @@ impl Lowering<'_> {
                 thir::ExprKind::Invalid => {
                     unreachable!("a body with an invalid value has errors and is not lowered")
                 }
+                thir::ExprKind::Undecided => {
+                    unreachable!("only a generic declaration's own check, never lowered, has it")
+                }
                 thir::ExprKind::Constant(constant::Value::Bytes(_))
                     if ty == semantic_types::TypeId::STR =>
                 {

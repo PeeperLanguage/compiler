@@ -257,22 +257,17 @@ impl Checker<'_> {
                 if let ast::Type::Type = tree.types[parameter.ty] {
                     continue;
                 }
-                if self.resolve_value_type(parameter.ty) != semantic_types::TypeId::INVALID {
-                    continue;
+                let ty = self.resolve_value_type(parameter.ty);
+                if ty == semantic_types::TypeId::INVALID {
+                    return ty; // reported
                 }
                 // A value's type is read again at each call (`const_value_type`),
                 // which cannot know a type parameter yet: only the copy does.
-                // Any other error in it was reported.
-                let tree = &self.module().ast;
-                let type_parameters: Vec<&str> = (model::program::copy_parameters(tree, signature))
-                    .flatten()
-                    .map(|name| tree.file.slice(name))
-                    .collect();
-                if generics::names_type_parameter(tree, parameter.ty, &type_parameters) {
+                if self.types.is_open(ty) {
                     return self
                         .not_supported(span, "`const` values whose type names a type parameter");
                 }
-                return semantic_types::TypeId::INVALID;
+                continue;
             }
             if is_variadic && !kind.takes_variadic {
                 let message = format!("{} cannot have a `...` parameter", kind.name);

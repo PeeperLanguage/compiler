@@ -30,7 +30,9 @@ impl Checker<'_> {
     /// for, and for a function kept for the compile to build its body
     /// (`next_copy`). Invalid when the declaration's own check, or the
     /// copy's, has an error, or when copies are made inside each other too
-    /// deep (`COPY_DEPTH_LIMIT`), reported at `used_at`.
+    /// deep (`COPY_DEPTH_LIMIT`), reported at `used_at`. A copy is made only
+    /// for known types: one given an open type is not (`open_struct`,
+    /// `Types::substitute`).
     pub fn copy_type(&mut self, copy: DeclarationCopy, used_at: Span) -> semantic_types::TypeId {
         let has_body = matches!(
             model::program::declaration(self.modules, copy.definition),
@@ -51,11 +53,6 @@ impl Checker<'_> {
         if copy.arguments == ConstArguments::NONE || own == semantic_types::TypeId::INVALID {
             return own;
         }
-        // Named in a type's own check by what names `T`
-        // (`named_without_types`): its own check's name, which no value has.
-        if copy.arguments == self.own_arguments(copy.definition) {
-            return semantic_types::TypeId::INVALID;
-        }
         if let Some(&Copied { ty, .. }) = self.internals.copies.get(&copy) {
             // No type yet: asked for again inside its own check, as a
             // `where` or a field can.
@@ -73,19 +70,6 @@ impl Checker<'_> {
             .last()
             .expect("a use is being checked")
             .copy();
-        // A function's own signature and body, with no type for its `T`,
-        // are checked for their names only, so they make no copy. A type's
-        // own check does: it finds what its fields hold.
-        let made_by_function = matches!(
-            model::program::declaration(self.modules, made_inside.definition),
-            ast::Decl::Function(_)
-        );
-        if made_by_function
-            && made_inside.arguments != ConstArguments::NONE
-            && !self.internals.copies.contains_key(&made_inside)
-        {
-            return semantic_types::TypeId::INVALID;
-        }
         let (depth, reported_in) = match self.internals.copies.get(&made_inside) {
             Some(inside) => (inside.depth + 1, inside.reported_in),
             None => (1, self.current_module()),
@@ -139,29 +123,77 @@ impl Checker<'_> {
         ty
     }
 
-    /// What `definition` named with an argument that has no type stands
-    /// for: one reported, or one that names a `T` no copy gives yet.
-    /// Invalid, but in a type's own check, which keeps the declaration
-    /// named, as in its own check: what holds it by value checks it
-    /// (`copy_type`), so a type that holds itself, as `Two<[2]T>` in `Two`,
-    /// is found once, whatever `T` is.
-    pub(crate) fn named_without_types(&mut self, definition: DefId) -> semantic_types::TypeId {
-        let checking = (self.internals.declarations_being_checked.last())
-            .expect("a declaration is being checked");
-        let in_own_type_check = checking.arguments != ConstArguments::NONE
-            && !self.in_copy()
-            && matches!(
-                model::program::declaration(self.modules, checking.definition),
-                ast::Decl::Type(_)
-            );
-        if !in_own_type_check {
+    /// `named`, the struct `definition` given the open `arguments`
+    /// (`Types::is_open`), held by value at `span`. No copy is made: its
+    /// size and checks need what each copy gives. Its own check is, and
+    /// what its fields hold given `arguments` (`field_types_given`), so a
+    /// struct that holds itself through them, as `Two` holds `Box<Two<[2]T>>`,
+    /// is found once, in its own check, whatever `T` is. Invalid when either
+    /// has an error, reported.
+    pub(crate) fn open_struct(
+        &mut self,
+        named: semantic_types::TypeId,
+        definition: DefId,
+        arguments: ConstArguments,
+        span: Span,
+    ) -> semantic_types::TypeId {
+        let own = DeclarationCopy {
+            definition,
+            arguments: ConstArguments::NONE,
+        };
+        if self.copy_type(own, span) == semantic_types::TypeId::INVALID {
             return semantic_types::TypeId::INVALID;
         }
-        let arguments = self.own_arguments(definition);
-        self.types.intern(semantic_types::Type::Named {
+        let fields = self.field_types_given(definition, arguments, span);
+        if fields.contains(&semantic_types::TypeId::INVALID) {
+            return semantic_types::TypeId::INVALID;
+        }
+        named
+    }
+
+    /// The types of the fields of the struct `definition`, in order, given
+    /// `arguments`, asked for at `span`: each as its declaration writes it,
+    /// read again with them (`resolve_value_type`), recording nothing, once
+    /// for each `arguments`. For a struct given an open type, which has no
+    /// copy to hold them.
+    pub(crate) fn field_types_given(
+        &mut self,
+        definition: DefId,
+        arguments: ConstArguments,
+        span: Span,
+    ) -> &[semantic_types::TypeId] {
+        let given = DeclarationCopy {
             definition,
             arguments,
-        })
+        };
+        if self.internals.open_struct_fields.contains_key(&given) {
+            return &self.internals.open_struct_fields[&given];
+        }
+        let tree = &self.modules[definition.module.index()].ast;
+        let ast::Decl::Type(written) = tree.decls[tree.declaration(definition.index)] else {
+            unreachable!("only a struct declaration is given type arguments");
+        };
+        let ast::Type::Struct { fields } = tree.types[written.ty] else {
+            unreachable!("only a struct declaration is given type arguments");
+        };
+        let written: Vec<Id<ast::Type>> = (tree.children.lists.items(fields))
+            .map(|field| tree.children.fields[field].ty)
+            .collect();
+        let checking = Checking {
+            definition,
+            arguments,
+            used_at: span,
+            records_facts: false,
+        };
+        let fields = self.checking_in(checking, |checker| {
+            (written.into_iter())
+                .map(|ty| checker.resolve_value_type(ty))
+                .collect()
+        });
+        self.internals
+            .open_struct_fields
+            .entry(given)
+            .or_insert(fields)
     }
 
     /// A copy of a function whose body the compile has not built
@@ -174,17 +206,29 @@ impl Checker<'_> {
             .filter(|_| !self.internals.copies_too_deep)
     }
 
-    /// What the declaration `definition` is checked with outside any copy:
-    /// an invalid type for each of its type and `const` parameters
-    /// (`declaration_copy_parameters`), so only a type one is read as one
-    /// (`resolve_global`) and reports nothing; nothing when it has none.
+    /// What the declaration `definition` is checked with outside any copy
+    /// (`declaration_copy_parameters`): each parameter that stands for a
+    /// type, `<T>` or `const T: type`, is itself (`Type::Parameter`), so
+    /// what depends on it each copy decides; a `const` value's place holds
+    /// no value (`declare_parameters`). Nothing when it has none.
     pub(crate) fn own_arguments(&mut self, definition: DefId) -> ConstArguments {
-        let count = model::program::declaration_copy_parameters(self.modules, definition).count();
-        if count == 0 {
+        let parameters: Vec<Option<Span>> =
+            model::program::declaration_copy_parameters(self.modules, definition).collect();
+        if parameters.is_empty() {
             return ConstArguments::NONE;
         }
-        let invalid = semantic_types::ConstArgument::Type(semantic_types::TypeId::INVALID);
-        self.types.const_arguments(&vec![invalid; count])
+        let given: Vec<semantic_types::ConstArgument> = (parameters.iter().zip(0..))
+            .map(|(parameter, place)| {
+                let ty = match parameter {
+                    Some(_) => {
+                        (self.types).intern(semantic_types::Type::Parameter { definition, place })
+                    }
+                    None => semantic_types::TypeId::INVALID,
+                };
+                semantic_types::ConstArgument::Type(ty)
+            })
+            .collect();
+        self.types.const_arguments(&given)
     }
 
     /// The types `written` at `span` after `name`, the type declaration

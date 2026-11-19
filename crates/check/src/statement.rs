@@ -40,9 +40,9 @@ impl Checker<'_> {
     /// what `body` held is dropped, its memory kept. False, with `body`
     /// untouched, for a function without a body or whose signature had
     /// an error. A function a copy is made for, given nothing, is checked
-    /// as its signature is, with no type for a type parameter and no value
-    /// for a `const` one (`own_arguments`): what its body names is found,
-    /// and it reports what is wrong whatever those are.
+    /// as its signature is, each type parameter standing for itself and no
+    /// value for a `const` one (`own_arguments`): what its body names is
+    /// found, and it reports what is wrong whatever those are.
     pub fn check_body(
         &mut self,
         copy: DeclarationCopy,
@@ -486,7 +486,11 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
                 } => {
                     let iterable = self.add_expr(iterable, None);
                     let ty = self.body.exprs[iterable].ty;
-                    if let Type::Range { .. } = self.checker.types[ty] {
+                    // What walking an open value means, each copy decides; the
+                    // own check, never lowered, checks the body as a range's.
+                    if matches!(self.checker.types[ty], Type::Range { .. })
+                        || self.checker.types.is_open(ty)
+                    {
                         self.check_for_range(index, Some(value), iterable, body?)
                     } else {
                         self.check_for_array(index, value, iterable, body?)?

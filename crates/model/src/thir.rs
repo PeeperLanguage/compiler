@@ -13,6 +13,7 @@ use crate::ModuleId;
 use crate::constant::Value;
 use crate::semantic_types::Constant;
 use crate::semantic_types::ImplementationId;
+use crate::semantic_types::Naming;
 use crate::semantic_types::Type;
 use crate::semantic_types::TypeId;
 use crate::semantic_types::Types;
@@ -263,6 +264,13 @@ pub enum ExprKind {
     /// The statements of the block, run where the expression is computed;
     /// it gives no value (`ty` is `void`).
     Block(Id<Block>),
+    /// A value each copy computes its own way, in a generic declaration's
+    /// own check, which never runs: an operation whose meaning depends on an
+    /// open type (`Types::is_open`), as `t[0]` of a `t: T`, or a call that
+    /// runs at compile time given one. Its type is what is known of it,
+    /// else `Type::Undecided`.
+    Undecided,
+    /// After an error, reported.
     Invalid,
 }
 
@@ -399,6 +407,14 @@ impl Body {
         found
     }
 
+    /// Whether `kind` or a part of it, going through its parts as
+    /// `first_named_variable` does, is one each copy computes
+    /// (`ExprKind::Undecided`), as `size_of(T) + 1` in a generic body.
+    pub fn holds_undecided(&self, kind: &ExprKind) -> bool {
+        matches!(kind, ExprKind::Undecided)
+            || self.any_part(kind, |part| self.holds_undecided(&self.exprs[part].kind))
+    }
+
     /// Keeps every temporary made in computing `value`, the value a `let` or
     /// an assignment gives the variable `kept_by`, as long as `kept_by`: so
     /// what `kept_by` may hold a loan on lasts as long as it does.
@@ -424,6 +440,7 @@ impl Body {
             ExprKind::Constant(_)
             | ExprKind::Variable(_)
             | ExprKind::Block(_)
+            | ExprKind::Undecided
             | ExprKind::Invalid => false,
             ExprKind::Binary { left, right, .. }
             | ExprKind::Index {
@@ -465,7 +482,8 @@ impl Body {
     }
 
     /// The body as text, one statement per line, for `peeper -dump`. `file` is
-    /// where the body is written; `name_of` gives a declaration's name. A
+    /// where the body is written; `name_of` gives a declaration's or type
+    /// parameter's name. A
     /// variable shows as its name and index (`x.2`), a constant other than a
     /// `bool` with its type (`1:i32`), an operation in parentheses, and a
     /// field by its index (`p.0[1]`, `Point.{ [1] = 2:i32 }`).
@@ -473,7 +491,7 @@ impl Body {
         &self,
         types: &Types,
         file: &SourceFile,
-        name_of: impl Fn(DefId) -> N + Copy,
+        name_of: impl Fn(Naming) -> N + Copy,
     ) -> String {
         let mut printer = Printer {
             body: self,
@@ -496,7 +514,7 @@ struct Printer<'b, F> {
     out: String,
 }
 
-impl<N: Display, F: Fn(DefId) -> N + Copy> Printer<'_, F> {
+impl<N: Display, F: Fn(Naming) -> N + Copy> Printer<'_, F> {
     /// Each of `statements` on its own line, `depth` levels in.
     fn write_statements(&mut self, statements: List<Stmt>, depth: usize) {
         for statement in self.body.children.lists.items(statements) {
@@ -652,7 +670,8 @@ impl<N: Display, F: Fn(DefId) -> N + Copy> Printer<'_, F> {
             } => {
                 match callee {
                     Callee::Function(function) => {
-                        let name = (self.name_of)(function.definition).to_string();
+                        let name =
+                            (self.name_of)(Naming::Declaration(function.definition)).to_string();
                         let copy = self.types.copy_text(name, function.arguments, self.name_of);
                         _ = write!(self.out, "call {copy}(");
                     }
@@ -722,7 +741,11 @@ impl<N: Display, F: Fn(DefId) -> N + Copy> Printer<'_, F> {
                 self.out.push_str("interface(");
                 self.write_expr(*reference);
                 for &method in self.types.implementation(*implementation) {
-                    _ = write!(self.out, ", {}", (self.name_of)(method));
+                    _ = write!(
+                        self.out,
+                        ", {}",
+                        (self.name_of)(Naming::Declaration(method))
+                    );
                 }
                 _ = write!(self.out, "):{}", self.types.text(*ty, self.name_of));
             }
@@ -772,6 +795,7 @@ impl<N: Display, F: Fn(DefId) -> N + Copy> Printer<'_, F> {
             ExprKind::Block(_) => {
                 unreachable!("a block gives no value, so only a statement holds it")
             }
+            ExprKind::Undecided => self.out.push_str("undecided"),
             ExprKind::Invalid => self.out.push_str("invalid"),
         }
     }

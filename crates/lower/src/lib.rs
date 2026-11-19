@@ -750,13 +750,13 @@ impl Lowering<'_> {
                     (names.map(str::to_string).zip(fields.iter().copied())).collect();
                 return self.debug_struct(ty, &name, &fields, depth);
             }
-            semantic_types::Type::Range { element, step } => {
+            semantic_types::Type::Range { element } => {
                 let semantic_types::Type::Integer(integer) = self.types[*element] else {
                     unreachable!("a range is of integers")
                 };
                 let name = format!("{}[{integer}]", semantic_types::builtin::RANGE);
                 let fields: Vec<(String, semantic_types::TypeId)> =
-                    semantic_types::ranges::range_fields(*element, *step)
+                    (self.types.range_fields(*element))
                         .map(|(field, ty)| (field.to_string(), ty))
                         .into();
                 return self.debug_struct(ty, &name, &fields, depth);
@@ -764,8 +764,10 @@ impl Lowering<'_> {
             semantic_types::Type::Invalid
             | semantic_types::Type::Void
             | semantic_types::Type::Function { .. }
-            | semantic_types::Type::Named { .. } => {
-                unreachable!("no value has this type")
+            | semantic_types::Type::Named { .. }
+            | semantic_types::Type::Parameter { .. }
+            | semantic_types::Type::Undecided => {
+                unreachable!("no value has this type: a copy's types are known")
             }
             semantic_types::Type::Alias { .. } => unreachable!("indexing looks through aliases"),
         };

@@ -78,6 +78,19 @@ pub enum Type {
     /// The type of something whose error was already reported; uses of it
     /// report nothing more.
     Invalid,
+    /// The `place`-th parameter a copy of the declaration `definition` is
+    /// made for that stands for a type, `<T>` or `const T: type`
+    /// (`program::declaration_copy_parameters`), in the declaration's own
+    /// check, where no copy has given it one. A type that holds it is open
+    /// (`Types::is_open`).
+    Parameter {
+        definition: DefId,
+        place: u32,
+    },
+    /// The type of a result that depends on a type parameter in a way the
+    /// declaration's own check cannot tell, as `t[0]` of a `t: T`: each
+    /// copy decides it. Open, and, unlike `Invalid`, no error was reported.
+    Undecided,
     /// What a function without a result gives.
     Void,
     Bool,
@@ -142,13 +155,10 @@ pub enum Type {
         internals: ArrayInternals,
     },
     /// `range[element]`: the integers from a start toward an end, a step
-    /// apart, up or down; its fields are `range_fields`. `step` is the
-    /// unsigned integer type as wide as `element`, the step's type, kept
-    /// here so a reader of the types finds it without adding it
-    /// (`Types::range` makes both).
+    /// apart, up or down; its fields are `Types::range_fields`, its step's
+    /// type `Types::range_step`.
     Range {
         element: TypeId,
-        step: TypeId,
     },
     /// `&T`, or `&mut T` when `mutable`: a view of a `target` value held
     /// elsewhere, never itself a reference.
@@ -230,8 +240,10 @@ impl Type {
             | Type::Slice { mutable, .. }
             | Type::InterfaceReference { mutable, .. } => Some(mutable),
             // A struct, an array or an owned interface may hold loans without
-            // being one (`Types::holds_loans`).
+            // being one (`Types::holds_loans`). An open type's copies decide.
             Type::Invalid
+            | Type::Parameter { .. }
+            | Type::Undecided
             | Type::Void
             | Type::Bool
             | Type::Integer(_)
@@ -312,14 +324,34 @@ pub enum Conversion {
     /// from `bool` to an integer, and between raw pointers of other types
     /// (the same address).
     NeedsCast(mir::Cast),
+    /// One type is open (`Types::is_open`): whether and how it converts,
+    /// each copy decides.
+    Undecided,
     /// No conversion.
     Never,
+}
+
+/// What `Types::text` asks its `name_of` for: the name of a declaration,
+/// or of the `place`-th type parameter of one (`Type::Parameter`).
+#[derive(Clone, Copy, Debug)]
+pub enum Naming {
+    Declaration(DefId),
+    Parameter { definition: DefId, place: u32 },
+}
+
+/// A type in the `Types` table, with whether it is open: it holds a
+/// `Type::Parameter` or `Type::Undecided`, so what depends on that, as its
+/// size or whether an operator applies to it, each copy decides. Found
+/// from its parts when it is added.
+struct Entry {
+    ty: Type,
+    open: bool,
 }
 
 /// The types of a program, for one compile (`check::Checker` holds them).
 pub struct Types {
     pub usize: TypeId, // as wide as a pointer of the target
-    types: Vec<Type>,
+    types: Vec<Entry>,
     ids: FxHashMap<Type, TypeId>,
     /// Each implementation's functions, in its interface's order, by
     /// `ImplementationId`; the checker adds one at the first conversion of
@@ -374,13 +406,14 @@ impl Types {
     }
 
     /// `name<T, 3>`: the function `name` of the copy made for `arguments`,
-    /// each type as `name_of` names its declaration, each value as Peeper
+    /// each type as `name_of` names its declaration or type parameter
+    /// (`Naming`), each value as Peeper
     /// text; `name` alone without `const` arguments.
     pub fn copy_text<N: fmt::Display>(
         &self,
         name: String,
         arguments: ConstArguments,
-        name_of: impl Fn(DefId) -> N + Copy,
+        name_of: impl Fn(Naming) -> N + Copy,
     ) -> String {
         let given = self.arguments(arguments);
         if given.is_empty() {
@@ -397,7 +430,7 @@ impl Types {
     pub fn argument_text<N: fmt::Display>(
         &self,
         argument: &ConstArgument,
-        name_of: impl Fn(DefId) -> N + Copy,
+        name_of: impl Fn(Naming) -> N + Copy,
     ) -> String {
         match argument {
             ConstArgument::Type(ty) => self.text(*ty, name_of),
@@ -427,7 +460,11 @@ impl Types {
             return id;
         }
         let id = TypeId(u32::try_from(self.types.len()).expect("fewer than 2^32 types"));
-        self.types.push(ty.clone());
+        let open = self.holds_open(&ty);
+        self.types.push(Entry {
+            ty: ty.clone(),
+            open,
+        });
         self.ids.insert(ty, id);
         id
     }
@@ -453,6 +490,8 @@ impl Types {
             Type::Interface { .. } => Some(true),
             // Any other type holds a loan only by being one.
             other @ (Type::Invalid
+            | Type::Parameter { .. }
+            | Type::Undecided
             | Type::Void
             | Type::Bool
             | Type::Integer(_)
@@ -486,6 +525,8 @@ impl Types {
                 .saturating_mul(self.holders_in(internals.base)),
             Type::Interface { .. } => 1,
             other @ (Type::Invalid
+            | Type::Parameter { .. }
+            | Type::Undecided
             | Type::Void
             | Type::Bool
             | Type::Integer(_)
@@ -542,17 +583,319 @@ impl Types {
             | Type::InterfaceReference { mutable, .. } => !mutable,
             Type::Array { internals, .. } => self.is_copy(internals.base),
             Type::Struct { .. } | Type::Interface { .. } => false,
-            // No value of these is moved: an error, nothing, or not yet a value.
-            Type::Invalid | Type::Void | Type::Function { .. } => true,
+            // No value of these is moved: an error, nothing, not yet a value,
+            // or one each copy decides for.
+            Type::Invalid
+            | Type::Parameter { .. }
+            | Type::Undecided
+            | Type::Void
+            | Type::Function { .. } => true,
             Type::Alias { .. } | Type::Named { .. } => {
                 unreachable!("indexing `Types` looks through aliases; no value is named")
             }
         }
     }
 
+    /// Whether the type `id` is open (`Entry`): what depends on its type
+    /// parameters, each copy decides.
+    pub fn is_open(&self, id: TypeId) -> bool {
+        self.types[id.0 as usize].open
+    }
+
+    /// Whether one of `arguments` is an open type (`is_open`).
+    pub fn arguments_open(&self, arguments: ConstArguments) -> bool {
+        (self.arguments(arguments).iter()).any(|argument| match argument {
+            ConstArgument::Type(part) => self.is_open(*part),
+            ConstArgument::Value(constant) => self.is_open(constant.ty),
+        })
+    }
+
+    /// `ty` with each type parameter of `definition` (`Type::Parameter`)
+    /// replaced by the type `arguments` give in its place: the type of the
+    /// declaration's copy for open `arguments`, which no copy is made for.
+    /// A part the copy would reject, as a range of `bool`, is undecided:
+    /// the copy, once one is made, reports it.
+    #[deny(
+        clippy::wildcard_enum_match_arm,
+        clippy::match_wildcard_for_single_variants
+    )]
+    pub fn substitute(
+        &mut self,
+        ty: TypeId,
+        definition: DefId,
+        arguments: ConstArguments,
+    ) -> TypeId {
+        if !self.is_open(ty) {
+            return ty;
+        }
+        let part = |types: &mut Types, part: TypeId| types.substitute(part, definition, arguments);
+        match self[ty].clone() {
+            Type::Parameter {
+                definition: of,
+                place,
+            } if of == definition => match self.arguments(arguments)[place as usize] {
+                ConstArgument::Type(given) => given,
+                ConstArgument::Value(_) => unreachable!("a type parameter is given a type"),
+            },
+            Type::Parameter { .. } | Type::Undecided => ty,
+            Type::Function {
+                parameters,
+                result,
+                origins,
+                variadic,
+            } => {
+                let parameters = (parameters.iter())
+                    .map(|&parameter| part(self, parameter))
+                    .collect();
+                let result = part(self, result);
+                self.intern(Type::Function {
+                    parameters,
+                    result,
+                    origins,
+                    variadic,
+                })
+            }
+            Type::Named {
+                definition: named,
+                arguments: given,
+            } => {
+                let given: Vec<ConstArgument> = (self.arguments(given).to_vec().into_iter())
+                    .map(|argument| match argument {
+                        ConstArgument::Type(given) => ConstArgument::Type(part(self, given)),
+                        value @ ConstArgument::Value(_) => value,
+                    })
+                    .collect();
+                let arguments = self.const_arguments(&given);
+                self.intern(Type::Named {
+                    definition: named,
+                    arguments,
+                })
+            }
+            Type::Array {
+                element, length, ..
+            } => {
+                let element = part(self, element);
+                self.array(element, length)
+            }
+            Type::Range { element } => {
+                let element = part(self, element);
+                self.range(element).unwrap_or(TypeId::UNDECIDED)
+            }
+            Type::Reference { mutable, target } => {
+                let target = part(self, target);
+                self.intern(Type::Reference { mutable, target })
+            }
+            Type::Slice { mutable, element } => {
+                let element = part(self, element);
+                self.intern(Type::Slice { mutable, element })
+            }
+            Type::RawPointer {
+                target: Some(target),
+            } => {
+                let target = Some(part(self, target));
+                self.intern(Type::RawPointer { target })
+            }
+            Type::Invalid
+            | Type::Void
+            | Type::Bool
+            | Type::Integer(_)
+            | Type::Float(_)
+            | Type::CString
+            | Type::Str
+            | Type::Alias { .. }
+            | Type::Struct { .. }
+            | Type::Interface { .. }
+            | Type::InterfaceReference { .. }
+            | Type::RawPointer { target: None } => {
+                unreachable!("an open type holds a type parameter: these do not, or are copies")
+            }
+        }
+    }
+
+    /// Puts in `found`, at each place, the type `actual` gives for the type
+    /// parameter of `definition` there (`Type::Parameter`) where `pattern`,
+    /// the type of a parameter of `definition`'s own check, names it: the
+    /// part of `actual` in its place. A place already found keeps its type;
+    /// a part of another shape finds nothing, and the call reports the
+    /// mismatch. A reference to an array, `&[3]i32`, given for a slice,
+    /// `&[]T`, gives its element. An undecided part (`Type::Undecided`), as
+    /// `t[0]` of a `t: T` in a generic body, leaves each parameter its
+    /// pattern names undecided: each copy finds it.
+    #[deny(
+        clippy::wildcard_enum_match_arm,
+        clippy::match_wildcard_for_single_variants
+    )]
+    pub fn find_parameters(
+        &self,
+        pattern: TypeId,
+        actual: TypeId,
+        definition: DefId,
+        found: &mut [Option<TypeId>],
+    ) {
+        if !self.is_open(pattern) {
+            return;
+        }
+        let actual = self.real(actual);
+        let mut part = |pattern: TypeId, actual: TypeId| {
+            source::grow_stack(|| self.find_parameters(pattern, actual, definition, found));
+        };
+        match (&self[pattern], &self[actual]) {
+            (
+                &Type::Parameter {
+                    definition: of,
+                    place,
+                },
+                _,
+            ) => {
+                if of == definition
+                    && let Some(slot) = found.get_mut(place as usize)
+                {
+                    slot.get_or_insert(actual);
+                }
+            }
+            (Type::Undecided, _) => {}
+            (_, Type::Undecided) => {
+                let named = self.parameters_named(pattern, definition, found.len());
+                for (slot, named) in found.iter_mut().zip(named) {
+                    if named {
+                        slot.get_or_insert(TypeId::UNDECIDED);
+                    }
+                }
+            }
+            (
+                Type::Function {
+                    parameters, result, ..
+                },
+                Type::Function {
+                    parameters: given,
+                    result: given_result,
+                    ..
+                },
+            ) => {
+                for (&pattern, &actual) in parameters.iter().zip(given.iter()) {
+                    part(pattern, actual);
+                }
+                part(*result, *given_result);
+            }
+            (
+                &Type::Named {
+                    definition: named,
+                    arguments,
+                },
+                &(Type::Named {
+                    definition: given_definition,
+                    arguments: given,
+                }
+                | Type::Struct {
+                    definition: given_definition,
+                    arguments: given,
+                    ..
+                }),
+            ) if named == given_definition => {
+                let pairs = self.arguments(arguments).iter().zip(self.arguments(given));
+                for pair in pairs {
+                    if let (&ConstArgument::Type(pattern), &ConstArgument::Type(actual)) = pair {
+                        part(pattern, actual);
+                    }
+                }
+            }
+            (Type::Array { element, .. }, Type::Array { element: given, .. })
+            | (Type::Range { element }, Type::Range { element: given })
+            | (Type::Slice { element, .. }, Type::Slice { element: given, .. })
+            | (
+                Type::Reference {
+                    target: element, ..
+                },
+                Type::Reference { target: given, .. },
+            )
+            | (
+                Type::RawPointer {
+                    target: Some(element),
+                },
+                Type::RawPointer {
+                    target: Some(given),
+                },
+            ) => part(*element, *given),
+            (Type::Slice { element, .. }, &Type::Reference { target, .. }) => {
+                if let Type::Array { element: given, .. } = self[target] {
+                    part(*element, given);
+                }
+            }
+            (
+                Type::Function { .. }
+                | Type::Named { .. }
+                | Type::Array { .. }
+                | Type::Range { .. }
+                | Type::Slice { .. }
+                | Type::Reference { .. }
+                | Type::RawPointer { target: Some(_) },
+                _,
+            ) => {}
+            (
+                Type::Invalid
+                | Type::Void
+                | Type::Bool
+                | Type::Integer(_)
+                | Type::Float(_)
+                | Type::CString
+                | Type::Str
+                | Type::Alias { .. }
+                | Type::Struct { .. }
+                | Type::Interface { .. }
+                | Type::InterfaceReference { .. }
+                | Type::RawPointer { target: None },
+                _,
+            ) => unreachable!("an open type holds a type parameter: these do not, or are copies"),
+        }
+    }
+
+    /// Which of the first `count` type parameters of `definition`, by place,
+    /// the type `ty` names: what it finds matched against itself.
+    pub fn parameters_named(&self, ty: TypeId, definition: DefId, count: usize) -> Vec<bool> {
+        let mut named = vec![None; count];
+        self.find_parameters(ty, ty, definition, &mut named);
+        named.iter().map(Option::is_some).collect()
+    }
+
+    /// Whether the type `ty`, about to be added, is open: it is a type
+    /// parameter or undecided, or a part of it is open.
+    #[deny(
+        clippy::wildcard_enum_match_arm,
+        clippy::match_wildcard_for_single_variants
+    )]
+    fn holds_open(&self, ty: &Type) -> bool {
+        match ty {
+            Type::Parameter { .. } | Type::Undecided => true,
+            Type::Invalid
+            | Type::Void
+            | Type::Bool
+            | Type::Integer(_)
+            | Type::Float(_)
+            | Type::CString
+            | Type::Str
+            | Type::RawPointer { target: None } => false,
+            Type::Function {
+                parameters, result, ..
+            } => self.is_open(*result) || parameters.iter().any(|&part| self.is_open(part)),
+            Type::Named { arguments, .. } | Type::Struct { arguments, .. } => {
+                self.arguments_open(*arguments)
+            }
+            Type::Interface { methods, .. } => methods.iter().any(|&part| self.is_open(part)),
+            Type::Alias { real: part, .. }
+            | Type::Array { element: part, .. }
+            | Type::Range { element: part }
+            | Type::Reference { target: part, .. }
+            | Type::Slice { element: part, .. }
+            | Type::InterfaceReference {
+                interface: part, ..
+            }
+            | Type::RawPointer { target: Some(part) } => self.is_open(*part),
+        }
+    }
+
     /// The type `id` stands for: itself, or the type an alias names.
     pub fn real(&self, id: TypeId) -> TypeId {
-        match self.types[id.0 as usize] {
+        match self.types[id.0 as usize].ty {
             Type::Alias { real, .. } => real,
             _ => id,
         }
@@ -614,6 +957,10 @@ impl Types {
                 }
             }
             Type::Interface { definition, .. } => declaration(*definition, hasher),
+            Type::Parameter { definition, place } => {
+                declaration(*definition, hasher);
+                place.hash(hasher);
+            }
             Type::Array { internals, .. } => {
                 // Lengths are any number: the count keeps one from reading as
                 // the type after it.
@@ -623,7 +970,7 @@ impl Types {
                 }
                 self.hash(internals.base, hasher, declaration);
             }
-            Type::Range { element, .. } => self.hash(*element, hasher, declaration), // `step` follows
+            Type::Range { element } => self.hash(*element, hasher, declaration),
             Type::Reference { mutable, target }
             | Type::Slice {
                 mutable,
@@ -643,18 +990,28 @@ impl Types {
                     source::grow_stack(|| self.hash(*target, hasher, declaration));
                 }
             }
-            Type::Invalid | Type::Void | Type::Bool | Type::CString | Type::Str => {}
+            Type::Invalid
+            | Type::Undecided
+            | Type::Void
+            | Type::Bool
+            | Type::CString
+            | Type::Str => {}
             Type::Alias { .. } => unreachable!("indexing looks through aliases"),
         }
     }
 
     /// The type `id` as a program writes it, a declared type or an alias by its name,
-    /// which `name_of` gives for its declaration: an alias is followed by the
+    /// which `name_of` gives for its declaration or type parameter
+    /// (`Naming`): an alias is followed by the
     /// type itself (`Meters (aka i64)`).
-    pub fn text<N: fmt::Display>(&self, id: TypeId, name_of: impl Fn(DefId) -> N + Copy) -> String {
+    pub fn text<N: fmt::Display>(
+        &self,
+        id: TypeId,
+        name_of: impl Fn(Naming) -> N + Copy,
+    ) -> String {
         let mut text = String::new();
-        if let Type::Alias { definition, real } = self.types[id.0 as usize] {
-            _ = write!(text, "{} (aka ", name_of(definition));
+        if let Type::Alias { definition, real } = self.types[id.0 as usize].ty {
+            _ = write!(text, "{} (aka ", name_of(Naming::Declaration(definition)));
             self.write_real_text(&mut text, real, name_of);
             text.push(')');
         } else {
@@ -674,7 +1031,7 @@ impl Types {
         &self,
         out: &mut String,
         id: TypeId,
-        name_of: impl Fn(DefId) -> N + Copy,
+        name_of: impl Fn(Naming) -> N + Copy,
     ) {
         let id = self.real(id);
         match &self[id] {
@@ -718,10 +1075,20 @@ impl Types {
                 arguments,
                 ..
             } => {
-                let name = name_of(*definition).to_string();
+                let name = name_of(Naming::Declaration(*definition)).to_string();
                 out.push_str(&self.copy_text(name, *arguments, name_of));
             }
-            Type::Interface { definition, .. } => _ = write!(out, "{}", name_of(*definition)),
+            Type::Interface { definition, .. } => {
+                _ = write!(out, "{}", name_of(Naming::Declaration(*definition)));
+            }
+            Type::Parameter { definition, place } => {
+                let parameter = Naming::Parameter {
+                    definition: *definition,
+                    place: *place,
+                };
+                _ = write!(out, "{}", name_of(parameter));
+            }
+            Type::Undecided => out.push_str("{undecided}"),
             Type::Array { internals, .. } => {
                 for length in self.array_lengths(id) {
                     _ = write!(out, "[{length}]");
@@ -763,7 +1130,7 @@ impl Index<TypeId> for Types {
 
     /// The type itself, aliases looked through (`Types::real`).
     fn index(&self, id: TypeId) -> &Type {
-        &self.types[self.real(id).0 as usize]
+        &self.types[self.real(id).0 as usize].ty
     }
 }
 

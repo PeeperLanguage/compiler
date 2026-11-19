@@ -26,7 +26,8 @@ pub(crate) fn resolve_struct_type(checker: &mut Checker<'_>, span: Span) -> sema
 }
 
 /// The type the struct declaration `definition`, written `written` with
-/// `fields`, declares, its fields laid out for the target.
+/// `fields`, declares, its fields laid out for the target. Given an open
+/// type, as in its own check, it stays a name: each copy is laid out.
 pub(crate) fn declare_struct_type(
     checker: &mut Checker<'_>,
     fields: List<ast::Field>,
@@ -57,9 +58,12 @@ pub(crate) fn declare_struct_type(
     if field_types.contains(&semantic_types::TypeId::INVALID) {
         return semantic_types::TypeId::INVALID;
     }
+    let named = checker.declared_name(definition);
+    if checker.types.is_open(named) {
+        return named;
+    }
     let (offsets, size, align) =
         layout::struct_layout(&checker.types, &field_types, checker.target);
-    let named = checker.declared_name(definition);
     let mut ty = checker.fits_target(named, size, written.name.span);
     let holders = checker.types.holders_in_fields(&field_types);
     if checker.reports_too_many_holders(named, holders, written.name.span) {
@@ -86,17 +90,22 @@ pub(crate) fn check_struct_literal(
     let tree = &builder.checker.module().ast;
     let ty = match (written, expected) {
         (Some(written), _) => builder.checker.resolve_value_type(written),
+        // A struct, or one given an open type (`open_struct`).
         (None, Some(expected))
             if matches!(
                 builder.checker.types[expected],
-                semantic_types::Type::Struct { .. }
+                semantic_types::Type::Struct { .. } | semantic_types::Type::Named { .. }
             ) =>
         {
             expected
         }
-        // Reported where it was written, or a `T` only a copy knows:
-        // `let b: Box<T> = .{ ... }` in a generic function's own body.
-        (None, Some(semantic_types::TypeId::INVALID)) => semantic_types::TypeId::INVALID,
+        // Reported where it was written, or one each copy decides.
+        (None, Some(expected))
+            if expected == semantic_types::TypeId::INVALID
+                || builder.checker.types.is_open(expected) =>
+        {
+            expected
+        }
         (None, _) => {
             let message = "this struct literal needs its type: write it before `.{`";
             builder
@@ -104,13 +113,11 @@ pub(crate) fn check_struct_literal(
                 .error(diagnostics::MISSING_TYPE, message, span)
         }
     };
-    let semantic_types::Type::Struct {
-        definition,
-        fields: field_types,
-        ..
-    } = &builder.checker.types[ty]
+    let (semantic_types::Type::Struct { definition, .. }
+    | semantic_types::Type::Named { definition, .. }) = builder.checker.types[ty]
     else {
-        if ty != semantic_types::TypeId::INVALID {
+        let open = builder.checker.types.is_open(ty);
+        if ty != semantic_types::TypeId::INVALID && !open {
             let message = format!(
                 "expected a struct type, found `{}`",
                 builder.checker.type_text(ty)
@@ -125,11 +132,17 @@ pub(crate) fn check_struct_literal(
             let value = tree.children.field_values[field].value;
             builder.add_expr(value, Some(semantic_types::TypeId::INVALID));
         }
+        if open {
+            return thir::Expr {
+                ty: semantic_types::TypeId::UNDECIDED,
+                kind: thir::ExprKind::Undecided,
+            };
+        }
         return thir::Expr::INVALID;
     };
-    let definition = *definition;
     // Where each field is set, by its index.
-    let mut set: Vec<Option<Span>> = vec![None; field_types.len()];
+    let count = model::program::field_names(builder.checker.modules, definition).count();
+    let mut set: Vec<Option<Span>> = vec![None; count];
     let mut checked: Vec<num::NonZeroU32> = Vec::with_capacity(fields.len());
     for field in tree.children.lists.items(fields) {
         let ast::FieldValue { name, value } = tree.children.field_values[field];

@@ -90,7 +90,7 @@ with a node of that kind edits them:
 | `parser::dump::expr` | `ast::Expr` | 29 |
 | `model::thir::write_expr`, `any_part` | `thir::ExprKind` | 20 each |
 | `lower::expression::lower_expr` | `thir::ExprKind` | 20 |
-| `check::declaration::resolve_type`, `names_type_parameter` | `ast::Type` | 17 each |
+| `check::declaration::resolve_type` | `ast::Type` | 17 |
 | `check::statement::check_statement`, `parser::dump::stmt` | `ast::Stmt` | 14 each |
 | `model::thir::write_statement`, `lower::statement::lower_statement` | statements | 11 each |
 | `lower::expression::lower_into` | `thir::ExprKind` | 8 |
@@ -126,7 +126,7 @@ largest):
 | Its elements and their count | `elements`, `count_spread`, `lower_array_literal`, `part_count`, `lower_slice`, `lower_index`, `check_for_array`, `help_spread`, `check_variadic`, `check_field` (`.len`) |
 | What it views and how | `pointee`, `borrows`, `is_slice_shaped`, `reborrow`, `place_root`, `check_slice`, `lower_borrow` |
 | Its members and functions | `check_call`, `method`, `implementation`, `check_type_declaration` |
-| Its written form | `resolve_type`, `names_type_parameter`, `resolve_signature_type`, `reference_type`, `method_type` |
+| Its written form | `resolve_type`, `resolve_signature_type`, `reference_type`, `method_type` |
 
 **An operation across two features:** `Types::conversion` (9 features), and
 `check_binary`'s raw pointer `+` with an integer. Section 4 splits each.

@@ -84,7 +84,7 @@ pub(crate) fn check_range(
         .checker
         .range_type(builder.body.exprs[start].ty, span);
     let step_type = match builder.checker.types[ty] {
-        semantic_types::Type::Range { step, .. } => step,
+        semantic_types::Type::Range { element } => builder.checker.types.range_step(element),
         _ => semantic_types::TypeId::INVALID,
     };
     let step = check_range_step(builder, step, step_type, span);

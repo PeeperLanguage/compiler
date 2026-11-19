@@ -118,8 +118,9 @@ impl ThirBuilder<'_, '_> {
                 place
             }
         };
-        if let ExprKind::Invalid = self.body.exprs[place].kind {
-            return None; // its error was reported
+        // Its error was reported, or what it sets, each copy decides.
+        if let ExprKind::Invalid | ExprKind::Undecided = self.body.exprs[place].kind {
+            return None;
         }
         let (start, decider) = self.place_root(place);
         let variable = match self.body.exprs[start].kind {
