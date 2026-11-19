@@ -11,9 +11,8 @@ on:
       - reopened
       - synchronize
       - ready_for_review
-  # A queued PR passed this check to join the queue. On the queue's commit
-  # the job is skipped (it has no `pull_request`), which a required check
-  # counts as passed; without this trigger the queue would wait for it.
+  # The queue's commit is checked too (the merged README.md); without this
+  # trigger the queue would wait for the required check forever.
   merge_group:
 
 permissions:
@@ -22,7 +21,11 @@ permissions:
 jobs:
   check:
     name: Verify self-review marker removed
-    if: github.repository_owner == 'PeeperLanguage' && github.event.pull_request.draft == false
+    # Not `pull_request.draft == false` alone: on a queue commit there is no
+    # pull request, and GitHub's `==` counts `null` as `false`.
+    if: >-
+      github.repository_owner == 'PeeperLanguage' &&
+      (github.event_name == 'merge_group' || github.event.pull_request.draft == false)
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -43,8 +46,8 @@ jobs:
             const owner = context.repo.owner;
             const repo = context.repo.repo;
             const pull = context.payload.pull_request;
-            const number = pull.number;
-            const headSha = pull.head.sha;
+            // A merge queue commit has no pull request to comment on.
+            const headSha = pull ? pull.head.sha : context.payload.merge_group.head_sha;
             const commentTag = "<!-- self-review-marker-check -->";
 
             // A README that cannot be read, or is gone, shows no review.
@@ -63,6 +66,13 @@ jobs:
             }
 
             const markerPresent = content.includes(marker);
+            if (!pull) {
+              if (markerPresent) {
+                core.setFailed("self-review marker is still present in README.md");
+              }
+              return;
+            }
+            const number = pull.number;
 
             const comments = await github.paginate(github.rest.issues.listComments, {
               owner,
