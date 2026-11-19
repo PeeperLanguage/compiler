@@ -115,6 +115,12 @@ jobs:
           GH_TOKEN: ${{ steps.mint-token.outputs.token }}
           BASE: ${{ github.ref_name }} # the branch whose lock the run updated
         run: |
+          # Two pushes in one merge queue batch can each rebuild the same packs.
+          open="$(bash scripts/open-bot-prs.sh toolchains/toolchains.lock.json "Update Peeper toolchain lock")"
+          if grep -q '^same ' <<<"$open"; then
+            echo "An open pull request already pins this lock: $open"
+            exit 0
+          fi
           {
             echo "Pins the rebuilt toolchain packs."
             echo
@@ -130,10 +136,14 @@ jobs:
           git commit -m "Update Peeper toolchain lock"
           git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           git push origin "$branch"
-          gh pr create \
+          url="$(gh pr create \
             --base "$BASE" \
             --head "$branch" \
             --title "Update Peeper toolchain lock" \
             --label "Toolchain Update" \
             --reviewer itsfuad \
-            --body-file pr-body.md
+            --body-file pr-body.md)"
+          # This lock is built from a newer main, so it replaces an older one.
+          for number in $(awk '$1 == "other" { print $2 }' <<<"$open"); do
+            gh pr close "$number" --delete-branch --comment "Replaced by ${url##*/}, built from a newer main."
+          done
