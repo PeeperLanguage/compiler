@@ -139,10 +139,7 @@ pub(crate) fn check_struct_literal(
             builder.add_expr(value, Some(semantic_types::TypeId::INVALID));
         }
         if open {
-            return thir::Expr {
-                ty: semantic_types::TypeId::UNDECIDED,
-                kind: thir::ExprKind::Undecided,
-            };
+            return thir::Expr::UNDECIDED;
         }
         return thir::Expr::INVALID;
     };

@@ -69,10 +69,7 @@ impl builder::ThirBuilder<'_, '_> {
                 // for their own errors only.
                 Some(None) => {
                     self.call_found(None, None, callee_span, type_arguments, arguments, span);
-                    return thir::Expr {
-                        ty: semantic_types::TypeId::UNDECIDED,
-                        kind: thir::ExprKind::Undecided,
-                    };
+                    return thir::Expr::UNDECIDED;
                 }
                 None => None,
             },
