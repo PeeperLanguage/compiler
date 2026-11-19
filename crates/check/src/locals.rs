@@ -92,12 +92,12 @@ impl builder::ThirBuilder<'_, '_> {
     }
 
     /// `const name: ty = value;`: a name for a value known at compile time.
-    /// Without a type, the constant takes its value's type. Gives its type and
-    /// value, or `None` after an error.
+    /// Without a type, the constant takes its value's type. Gives it as the
+    /// check knows it (`known_constant`), or `None` after an error.
     pub(crate) fn check_const_statement(
         &mut self,
         declaration: Id<ast::Decl>,
-    ) -> Option<semantic_types::Constant> {
+    ) -> Option<thir::CheckedConstant> {
         let ast::Decl::Const {
             name, ty, value, ..
         } = self.checker.module().ast.decls[declaration]
@@ -123,7 +123,7 @@ impl builder::ThirBuilder<'_, '_> {
         &mut self,
         value: Id<ast::Expr>,
         declared: Option<semantic_types::TypeId>,
-    ) -> Option<semantic_types::Constant> {
+    ) -> Option<thir::CheckedConstant> {
         let span = self.checker.module().ast.exprs.span(value);
         let outer = std::mem::replace(&mut self.in_constant, true);
         let checked = match declared {
@@ -135,24 +135,28 @@ impl builder::ThirBuilder<'_, '_> {
     }
 
     /// `checked`, worked out with `in_constant`, as a constant; reported at
-    /// `span` when it is not one.
+    /// `span` when it is not one. In a generic declaration's own check, one
+    /// each copy works out is known by its type only.
     pub(crate) fn known_constant(
         &mut self,
         checked: thir::Expr,
         span: Span,
-    ) -> Option<semantic_types::Constant> {
+    ) -> Option<thir::CheckedConstant> {
         match checked.kind {
-            thir::ExprKind::Constant(value) => Some(semantic_types::Constant {
-                ty: checked.ty,
-                value,
-            }),
+            thir::ExprKind::Constant(value) => {
+                let ty = checked.ty;
+                Some(thir::CheckedConstant::Known(semantic_types::Constant {
+                    ty,
+                    value,
+                }))
+            }
             thir::ExprKind::Invalid => None, // reported
             _ => {
                 let file = self.checker.module().ast.file.clone();
                 let unknown = self.body.first_named_variable(&checked.kind);
                 // Each copy knows it, unless it reads what only a run knows.
                 if unknown.is_none() && self.body.holds_undecided(&checked.kind) {
-                    return None;
+                    return Some(thir::CheckedConstant::PerCopy(checked.ty));
                 }
                 let types = &self.checker.types;
                 let message = if unknown.is_some() {

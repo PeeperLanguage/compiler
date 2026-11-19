@@ -49,9 +49,9 @@ pub struct Body {
     /// a block comes before the blocks inside it.
     pub blocks: Arena<Block>,
     pub variables: Arena<Variable>, // with the span of each name
-    /// Each `const` of the body, by its type and value, with the span of its
+    /// Each `const` of the body, as its check knows it, with the span of its
     /// name; `None` when its value had an error. Uses of it are folded.
-    pub constants: Arena<Option<Constant>>,
+    pub constants: Arena<Option<CheckedConstant>>,
     pub children: Children,
     /// Checking it reported an error, or it holds an invalid expression
     /// whose error another body's check reported: later phases would only
@@ -93,12 +93,24 @@ pub enum Symbol {
 
 /// A name declared in a body, by its kind: checked in place with the
 /// body, never asked for on its own.
+/// A constant as a check knows it: a `const` of a body, a `const`
+/// parameter, or the value a `const` argument is given.
+#[derive(Clone, Debug)]
+pub enum CheckedConstant {
+    /// Its type and value.
+    Known(Constant),
+    /// Only its type, in a generic declaration's own check: each copy gives
+    /// the value, as it does a `const N: usize` parameter's, or `N * 2`.
+    /// Read, it is `ExprKind::Undecided` of that type.
+    PerCopy(TypeId),
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Local {
     /// A parameter or `let`: it holds a value at run time.
     Variable(Id<Variable>),
     /// A `const`, folded where it is used.
-    Constant(Id<Option<Constant>>),
+    Constant(Id<Option<CheckedConstant>>),
 }
 
 /// What the checker found about the text at `span` of a module. Recorded

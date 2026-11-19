@@ -16,6 +16,7 @@ use model::semantic_types::TypeId;
 use model::semantic_types::Types;
 use model::semantic_types::value_text;
 use model::thir;
+use model::thir::CheckedConstant;
 use model::thir::FactKind;
 use model::thir::Local;
 use model::thir::Symbol;
@@ -183,8 +184,13 @@ impl CachedFact {
                         }
                     }
                     Local::Constant(constant) => CachedKind::Constant {
-                        text: (body.constants[constant].as_ref())
-                            .map(|constant| ConstantText::new(program, constant, types)),
+                        text: match &body.constants[constant] {
+                            Some(CheckedConstant::Known(constant)) => {
+                                Some(ConstantText::new(program, constant, types))
+                            }
+                            // Each copy gives the value.
+                            Some(CheckedConstant::PerCopy(_)) | None => None,
+                        },
                     },
                 }
             }

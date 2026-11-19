@@ -122,9 +122,16 @@ impl builder::ThirBuilder<'_, '_> {
                         .error(diagnostics::TYPE_MISMATCH, message, bound_span);
                     return None;
                 }
-                match self.known_constant(checked, span)?.value {
-                    constant::Value::Bool(holds) => Some(holds),
-                    _ => unreachable!("a `bool` constant is a `Value::Bool`"),
+                match self.known_constant(checked, span)? {
+                    thir::CheckedConstant::Known(semantic_types::Constant {
+                        value: constant::Value::Bool(holds),
+                        ..
+                    }) => Some(holds),
+                    thir::CheckedConstant::Known(_) => {
+                        unreachable!("a `bool` constant is a `Value::Bool`")
+                    }
+                    // Each copy works it out.
+                    thir::CheckedConstant::PerCopy(_) => None,
                 }
             }
             thir::Symbol::Type(definition) => {

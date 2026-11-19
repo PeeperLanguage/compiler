@@ -17,6 +17,7 @@ use model::semantic_types::Type;
 use model::semantic_types::TypeId;
 use model::thir::Block;
 use model::thir::Body;
+use model::thir::CheckedConstant;
 use model::thir::ExprKind;
 use model::thir::FactKind;
 use model::thir::Local;
@@ -111,7 +112,8 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
     /// checked, in `scope`: each one that is not `const` as a variable of
     /// its type in `types`, and each `const` value as a constant, the value
     /// `arguments` give it or, in the function's own body or signature
-    /// (`own_arguments`), one no call gave. A type parameter, `<T>` or
+    /// (`own_arguments`), one known by its type only, each copy giving the
+    /// value (`CheckedConstant::PerCopy`). A type parameter, `<T>` or
     /// `const T: type`, is a type (`resolve_global`).
     pub(crate) fn declare_parameters(
         &mut self,
@@ -146,12 +148,22 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
                 self.declare(name, Local::Variable(variable));
                 continue;
             }
-            let constant = match given.next() {
-                Some(ConstArgument::Value(constant)) => Some(constant),
-                _ => None,
-            };
+            let given = given.next();
             if !matches!(tree.types[parameter.ty], ast::Type::Type) {
-                let constant = self.body.constants.push(constant, name.span);
+                // A copy is given the value; the own check knows only its
+                // type, which the signature already resolved, with its facts.
+                let constant = if let Some(ConstArgument::Value(constant)) = given {
+                    CheckedConstant::Known(constant)
+                } else {
+                    let checking = (self.checker.internals.declarations_being_checked.last())
+                        .expect("a declaration is being checked");
+                    let (definition, used_at) = (checking.definition, checking.used_at);
+                    let ty = self
+                        .checker
+                        .const_value_type(definition, parameter.ty, used_at);
+                    CheckedConstant::PerCopy(ty)
+                };
+                let constant = self.body.constants.push(Some(constant), name.span);
                 self.declare(name, Local::Constant(constant));
             }
         }

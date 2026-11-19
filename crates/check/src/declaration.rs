@@ -19,6 +19,7 @@ use model::semantic_types::Type;
 use model::semantic_types::TypeId;
 use model::semantic_types::Types;
 use model::thir::Body;
+use model::thir::CheckedConstant;
 use model::thir::FactKind;
 use model::thir::Symbol;
 use source::Span;
@@ -156,7 +157,14 @@ impl Checker<'_> {
     pub(crate) fn check_constant(&mut self, definition: DefId) -> Option<Constant> {
         let declaration = self.module().ast.declaration(definition.index);
         let mut body = Body::default();
-        ThirBuilder::new(self, &mut body, TypeId::VOID).check_const_statement(declaration)
+        let checked =
+            ThirBuilder::new(self, &mut body, TypeId::VOID).check_const_statement(declaration);
+        match checked? {
+            CheckedConstant::Known(constant) => Some(constant),
+            CheckedConstant::PerCopy(_) => {
+                unreachable!("a module's constant is in no generic declaration's own check")
+            }
+        }
     }
 
     /// The type of a value whose type is written `ty`: a named type is the
