@@ -86,6 +86,13 @@ jobs:
           BASE: ${{ github.ref_name }} # the branch whose lock the run updated
           FORCE: ${{ inputs.force }}
         run: |
+          # The weekly check and the Intel Mac build both open this title, for
+          # different entries, so an open one is skipped only when it is the same.
+          open="$(bash scripts/open-bot-prs.sh toolchains/toolchain-sources.lock.json "Update toolchain sources")"
+          if [ "${FORCE:-}" != true ] && grep -q '^same ' <<<"$open"; then
+            echo "An open pull request already pins these sources: $open"
+            exit 0
+          fi
           {
             echo "Updates stable upstream toolchain sources."
             echo
