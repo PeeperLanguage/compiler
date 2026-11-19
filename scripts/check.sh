@@ -54,7 +54,8 @@ unlisted_files() {
         else parent="$dir.rs $dir/mod.rs"; fi
         # shellcheck disable=SC2086
         parent=$(ls $parent 2>/dev/null)
-        [ -n "$parent" ] && grep -qE "\bmod $stem;" $parent ||
+        # A `mod` line, not one in a comment: `// mod x;` names nothing.
+        [ -n "$parent" ] && grep -qE "^\s*(pub(\([a-z ]+\))? )?mod $stem;" $parent ||
             { echo "$file: no \`mod $stem;\` names it"; found=1; }
     done
     return $found
