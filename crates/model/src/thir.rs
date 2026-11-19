@@ -153,6 +153,13 @@ impl Expr {
         ty: TypeId::INVALID,
         kind: ExprKind::Invalid,
     };
+
+    /// A value each copy computes its own way (`ExprKind::Undecided`), of a
+    /// type each copy decides.
+    pub const UNDECIDED: Expr = Expr {
+        ty: TypeId::UNDECIDED,
+        kind: ExprKind::Undecided,
+    };
 }
 
 #[derive(Clone, Debug)]

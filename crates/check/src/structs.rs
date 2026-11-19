@@ -1,14 +1,18 @@
 //! Structs: checking `struct { name: Type, ... }` declarations and
-//! `Type.{ name = value, ... }` literals. The checker gives a `Type::Struct`
-//! and a `ExprKind::StructLiteral`, so the phases after it know nothing of
-//! this file. Reading a field, as in `point.x`, is checked in
-//! `expression/places.rs`.
+//! `Type.{ name = value, ... }` literals, and reading a field, as in
+//! `point.x`. The checker gives a `Type::Struct`, an `ExprKind::StructLiteral`
+//! and an `ExprKind::Field`, so the phases after it know nothing of this
+//! file. Which values have fields, the dispatch decides
+//! (`expression/places.rs`).
 
 use crate::builder;
 use crate::scope;
 use arena::Id;
 use arena::List;
 use diagnostics::Diagnostic;
+use diagnostics::suggest::nearest_name;
+use model::ConstArguments;
+use model::DeclarationCopy;
 use model::DefId;
 use model::layout;
 use model::semantic_types;
@@ -16,8 +20,10 @@ use model::thir;
 use source::Span;
 use std::num;
 use tree::ast;
+use tree::ast::Ident;
 
 use crate::Checker;
+use crate::Checking;
 
 /// The type a struct type written at `span` names: none yet, as only a
 /// declared struct is checked.
@@ -146,7 +152,7 @@ pub(crate) fn check_struct_literal(
     let mut checked: Vec<num::NonZeroU32> = Vec::with_capacity(fields.len());
     for field in tree.children.lists.items(fields) {
         let ast::FieldValue { name, value } = tree.children.field_values[field];
-        let Some((index, field_type)) = builder.field_index(ty, name) else {
+        let Some((index, field_type)) = field_index(builder, ty, name) else {
             builder.add_expr(value, Some(semantic_types::TypeId::INVALID)); // for its own errors
             continue;
         };
@@ -197,4 +203,112 @@ pub(crate) fn check_struct_literal(
         ty,
         kind: thir::ExprKind::StructLiteral(builder.body.children.lists.add(&checked)),
     }
+}
+
+/// `place.name`: the field `name` of `place`, a checked struct in a place.
+pub(crate) fn check_field(
+    builder: &mut builder::ThirBuilder<'_, '_>,
+    place: Id<thir::Expr>,
+    name: Ident,
+) -> thir::Expr {
+    let ty = builder.body.exprs[place].ty;
+    let Some((index, field_type)) = field_index(builder, ty, name) else {
+        return thir::Expr::INVALID;
+    };
+    thir::Expr {
+        ty: field_type,
+        kind: thir::ExprKind::Field {
+            value: place,
+            index: index as u32,
+        },
+    }
+}
+
+/// The index of the field `name` of the struct type `ty`, in declaration
+/// order, and its type; `None` after reporting that the type has no such
+/// field, with its nearest field name. A struct given an open type has no
+/// copy holding its fields' types: they are read with what it is given
+/// (`field_types_given`).
+fn field_index(
+    builder: &mut builder::ThirBuilder<'_, '_>,
+    ty: semantic_types::TypeId,
+    name: Ident,
+) -> Option<(usize, semantic_types::TypeId)> {
+    let (semantic_types::Type::Struct { definition, .. }
+    | semantic_types::Type::Named { definition, .. }) = builder.checker.types[ty]
+    else {
+        unreachable!("only a struct has fields")
+    };
+    let file = &builder.checker.module().ast.file;
+    let text = name.text(file);
+    let modules = builder.checker.modules;
+    let Some(index) =
+        model::program::field_names(modules, definition).position(|field| field == text)
+    else {
+        let message = format!("`{}` has no field `{text}`", builder.checker.type_text(ty));
+        let fields = model::program::field_names(modules, definition).map(|field| (field, 0));
+        let meant = nearest_name(text, fields).map(str::to_string);
+        builder
+            .checker
+            .report_unknown(diagnostics::UNKNOWN_FIELD, name.span, message, meant);
+        return None;
+    };
+    let field_type = match builder.checker.types[ty] {
+        semantic_types::Type::Named { arguments, .. } => {
+            field_types_given(builder.checker, definition, arguments, name.span)[index]
+        }
+        _ => {
+            builder.checker.types[ty]
+                .members()
+                .expect("a struct has members")
+                .fields[index]
+        }
+    };
+    Some((index, field_type))
+}
+
+/// The types of the fields of the struct `definition`, in order, given
+/// `arguments`, asked for at `span`: each as its declaration writes it,
+/// read again with them (`resolve_value_type`), recording nothing, once
+/// for each `arguments`. For a struct given an open type, which has no
+/// copy to hold them.
+pub(crate) fn field_types_given<'c>(
+    checker: &'c mut Checker<'_>,
+    definition: DefId,
+    arguments: ConstArguments,
+    span: Span,
+) -> &'c [semantic_types::TypeId] {
+    let given = DeclarationCopy {
+        definition,
+        arguments,
+    };
+    if checker.internals.open_struct_fields.contains_key(&given) {
+        return &checker.internals.open_struct_fields[&given];
+    }
+    let tree = &checker.modules[definition.module.index()].ast;
+    let ast::Decl::Type(written) = tree.decls[tree.declaration(definition.index)] else {
+        unreachable!("only a struct declaration is given type arguments");
+    };
+    let ast::Type::Struct { fields } = tree.types[written.ty] else {
+        unreachable!("only a struct declaration is given type arguments");
+    };
+    let written: Vec<Id<ast::Type>> = (tree.children.lists.items(fields))
+        .map(|field| tree.children.fields[field].ty)
+        .collect();
+    let checking = Checking {
+        definition,
+        arguments,
+        used_at: span,
+        records_facts: false,
+    };
+    let fields = checker.checking_in(checking, |checker| {
+        (written.into_iter())
+            .map(|ty| checker.resolve_value_type(ty))
+            .collect()
+    });
+    checker
+        .internals
+        .open_struct_fields
+        .entry(given)
+        .or_insert(fields)
 }

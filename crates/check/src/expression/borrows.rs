@@ -41,7 +41,7 @@ impl ThirBuilder<'_, '_> {
     /// (`lends_slice_elements`) is decided by its own type, never the
     /// variable holding it, unless it is behind a shared reference, through
     /// which nothing is written.
-    pub(super) fn check_lending(&mut self, ty: TypeId, place: Id<Expr>) {
+    pub(crate) fn check_lending(&mut self, ty: TypeId, place: Id<Expr>) {
         let (variable, decider) = self.make_place(place);
         let types = &self.checker.types;
         let decider = if types.lends_slice_elements(self.body.exprs[place].ty, ty) {

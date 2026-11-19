@@ -3,16 +3,22 @@
 //! `Type::Array` and an `ExprKind::ArrayLiteral`, so the phases after it know
 //! nothing of this file. A literal's entries and their `...` spreads are
 //! checked in `expression/literals.rs`, as a call to a `...` parameter checks
-//! them too; slices (read after `&`) and indexing in `expression/places.rs`.
+//! them too; slices in `slices.rs`. Indexing an array or a slice and their
+//! `.len` are here; which values take them, the dispatch decides
+//! (`expression/places.rs`).
 
 use crate::Checker;
 use crate::builder;
 use arena::Id;
 use arena::List;
+use bigint::Limbs;
+use diagnostics::suggest::nearest_name;
+use model::constant::Value;
 use model::semantic_types;
 use model::thir;
 use source::Span;
 use tree::ast;
+use tree::ast::Ident;
 
 /// The type `[length]element`, written at `span`: the length is a whole
 /// number without a suffix that an array can hold.
@@ -84,6 +90,112 @@ pub(crate) fn check_array_literal(
     thir::Expr {
         ty,
         kind: thir::ExprKind::ArrayLiteral(builder.body.children.lists.add(&parts)),
+    }
+}
+
+/// `value.len`, written `value.field`, where `viewed` is the type of `value`
+/// or of what it points to: an array's, a slice's or a `&str`'s length, its
+/// only field. An array's type gives it, so the array is not read where
+/// computing it runs nothing.
+pub(crate) fn check_length(
+    builder: &mut builder::ThirBuilder<'_, '_>,
+    value: Id<thir::Expr>,
+    viewed: semantic_types::TypeId,
+    field: Ident,
+) -> thir::Expr {
+    // shortcut: `len` as a field until the language can write it as a free
+    // function over any array; then move it there.
+    let text = field.text(&builder.checker.module().ast.file);
+    if text != "len" {
+        let viewed = builder.checker.type_text(viewed);
+        let message = format!("`{viewed}` has no field `{text}`");
+        let meant = nearest_name(text, [("len", 0)]).map(str::to_string);
+        builder
+            .checker
+            .report_unknown(diagnostics::UNKNOWN_FIELD, field.span, message, meant);
+        return thir::Expr::INVALID;
+    }
+    let usize = builder.checker.types.usize;
+    // An array's length is folded only where computing the array runs
+    // nothing: a variable or constant, its fields and dereferences, and
+    // elements at constant indexes, which are checked here. A call, a
+    // run-time index or a literal's parts still run, and may fail.
+    let mut part = value;
+    let runs_nothing = loop {
+        match builder.body.exprs[part].kind {
+            thir::ExprKind::Variable(_) | thir::ExprKind::Constant(_) => break true,
+            thir::ExprKind::Field { value, .. } | thir::ExprKind::Dereference(value) => {
+                part = value;
+            }
+            thir::ExprKind::Index { array, index }
+                if matches!(builder.body.exprs[index].kind, thir::ExprKind::Constant(_))
+                    && !builder.checker.types[builder.body.exprs[array].ty].is_slice_shaped() =>
+            {
+                part = array;
+            }
+            _ => break false,
+        }
+    };
+    // A slice's or a `&str`'s length is known only when the program runs:
+    // read from the value, so through the reference to it, as an array's
+    // that must still be computed.
+    let length = builder.checker.types[viewed]
+        .elements()
+        .and_then(|(_, length)| length);
+    let Some(length) = length.filter(|_| runs_nothing) else {
+        let value = builder.through_pointer(value, builder.body.exprs.span(value));
+        return thir::Expr {
+            ty: usize,
+            kind: thir::ExprKind::Length(value),
+        };
+    };
+    let length = Limbs::new(builder.checker.target.pointer_bits, &[length]);
+    thir::Expr {
+        ty: usize,
+        kind: thir::ExprKind::Constant(Value::Integer(length)),
+    }
+}
+
+/// `array[index]`, written at `span`: the element at the checked integer
+/// `index` of `array`, a checked array or slice in a place. A constant index
+/// must be inside an array; a slice's must be at least 0 and fit a `u64`,
+/// and is checked when the program runs.
+pub(crate) fn check_element(
+    builder: &mut builder::ThirBuilder<'_, '_>,
+    array: Id<thir::Expr>,
+    index: Id<thir::Expr>,
+) -> thir::Expr {
+    let ty = builder.body.exprs[array].ty;
+    let (element, length) = builder.checker.types[ty]
+        .elements()
+        .expect("only an array or a slice is indexed");
+    let Some(integer) = builder.integer_index(index) else {
+        return thir::Expr::INVALID;
+    };
+    // A negative constant, or one past `u64`, is outside every slice.
+    if let thir::ExprKind::Constant(Value::Integer(value)) = &builder.body.exprs[index].kind
+        && bigint::to_u64(integer.bits, integer.signed, value)
+            .is_none_or(|at| length.is_some_and(|length| at >= length))
+    {
+        let index_span = builder.body.exprs.span(index);
+        let written = builder.checker.module().ast.file.slice(index_span);
+        let viewed = builder.checker.type_text(ty);
+        let message = match length {
+            Some(length) => {
+                format!("index `{written}` is outside `{viewed}`, whose length is {length}")
+            }
+            None => format!("index `{written}` is outside every `{viewed}`"),
+        };
+        builder
+            .checker
+            .error(diagnostics::INVALID_OPERATION, message, index_span);
+        return thir::Expr::INVALID;
+    }
+    // An element is read through the array's address, so from a place.
+    builder.make_place(array);
+    thir::Expr {
+        ty: element,
+        kind: thir::ExprKind::Index { array, index },
     }
 }
 

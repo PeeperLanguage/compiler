@@ -1,10 +1,12 @@
-//! Checking places: fields, indexes, slices and dereferences.
+//! The dispatch for what reaches into a value: `value.field`,
+//! `array[index]`, `&array[start..end]` and `reference.*`. Each looks at the
+//! type of the value and hands the work to the concept that owns that type
+//! (`arrays.rs`, `slices.rs`, `structs.rs`), reporting a
+//! type that none takes. A value whose type each copy decides gives a value
+//! each copy computes (`Expr::UNDECIDED`).
 
 use arena::Id;
-use bigint::Limbs;
 use diagnostics::Diagnostic;
-use diagnostics::suggest::nearest_name;
-use model::constant::Value;
 use model::semantic_types::Integer;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
@@ -15,107 +17,66 @@ use tree::ast;
 use tree::ast::Ident;
 use tree::ast::WrittenRange;
 
+use crate::arrays;
 use crate::builder::ThirBuilder;
+use crate::slices;
+use crate::structs;
 
 impl ThirBuilder<'_, '_> {
-    /// `value.field`: the field of a struct value, or of the struct a
-    /// reference or typed raw pointer points to; or `len`, an array's, a
-    /// slice's or a `&str`'s only field. An array's type gives it, so the
-    /// array is not read.
+    /// `value.field`: a field of a struct, or of the struct a reference or
+    /// typed raw pointer points to; or `len`, an array's, a slice's or a
+    /// `&str`'s, read without going through a reference to it.
+    #[deny(
+        clippy::wildcard_enum_match_arm,
+        clippy::match_wildcard_for_single_variants
+    )]
     pub(super) fn check_field(&mut self, value: Id<ast::Expr>, field: Ident) -> Expr {
         let value = self.add_expr(value, None);
         let ty = self.body.exprs[value].ty;
-        let pointee = self.checker.types[ty].pointee();
-        let viewed = pointee.unwrap_or(ty);
-        // `Some(length)` for an array, `Some(None)` for a slice or a `&str`,
-        // whose length is known only when the program runs.
-        let length = match &self.checker.types[viewed] {
-            Type::Str => Some(None),
-            other => other.elements().map(|(_, length)| length),
-        };
-        // shortcut: `len` as a field until the language can write it as a
-        // free function over any array; then move it there.
-        if let Some(length) = length {
-            let text = field.text(&self.checker.module().ast.file);
-            if text != "len" {
-                let viewed = self.checker.type_text(viewed);
-                let message = format!("`{viewed}` has no field `{text}`");
-                let meant = nearest_name(text, [("len", 0)]).map(str::to_string);
-                self.checker
-                    .report_unknown(diagnostics::UNKNOWN_FIELD, field.span, message, meant);
-                return Expr::INVALID;
+        let viewed = self.checker.types[ty].pointee().unwrap_or(ty);
+        let span = self.body.exprs.span(value);
+        match self.checker.types[viewed] {
+            Type::Array { .. } | Type::Slice { .. } | Type::Str => {
+                arrays::check_length(self, value, viewed, field)
             }
-            let usize = self.checker.types.usize;
-            // An array's length is folded only where computing the array runs
-            // nothing: a variable or constant, its fields and dereferences,
-            // and elements at constant indexes, which are checked here. A
-            // call, a run-time index or a literal's parts still run, and may
-            // fail.
-            let mut part = value;
-            let runs_nothing = loop {
-                match self.body.exprs[part].kind {
-                    ExprKind::Variable(_) | ExprKind::Constant(_) => break true,
-                    ExprKind::Field { value, .. } | ExprKind::Dereference(value) => part = value,
-                    ExprKind::Index { array, index }
-                        if matches!(self.body.exprs[index].kind, ExprKind::Constant(_))
-                            && !self.checker.types[self.body.exprs[array].ty].is_slice_shaped() =>
-                    {
-                        part = array;
-                    }
-                    _ => break false,
+            Type::Struct { .. } | Type::Named { .. } => {
+                let place = self.through_pointer(value, span);
+                structs::check_field(self, place, field)
+            }
+            Type::Parameter { .. } | Type::Undecided => Expr::UNDECIDED,
+            Type::Invalid => Expr::INVALID,
+            Type::Void
+            | Type::Bool
+            | Type::Integer(_)
+            | Type::Float(_)
+            | Type::CString
+            | Type::Function { .. }
+            | Type::Alias { .. }
+            | Type::Range { .. }
+            | Type::Reference { .. }
+            | Type::Interface { .. }
+            | Type::InterfaceReference { .. }
+            | Type::RawPointer { .. } => {
+                // Through a raw pointer, what it reaches is checked first.
+                let place = self.through_pointer(value, span);
+                let ty = self.body.exprs[place].ty;
+                if ty != TypeId::INVALID {
+                    let message = format!("`{}` has no fields", self.checker.type_text(ty));
+                    self.checker
+                        .error(diagnostics::INVALID_OPERATION, message, field.span);
                 }
-            };
-            // Read from the value, so through the reference to it: a slice's
-            // or a `&str`'s, or an array's that must still be computed.
-            let Some(length) = length.filter(|_| runs_nothing) else {
-                let value = self.through_pointer(value, self.body.exprs.span(value));
-                return Expr {
-                    ty: usize,
-                    kind: ExprKind::Length(value),
-                };
-            };
-            let length = Limbs::new(self.checker.target.pointer_bits, &[length]);
-            return Expr {
-                ty: usize,
-                kind: ExprKind::Constant(Value::Integer(length)),
-            };
-        }
-        let value = self.through_pointer(value, self.body.exprs.span(value));
-        let ty = self.body.exprs[value].ty;
-        // A struct given an open type has fields (`open_struct`); what else
-        // of an open type has, each copy decides.
-        let open_struct = matches!(self.checker.types[ty], Type::Named { .. });
-        if !open_struct && self.checker.types.is_open(ty) {
-            return Expr {
-                ty: TypeId::UNDECIDED,
-                kind: ExprKind::Undecided,
-            };
-        }
-        if !open_struct && self.checker.types[ty].members().is_none() {
-            if ty != TypeId::INVALID {
-                let message = format!("`{}` has no fields", self.checker.type_text(ty));
-                self.checker
-                    .error(diagnostics::INVALID_OPERATION, message, field.span);
+                Expr::INVALID
             }
-            return Expr::INVALID;
-        }
-        let Some((index, field_type)) = self.field_index(ty, field) else {
-            return Expr::INVALID;
-        };
-        Expr {
-            ty: field_type,
-            kind: ExprKind::Field {
-                value,
-                index: index as u32,
-            },
         }
     }
 
-    /// `array[index]`: the element at an integer index of an array in a
-    /// place, of the array a reference or typed raw pointer points to, or of
-    /// a slice, written at `span`. A constant index must be inside an array;
-    /// a slice's must be at least 0 and fit a `u64`, and is checked when the
-    /// program runs. A written range slices, which only `&` does.
+    /// `array[index]`, written at `span`: an element of an array or slice
+    /// in a place, or of one a reference or typed raw pointer points to. A
+    /// written range slices, which only `&` does.
+    #[deny(
+        clippy::wildcard_enum_match_arm,
+        clippy::match_wildcard_for_single_variants
+    )]
     pub(super) fn check_index(
         &mut self,
         array: Id<ast::Expr>,
@@ -132,64 +93,46 @@ impl ThirBuilder<'_, '_> {
         let array = self.add_expr(array, None);
         let array = self.through_pointer(array, self.body.exprs.span(array));
         let ty = self.body.exprs[array].ty;
-        let usize = self.checker.types.usize;
-        let index = self.add_expr(index, Some(usize));
-        let index_type = self.body.exprs[index].ty;
-        let tree = &self.checker.module().ast;
-        let index_span = self.body.exprs.span(index);
-        let elements = self.checker.types[ty].elements();
-        // What indexing it means, each copy decides.
-        if elements.is_none() && self.checker.types.is_open(ty) {
-            return Expr {
-                ty: TypeId::UNDECIDED,
-                kind: ExprKind::Undecided,
-            };
-        }
-        let (element, length) = elements.unwrap_or((TypeId::INVALID, None));
-        if element == TypeId::INVALID {
-            if ty != TypeId::INVALID {
+        let index = self.add_expr(index, Some(self.checker.types.usize));
+        match self.checker.types[ty] {
+            Type::Array { .. } | Type::Slice { .. } => {
+                if let Type::Range { .. } = self.checker.types[self.body.exprs[index].ty] {
+                    let index_span = self.body.exprs.span(index);
+                    self.checker
+                        .not_supported(index_span, "range values as indexes");
+                    return Expr::INVALID;
+                }
+                arrays::check_element(self, array, index)
+            }
+            Type::Parameter { .. } | Type::Undecided => Expr::UNDECIDED,
+            Type::Invalid => Expr::INVALID,
+            Type::Void
+            | Type::Bool
+            | Type::Integer(_)
+            | Type::Float(_)
+            | Type::CString
+            | Type::Str
+            | Type::Function { .. }
+            | Type::Alias { .. }
+            | Type::Named { .. }
+            | Type::Struct { .. }
+            | Type::Range { .. }
+            | Type::Reference { .. }
+            | Type::Interface { .. }
+            | Type::InterfaceReference { .. }
+            | Type::RawPointer { .. } => {
                 let message = format!("`{}` cannot be indexed", self.checker.type_text(ty));
                 let span = self.body.exprs.span(array);
                 self.checker
                     .error(diagnostics::INVALID_OPERATION, message, span);
+                Expr::INVALID
             }
-            return Expr::INVALID;
-        }
-        if let Type::Range { .. } = self.checker.types[index_type] {
-            self.checker
-                .not_supported(index_span, "range values as indexes");
-            return Expr::INVALID;
-        }
-        let Some(integer) = self.integer_index(index) else {
-            return Expr::INVALID;
-        };
-        // A negative constant, or one past `u64`, is outside every slice.
-        if let ExprKind::Constant(Value::Integer(value)) = &self.body.exprs[index].kind
-            && bigint::to_u64(integer.bits, integer.signed, value)
-                .is_none_or(|at| length.is_some_and(|length| at >= length))
-        {
-            let (written, viewed) = (tree.file.slice(index_span), self.checker.type_text(ty));
-            let message = match length {
-                Some(length) => {
-                    format!("index `{written}` is outside `{viewed}`, whose length is {length}")
-                }
-                None => format!("index `{written}` is outside every `{viewed}`"),
-            };
-            self.checker
-                .error(diagnostics::INVALID_OPERATION, message, index_span);
-            return Expr::INVALID;
-        }
-        // An element is read through the array's address, so from a place.
-        self.make_place(array);
-        Expr {
-            ty: element,
-            kind: ExprKind::Index { array, index },
         }
     }
 
     /// The integer type of the checked index `index`; `None` after an error,
     /// reported here for a type that is not an integer.
-    pub(super) fn integer_index(&mut self, index: Id<Expr>) -> Option<Integer> {
+    pub(crate) fn integer_index(&mut self, index: Id<Expr>) -> Option<Integer> {
         let ty = self.body.exprs[index].ty;
         match self.checker.types[ty] {
             Type::Integer(integer) => Some(integer),
@@ -208,12 +151,13 @@ impl ThirBuilder<'_, '_> {
     }
 
     /// `&array[start..end]`, `&mut` when `mutable`, where `indexed` is
-    /// `array[start..end]`, its index a written range: a slice of the
-    /// elements of an array in a place, of one a reference points to, or of
-    /// a slice's, from `start` up to `end`, each left out or an integer as an
-    /// index is (`ExprKind::Slice`). Ends known at compile time must be
-    /// inside the array and in order; others, and every end of a slice's,
-    /// are checked when the program runs. A step is an error.
+    /// `array[start..end]`, its index a written range: a slice of an array
+    /// or slice in a place, or of one a reference points to
+    /// (`slices::check_slice`). A step is an error.
+    #[deny(
+        clippy::wildcard_enum_match_arm,
+        clippy::match_wildcard_for_single_variants
+    )]
     pub(super) fn check_slice(&mut self, mutable: bool, indexed: Id<ast::Expr>) -> Expr {
         let tree = &self.checker.module().ast;
         let ast::Expr::Index {
@@ -253,142 +197,91 @@ impl ThirBuilder<'_, '_> {
         // Written `r[i..j]`, so a message names that, as `r[i]`.
         let array = self.through_pointer(array, tree.exprs.span(indexed));
         let ty = self.body.exprs[array].ty;
-        let Some((element, length)) = self.checker.types[ty].elements() else {
-            // What slicing it means, each copy decides; the ends are checked.
-            if self.checker.types.is_open(ty) {
-                self.check_slice_ends([start, end], inclusive, ty, None, range);
-                return Expr {
-                    ty: TypeId::UNDECIDED,
-                    kind: ExprKind::Undecided,
-                };
+        match self.checker.types[ty] {
+            Type::Array { .. } | Type::Slice { .. } => {
+                slices::check_slice(self, mutable, array, ty, [start, end], inclusive, range)
             }
-            if ty != TypeId::INVALID {
+            // The ends are checked as any slice's.
+            Type::Parameter { .. } | Type::Undecided => {
+                slices::check_slice_ends(self, [start, end], inclusive, ty, None, range);
+                Expr::UNDECIDED
+            }
+            Type::Invalid => Expr::INVALID,
+            Type::Void
+            | Type::Bool
+            | Type::Integer(_)
+            | Type::Float(_)
+            | Type::CString
+            | Type::Str
+            | Type::Function { .. }
+            | Type::Alias { .. }
+            | Type::Named { .. }
+            | Type::Struct { .. }
+            | Type::Range { .. }
+            | Type::Reference { .. }
+            | Type::Interface { .. }
+            | Type::InterfaceReference { .. }
+            | Type::RawPointer { .. } => {
                 let message = format!("`{}` cannot be sliced", self.checker.type_text(ty));
                 self.checker
                     .error(diagnostics::INVALID_OPERATION, message, array_span);
-            }
-            return Expr::INVALID;
-        };
-        let ends = self.check_slice_ends([start, end], inclusive, ty, length, range);
-        let Some([start, end]) = ends else {
-            return Expr::INVALID;
-        };
-        let slice = self.checker.types.intern(Type::Slice { mutable, element });
-        self.check_lending(slice, array);
-        Expr {
-            ty: slice,
-            kind: ExprKind::Slice {
-                array,
-                start,
-                end,
-                inclusive,
-            },
-        }
-    }
-
-    /// The ends, each left out or written, of the slice of `viewed`, an
-    /// array type of `length` elements or a slice type (no `length`), by
-    /// the written range `range`, `..=` when `inclusive`: integers of one
-    /// type, `usize` for literals without a suffix. Ends known at compile
-    /// time must be inside the array, or fit a `usize` for a slice, and in
-    /// order when both are; `None` after an error.
-    pub(super) fn check_slice_ends(
-        &mut self,
-        ends: [Option<Id<ast::Expr>>; 2],
-        inclusive: bool,
-        viewed: TypeId,
-        length: Option<u64>,
-        range: Id<ast::Expr>,
-    ) -> Option<[Option<Id<Expr>>; 2]> {
-        // No slice is longer than the largest `usize`.
-        let limit = length.unwrap_or(u64::MAX >> (64 - self.checker.target.pointer_bits));
-        let usize = Some(self.checker.types.usize);
-        let ends = match ends {
-            [Some(start), Some(end)] => {
-                let (start, end) = self.check_range_ends(start, end, usize);
-                [Some(start), Some(end)]
-            }
-            ends => ends.map(|end| end.map(|end| self.add_expr(end, usize))),
-        };
-        // How many elements come before each end when known at compile
-        // time: a missing start is 0, a missing end the length; a written
-        // `..=` end has one more, past it.
-        let mut before_ends = [Some(0), length];
-        let mut outside = false;
-        let past = [0, u64::from(inclusive)];
-        for ((before, end), past) in before_ends.iter_mut().zip(ends).zip(past) {
-            let Some(end) = end else {
-                continue;
-            };
-            let integer = self.integer_index(end)?;
-            let ExprKind::Constant(Value::Integer(value)) = &self.body.exprs[end].kind else {
-                *before = None;
-                continue;
-            };
-            // A negative end, or one past `u64`, is outside every array.
-            let known = bigint::to_u64(integer.bits, integer.signed, value)
-                .and_then(|at| at.checked_add(past));
-            outside |= known.is_none_or(|known| known > limit);
-            *before = known;
-        }
-        let tree = &self.checker.module().ast;
-        let range_span = tree.exprs.span(range);
-        let written = tree.file.slice(range_span);
-        let error = if outside {
-            let viewed = self.checker.type_text(viewed);
-            match length {
-                Some(length) => {
-                    format!("slice `{written}` is outside `{viewed}`, whose length is {length}")
-                }
-                None => format!("slice `{written}` is outside every `{viewed}`"),
-            }
-        } else if let [Some(first), Some(last)] = before_ends
-            && first > last
-        {
-            format!("slice `{written}` starts after it ends")
-        } else {
-            return Some(ends);
-        };
-        self.checker
-            .error(diagnostics::INVALID_OPERATION, error, range_span);
-        None
-    }
-
-    /// `reference.*`, written at `span`: the value a reference or a typed
-    /// raw pointer points to.
-    pub(super) fn check_dereference(&mut self, reference: Id<ast::Expr>, span: Span) -> Expr {
-        let reference = self.add_expr(reference, None);
-        let ty = self.body.exprs[reference].ty;
-        match &self.checker.types[ty] {
-            pointer if let Some(target) = pointer.pointee() => self.dereference(reference, target),
-            Type::Invalid => Expr::INVALID,
-            // What it reaches, each copy decides.
-            _ if self.checker.types.is_open(ty) => Expr {
-                ty: TypeId::UNDECIDED,
-                kind: ExprKind::Undecided,
-            },
-            found => {
-                let message = format!(
-                    "`.*` needs a reference or a typed raw pointer, found `{}`",
-                    self.checker.type_text(ty)
-                );
-                let file = &self.checker.module().ast.file;
-                let mut error =
-                    Diagnostic::new(diagnostics::INVALID_OPERATION, message).label(file, span, "");
-                // Rust writes `&*s` to lend a slice again; Peeper has no bare
-                // element type for `.*` to give, so the help names what does.
-                if let Type::Slice { .. } = found {
-                    let text = file.slice(self.body.exprs.span(reference));
-                    let help = format!(
-                        "a slice is lent again as it is (`f({text})`), or as `&{text}[..]` / \
-                         `&mut {text}[..]`"
-                    );
-                    error = error.help(help, Vec::new());
-                }
-                self.checker.report(error);
                 Expr::INVALID
             }
         }
+    }
+
+    /// `reference.*`, written at `span`: the value a reference, an interface
+    /// reference or a typed raw pointer points to.
+    #[deny(
+        clippy::wildcard_enum_match_arm,
+        clippy::match_wildcard_for_single_variants
+    )]
+    pub(super) fn check_dereference(&mut self, reference: Id<ast::Expr>, span: Span) -> Expr {
+        let reference = self.add_expr(reference, None);
+        let ty = self.body.exprs[reference].ty;
+        let help = match self.checker.types[ty] {
+            Type::Reference { target, .. }
+            | Type::InterfaceReference {
+                interface: target, ..
+            }
+            | Type::RawPointer {
+                target: Some(target),
+            } => return self.dereference(reference, target),
+            Type::Parameter { .. } | Type::Undecided => return Expr::UNDECIDED,
+            Type::Invalid => return Expr::INVALID,
+            Type::Slice { .. } => {
+                let file = &self.checker.module().ast.file;
+                Some(slices::lend_again_help(
+                    file.slice(self.body.exprs.span(reference)),
+                ))
+            }
+            Type::Void
+            | Type::Bool
+            | Type::Integer(_)
+            | Type::Float(_)
+            | Type::CString
+            | Type::Str
+            | Type::Function { .. }
+            | Type::Alias { .. }
+            | Type::Named { .. }
+            | Type::Struct { .. }
+            | Type::Array { .. }
+            | Type::Range { .. }
+            | Type::Interface { .. }
+            | Type::RawPointer { target: None } => None,
+        };
+        let message = format!(
+            "`.*` needs a reference or a typed raw pointer, found `{}`",
+            self.checker.type_text(ty)
+        );
+        let file = &self.checker.module().ast.file;
+        let mut error =
+            Diagnostic::new(diagnostics::INVALID_OPERATION, message).label(file, span, "");
+        if let Some(help) = help {
+            error = error.help(help, Vec::new());
+        }
+        self.checker.report(error);
+        Expr::INVALID
     }
 
     /// `value`, or what it refers to when it is a reference or a typed raw
@@ -403,14 +296,13 @@ impl ThirBuilder<'_, '_> {
     }
 
     /// What `reference`, whose type refers to `target`, refers to: a place.
-    pub(super) fn dereference(&mut self, reference: Id<Expr>, target: TypeId) -> Expr {
-        let pointer = self.body.exprs[reference].ty;
+    fn dereference(&mut self, reference: Id<Expr>, target: TypeId) -> Expr {
         let span = self.body.exprs.span(reference);
         // A pointer only names its target, which may hold it (`*Node` in
         // `Node`): reaching through it uses the target as a value, invalid
         // for a struct with an error, where lowering stops.
         let target = self.checker.value_type_at(target, span);
-        let ty = match self.checker.types[pointer] {
+        let ty = match self.checker.types[self.body.exprs[reference].ty] {
             Type::RawPointer { .. } if target != TypeId::INVALID => {
                 let held = self.checker.reached_through_pointer(target, span);
                 held.unwrap_or(TypeId::INVALID)
@@ -423,43 +315,5 @@ impl ThirBuilder<'_, '_> {
             ty,
             kind: ExprKind::Dereference(reference),
         }
-    }
-
-    /// The index of the field `name` of the struct type `ty`, in
-    /// declaration order, and its type; `None` after reporting that the type
-    /// has no such field, with its nearest field name. A struct given an
-    /// open type has no copy holding its fields' types: they are read again
-    /// with what it is given (`field_types_given`).
-    pub(crate) fn field_index(&mut self, ty: TypeId, name: Ident) -> Option<(usize, TypeId)> {
-        let (Type::Struct { definition, .. } | Type::Named { definition, .. }) =
-            self.checker.types[ty]
-        else {
-            unreachable!("only a struct has fields")
-        };
-        let file = &self.checker.module().ast.file;
-        let text = name.text(file);
-        let modules = self.checker.modules;
-        let Some(index) =
-            model::program::field_names(modules, definition).position(|field| field == text)
-        else {
-            let message = format!("`{}` has no field `{text}`", self.checker.type_text(ty));
-            let fields = model::program::field_names(modules, definition).map(|field| (field, 0));
-            let meant = nearest_name(text, fields).map(str::to_string);
-            self.checker
-                .report_unknown(diagnostics::UNKNOWN_FIELD, name.span, message, meant);
-            return None;
-        };
-        let field_type = match self.checker.types[ty] {
-            Type::Named { arguments, .. } => self
-                .checker
-                .field_types_given(definition, arguments, name.span)[index],
-            _ => {
-                self.checker.types[ty]
-                    .members()
-                    .expect("a struct has members")
-                    .fields[index]
-            }
-        };
-        Some((index, field_type))
     }
 }

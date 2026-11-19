@@ -22,6 +22,7 @@ use crate::COPY_DEPTH_LIMIT;
 use crate::Checker;
 use crate::Checking;
 use crate::Copied;
+use crate::structs;
 
 impl Checker<'_> {
     /// The type of `copy`, asked for at `used_at`: given nothing, its
@@ -144,56 +145,11 @@ impl Checker<'_> {
         if self.copy_type(own, span) == semantic_types::TypeId::INVALID {
             return semantic_types::TypeId::INVALID;
         }
-        let fields = self.field_types_given(definition, arguments, span);
+        let fields = structs::field_types_given(self, definition, arguments, span);
         if fields.contains(&semantic_types::TypeId::INVALID) {
             return semantic_types::TypeId::INVALID;
         }
         named
-    }
-
-    /// The types of the fields of the struct `definition`, in order, given
-    /// `arguments`, asked for at `span`: each as its declaration writes it,
-    /// read again with them (`resolve_value_type`), recording nothing, once
-    /// for each `arguments`. For a struct given an open type, which has no
-    /// copy to hold them.
-    pub(crate) fn field_types_given(
-        &mut self,
-        definition: DefId,
-        arguments: ConstArguments,
-        span: Span,
-    ) -> &[semantic_types::TypeId] {
-        let given = DeclarationCopy {
-            definition,
-            arguments,
-        };
-        if self.internals.open_struct_fields.contains_key(&given) {
-            return &self.internals.open_struct_fields[&given];
-        }
-        let tree = &self.modules[definition.module.index()].ast;
-        let ast::Decl::Type(written) = tree.decls[tree.declaration(definition.index)] else {
-            unreachable!("only a struct declaration is given type arguments");
-        };
-        let ast::Type::Struct { fields } = tree.types[written.ty] else {
-            unreachable!("only a struct declaration is given type arguments");
-        };
-        let written: Vec<Id<ast::Type>> = (tree.children.lists.items(fields))
-            .map(|field| tree.children.fields[field].ty)
-            .collect();
-        let checking = Checking {
-            definition,
-            arguments,
-            used_at: span,
-            records_facts: false,
-        };
-        let fields = self.checking_in(checking, |checker| {
-            (written.into_iter())
-                .map(|ty| checker.resolve_value_type(ty))
-                .collect()
-        });
-        self.internals
-            .open_struct_fields
-            .entry(given)
-            .or_insert(fields)
     }
 
     /// A copy of a function whose body the compile has not built

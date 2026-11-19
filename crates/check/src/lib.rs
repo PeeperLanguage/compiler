@@ -23,6 +23,7 @@ mod pipes;
 mod printing;
 mod ranges;
 mod raw_pointers;
+mod slices;
 mod structs;
 /// Why a call of `callee` with `given` arguments is wrong, when it takes
 /// `fixed` of them, or at least that many when `variadic`.
