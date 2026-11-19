@@ -222,6 +222,13 @@ impl Type {
         matches!(self, Type::Slice { .. } | Type::Str)
     }
 
+    /// Whether each copy decides what this type is: a type parameter in its
+    /// own check, or a type that depends on one. An open type that only
+    /// holds one, such as `[2]T` or `Box<T>`, is still an array or a struct.
+    pub fn is_decided_per_copy(&self) -> bool {
+        matches!(self, Type::Parameter { .. } | Type::Undecided)
+    }
+
     /// `Some(mutable)` for a type whose values borrow what they view, a
     /// reference, a slice or an interface reference: the loan rules hold for
     /// each.

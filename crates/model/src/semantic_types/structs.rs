@@ -41,6 +41,12 @@ impl Types {
 }
 
 impl Type {
+    /// Whether a value of the type has fields: a struct, a copy or one given
+    /// an open type, whose fields are read with what it is given.
+    pub fn has_fields(&self) -> bool {
+        matches!(self, Type::Struct { .. } | Type::Named { .. })
+    }
+
     /// What a name after `.` can mean on the type (docs/feature-front.md,
     /// 5.1): its fields, for a struct. A type with members can also have
     /// functions with it as owner.
