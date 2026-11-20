@@ -112,26 +112,27 @@ impl builder::ThirBuilder<'_, '_> {
                 .error(diagnostics::INVALID_OPERATION, message, name.span);
             return None;
         };
-        self.check_constant_value(value, declared)
+        let checked = self.check_in_constant(value, declared);
+        let span = self.checker.module().ast.exprs.span(value);
+        self.known_constant(checked, span)
     }
 
-    /// `value`, of the type `declared` when given, as a value known at
-    /// compile time: a constant's, or a `const` parameter's argument
-    /// (`copy_called`). Calls in it run now. `None` after an error, or when
-    /// it is known only when the program runs, reported.
-    pub(crate) fn check_constant_value(
+    /// `value`, of the type `declared` when given, checked as a value known
+    /// at compile time is, a constant's or a `const` parameter's argument
+    /// (`copy_called`): calls in it run now. Not yet a constant
+    /// (`known_constant`).
+    pub(crate) fn check_in_constant(
         &mut self,
         value: Id<ast::Expr>,
         declared: Option<semantic_types::TypeId>,
-    ) -> Option<semantic_types::CheckedConstant> {
-        let span = self.checker.module().ast.exprs.span(value);
+    ) -> thir::Expr {
         let outer = std::mem::replace(&mut self.in_constant, true);
         let checked = match declared {
             Some(ty) => self.check_required(value, ty),
             None => self.check_expr(value, None),
         };
         self.in_constant = outer;
-        self.known_constant(checked, span)
+        checked
     }
 
     /// `checked`, worked out with `in_constant`, as a constant; reported at
@@ -153,8 +154,12 @@ impl builder::ThirBuilder<'_, '_> {
             _ => {
                 let file = self.checker.module().ast.file.clone();
                 let unknown = self.body.first_named_variable(&checked.kind);
-                // Each copy knows it, unless it reads what only a run knows.
-                if unknown.is_none() && self.body.holds_undecided(&checked.kind) {
+                // Each copy knows it, unless it reads what only a run knows:
+                // one that holds what each copy decides, or is of a type each
+                // copy gives, as `3` given for a `T`.
+                let per_copy = self.body.holds_undecided(&checked.kind)
+                    || self.checker.types.is_open(checked.ty);
+                if unknown.is_none() && per_copy {
                     return Some(semantic_types::CheckedConstant::PerCopy(checked.ty));
                 }
                 let types = &self.checker.types;

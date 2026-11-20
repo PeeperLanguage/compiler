@@ -125,8 +125,9 @@ impl builder::ThirBuilder<'_, '_> {
             };
             return Some((Callee::Function(function), pattern));
         }
-        // Each written parameter's type in the function's own type, which
-        // leaves out the `const` ones; `None` for those.
+        // Each written parameter's type in the function's own type, a
+        // `const` value's too (`const_value_type`); `None` for a type, `const
+        // T: type`.
         let semantic_types::Type::Function {
             parameters: pattern_parameters,
             ..
@@ -134,10 +135,16 @@ impl builder::ThirBuilder<'_, '_> {
         else {
             unreachable!("a function's type is a function type")
         };
-        let mut pattern_parameters = pattern_parameters.iter().skip(first).copied();
+        let mut pattern_parameters = pattern_parameters.clone().into_iter().skip(first);
         let parameter_types: Vec<Option<semantic_types::TypeId>> = (written_parameters.iter())
-            .map(|(_, parameter)| (!parameter.constant).then(|| pattern_parameters.next()))
-            .map(Option::flatten)
+            .map(|&(_, parameter)| match tree.types[parameter.ty] {
+                _ if !parameter.constant => pattern_parameters.next(),
+                ast::Type::Type => None,
+                _ => Some(
+                    self.checker
+                        .const_value_type(definition, parameter.ty, span),
+                ),
+            })
             .collect();
         // Its type parameters, `<T>`, which take no argument of their own:
         // the types written at the call, or else found from the arguments.
@@ -178,7 +185,7 @@ impl builder::ThirBuilder<'_, '_> {
                 // as `check_variadic` checks them; find it from them when a
                 // function needs it.
                 let Some(parameter_type) = parameter_type else {
-                    continue; // `const`
+                    continue; // a type, `const T: type`
                 };
                 if place >= arguments.len()
                     || matches!(tree.types[parameter.ty], ast::Type::Variadic { .. })
@@ -188,7 +195,11 @@ impl builder::ThirBuilder<'_, '_> {
                 {
                     continue;
                 }
-                let checked = self.check_expr(arguments[place], None);
+                let checked = if parameter.constant {
+                    self.check_in_constant(arguments[place], None)
+                } else {
+                    self.check_expr(arguments[place], None)
+                };
                 if checked.ty == semantic_types::TypeId::VOID {
                     let written = self.checker.module().ast.exprs.span(arguments[place]);
                     let message = "this expression has no value to pass";
@@ -214,16 +225,19 @@ impl builder::ThirBuilder<'_, '_> {
                 *named |= found;
             }
         }
-        let mut given = Vec::with_capacity(names.len() + const_parameters.len());
+        // What the call gives each parameter, in its place; where it gives
+        // nothing, after an error, the parameter itself (`own_arguments`),
+        // so a `const` value's type below still reads each place it names.
+        let own = self.checker.own_arguments(definition);
+        let own = self.checker.types.arguments(own).to_vec();
+        let mut given = Vec::with_capacity(own.len());
         for ((name, found), named) in names.iter().zip(types_found).zip(named) {
-            match found {
-                Some(ty) => {
-                    let ty = self.checker.type_argument(ty, span);
-                    failed |= ty == semantic_types::TypeId::INVALID;
-                    given.push(semantic_types::ConstArgument::Type(ty));
-                }
-                None if failed => {}
-                None => {
+            if let Some(ty) = found {
+                let ty = self.checker.type_argument(ty, span);
+                failed |= ty == semantic_types::TypeId::INVALID;
+                given.push(semantic_types::ConstArgument::Type(ty));
+            } else {
+                if !failed {
                     let hint = if named {
                         String::new()
                     } else {
@@ -236,6 +250,7 @@ impl builder::ThirBuilder<'_, '_> {
                         .error(diagnostics::INVALID_OPERATION, message, span);
                     failed = true;
                 }
+                given.push(own[given.len()].clone());
             }
         }
         for (place, parameter) in const_parameters {
@@ -248,13 +263,28 @@ impl builder::ThirBuilder<'_, '_> {
                 ));
                 continue;
             }
+            // Its type for this call: what the call gives the parameters
+            // before it, each one it may name (`signature_type`).
+            let value_type = parameter_types[place].expect("a `const` value has a type");
+            let mut before = given.clone();
+            before.extend_from_slice(&own[given.len()..]);
+            let before = self.checker.types.const_arguments(&before);
             let ty = self
                 .checker
-                .const_value_type(definition, parameter.ty, span);
+                .types
+                .substitute(value_type, definition, before);
+            let checked = match checked_early.get_mut(place).and_then(Option::take) {
+                Some(checked) => self.require(checked, argument, ty),
+                None => self.check_in_constant(argument, Some(ty)),
+            };
+            let written = self.checker.module().ast.exprs.span(argument);
+            let value = self.known_constant(checked, written);
             // One each copy gives makes the arguments open: no copy is made.
-            match self.check_constant_value(argument, Some(ty)) {
-                Some(constant) => given.push(semantic_types::ConstArgument::Value(constant)),
-                None => failed = true, // reported
+            if let Some(constant) = value {
+                given.push(semantic_types::ConstArgument::Value(constant));
+            } else {
+                failed = true; // reported
+                given.push(own[given.len()].clone());
             }
         }
         if failed {

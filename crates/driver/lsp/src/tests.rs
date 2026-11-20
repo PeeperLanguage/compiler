@@ -888,6 +888,8 @@ where
     let copied: Item = value;
     return copied;
 }
+fn Above<T>(const n: T) -> bool { return n > 0; }
+fn Calls() -> bool { return Above(5); }
 ";
     let main = "import \"app:utils\";
 fn main() {
@@ -969,8 +971,17 @@ fn main() {
         assert_eq!(
             hover(&server, utils, "Pick", 2),
             shown(
-                "fn Pick(const N: usize = 0, value: i32) -> i32\n\n// from\nfn Pick(const N: usize, value: i32) -> i32 { /* ... */ }",
+                "fn Pick(const N: u64 = 0, value: i32) -> i32\n\n// from\nfn Pick(const N: usize, value: i32) -> i32 { /* ... */ }",
                 4
+            )
+        );
+        // A value's type is the one the copy gives: `usize` is a `u64`
+        // here, and the `T` of `Above` an `i32`.
+        assert_eq!(
+            hover(&server, utils, "Above", 1),
+            shown(
+                "fn Above(const n: i32 = 5) -> bool\n\n// from\nfn Above<T>(const n: T) -> bool { /* ... */ }",
+                24
             )
         );
         assert_eq!(
@@ -1014,7 +1025,7 @@ fn main() {
         let declarations = facts
             .iter()
             .filter(|fact| matches!(fact.kind, CachedKind::Declaration { .. }));
-        assert_eq!(declarations.count(), 9); // `Caller` calls two, `Fits` asks two
+        assert_eq!(declarations.count(), 10); // `Caller` calls two, `Fits` asks two, `Calls` one
     }
     // What a body with no type for its `T` reports is not shown.
     assert_eq!(server.checked[&folder].results.diagnostics().count(), 0);

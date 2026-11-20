@@ -260,21 +260,24 @@ mod tests {
         );
     }
 
-    /// A `const` value's type is read again at each call, which cannot know a
-    /// type parameter yet, so one naming it through an array is refused.
+    /// A `const` value's type may name a type parameter through an array:
+    /// each call gives it the type. Only one before the value, as a call
+    /// gives those first.
     #[test]
     fn const_array_of_a_type_parameter() {
-        let text = "fn Typed(const T: type, const a: [2]T) {}";
-        let ((), reported) = testing::with_functions(text, |checker, functions| {
-            let (definition, name) = functions[0];
-            checker.function_type(definition, name);
-        });
+        let check = |text| {
+            let ((), reported) = testing::with_functions(text, |checker, functions| {
+                let (definition, name) = functions[0];
+                checker.function_type(definition, name);
+            });
+            reported
+        };
+        assert_eq!(check("fn Typed(const T: type, const a: [2]T) {}"), []);
         assert_eq!(
-            reported,
+            check("fn Typed(const a: [2]T, const T: type) {}"),
             [(
-                "T0043",
-                "`const` values whose type names a type parameter are not supported yet"
-                    .to_string(),
+                "P0005",
+                "a `const` value's type names only the type parameters before it".to_string(),
                 "[2]T".to_string()
             )]
         );

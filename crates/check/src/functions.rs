@@ -242,6 +242,8 @@ impl Checker<'_> {
         let tree = &self.module().ast;
         let mut parameters = Vec::with_capacity(signature.parameters.len());
         let mut variadic = false;
+        // Where the next `const` parameter is among those a copy is made for.
+        let mut copy_place = signature.type_parameters.len();
         for (position, parameter) in tree.children.lists.items(signature.parameters).enumerate() {
             let parameter = tree.children.params[parameter];
             if let Some(default) = parameter.default {
@@ -254,6 +256,7 @@ impl Checker<'_> {
                     let message = "a `const` parameter is one value known when compiling, so it takes no `mut` or `...`";
                     return self.error(diagnostics::INVALID_DECLARATION, message, span);
                 }
+                copy_place += 1;
                 if let ast::Type::Type = tree.types[parameter.ty] {
                     continue;
                 }
@@ -261,11 +264,15 @@ impl Checker<'_> {
                 if ty == semantic_types::TypeId::INVALID {
                     return ty; // reported
                 }
-                // A value's type is read again at each call (`const_value_type`),
-                // which cannot know a type parameter yet: only the copy does.
-                if self.types.is_open(ty) {
-                    return self
-                        .not_supported(span, "`const` values whose type names a type parameter");
+                // A call gives the value's type its parameters before the
+                // value's own (`copy_called`): a type it names comes first.
+                let checking = (self.internals.declarations_being_checked.last())
+                    .expect("a declaration is being checked");
+                let count = model::program::copy_parameters(tree, signature).count();
+                let named = self.types.parameters_named(ty, checking.definition, count);
+                if named[copy_place - 1..].contains(&true) {
+                    let message = "a `const` value's type names only the type parameters before it";
+                    return self.error(diagnostics::INVALID_DECLARATION, message, span);
                 }
                 continue;
             }

@@ -45,7 +45,7 @@ OWNERS = {
                    r"\bimplementation\(", r"\binterface_method\("],
     "raw_pointers": [r"Type::RawPointer\b", r"\breached_through_pointer\("],
     "printing": [r"\bprintable\(", r"\bcheck_print\("],
-    "constants": [r"\bknown_constant\(", r"\bcheck_constant_value\(", r"\bin_constant\b"],
+    "constants": [r"\bknown_constant\(", r"\bcheck_in_constant\(", r"\bin_constant\b"],
 }
 # The syntax kinds each concept owns.
 SYNTAX = {

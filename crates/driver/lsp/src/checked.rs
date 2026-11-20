@@ -273,16 +273,14 @@ fn copy_signature(
                 ConstArgument::Type(ty) => {
                     _ = write!(signature, "const {name}: type = {}", text(*ty));
                 }
+                // Of the type this copy gives it: `i32`, not the `T` written.
                 ConstArgument::Value(CheckedConstant::Known(constant)) => {
-                    // Its type as written: `usize`, not the integer it is here.
-                    let ty = tree.file.slice(tree.types.span(parameter.ty));
                     let value = value_text(&constant.value, &types[constant.ty]);
-                    _ = write!(signature, "const {name}: {ty} = {value}");
+                    _ = write!(signature, "const {name}: {} = {value}", text(constant.ty));
                 }
                 // As `Types::argument_text` writes it: each copy gives it.
-                ConstArgument::Value(CheckedConstant::PerCopy(_)) => {
-                    let ty = tree.file.slice(tree.types.span(parameter.ty));
-                    _ = write!(signature, "const {name}: {ty} = _");
+                ConstArgument::Value(CheckedConstant::PerCopy(ty)) => {
+                    _ = write!(signature, "const {name}: {} = _", text(*ty));
                 }
             }
             continue;

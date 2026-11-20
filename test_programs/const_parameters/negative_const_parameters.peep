@@ -14,7 +14,8 @@ fn Nested(kinds: &[2]type) { //~ error[P0011]: `type` is the type of a `const` p
 }
 fn Changed(const mut n: i32) {} //~ error[P0005]: a `const` parameter is one value known when compiling, so it takes no `mut` or `...`
 fn Many(const n: ...i32) {} //~ error[P0005]: a `const` parameter is one value known when compiling, so it takes no `mut` or `...`
-fn Typed(const T: type, const value: T) {} //~ error[T0043]: `const` values whose type names a type parameter are not supported yet
+// A call gives a value's type the parameters before it.
+fn Typed(const value: T, const T: type) {} //~ error[P0005]: a `const` value's type names only the type parameters before it
 
 struct Point { x: i32 }
 fn Scaled(const factor: i64, x: i64) -> i64 { return x * factor; }
