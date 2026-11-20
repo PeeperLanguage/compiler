@@ -25,6 +25,22 @@ mod ranges;
 mod raw_pointers;
 mod slices;
 mod structs;
+/// The value of a constant as an expression: each copy's, when only its
+/// type is known.
+pub(crate) fn constant_expr(constant: Option<CheckedConstant>) -> thir::Expr {
+    match constant {
+        Some(CheckedConstant::Known(Constant { ty, value })) => thir::Expr {
+            ty,
+            kind: thir::ExprKind::Constant(value),
+        },
+        Some(CheckedConstant::PerCopy(ty)) => thir::Expr {
+            ty,
+            kind: thir::ExprKind::Undecided,
+        },
+        None => thir::Expr::INVALID,
+    }
+}
+
 /// Why a call of `callee` with `given` arguments is wrong, when it takes
 /// `fixed` of them, or at least that many when `variadic`.
 pub(crate) fn argument_count_message(
@@ -59,6 +75,7 @@ use model::DeclarationCopy;
 use model::DefId;
 use model::ModuleId;
 use model::machine::Machine;
+use model::semantic_types::CheckedConstant;
 use model::semantic_types::ConstArgument;
 use model::semantic_types::Constant;
 use model::semantic_types::ImplementationId;
@@ -66,6 +83,7 @@ use model::semantic_types::Naming;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
 use model::semantic_types::Types;
+use model::thir;
 use model::thir::Fact;
 use model::thir::FactKind;
 use model::thir::Symbol;

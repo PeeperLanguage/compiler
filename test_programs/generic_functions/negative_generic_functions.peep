@@ -146,3 +146,18 @@ fn WrongForEveryCount(const N: i32) {
     let passed: bool = PASSED; //~ error[T0001]: mismatched types: expected `bool`, found `i32`
     let returned: bool = Same(N * 2); //~ error[T0001]: mismatched types: expected `bool`, found `i32`
 }
+
+// A spread each copy counts gives an array of `i32`s whose length only each
+// copy knows: what does not depend on the length is checked once, here.
+fn SpreadInto<T>(x: T) -> i32 {
+    let a = [_]i32{1, x...};
+    let first: bool = a[0]; //~ error[T0001]: mismatched types: expected `bool`, found `i32`
+    let wrong: [3]bool = a; //~ error[T0001]: mismatched types: expected `[3]bool`, found `[_]i32`
+    for value in a {
+        let flag: bool = value; //~ error[T0001]: mismatched types: expected `bool`, found `i32`
+    }
+    let view: &[]i32 = &a;
+    let three: [3]i32 = a;
+    const LENGTH: usize = a.len;
+    return view[0] + three[0];
+}

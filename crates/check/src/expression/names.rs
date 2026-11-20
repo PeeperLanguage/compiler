@@ -23,11 +23,11 @@ impl builder::ThirBuilder<'_, '_> {
                 };
             }
             Some(thir::Symbol::Local(thir::Local::Constant(constant))) => {
-                return constant_expr(self.body.constants[constant].clone());
+                return crate::constant_expr(self.body.constants[constant].clone());
             }
             Some(thir::Symbol::Constant(constant)) => {
                 let constant = self.checker.constant(constant, span);
-                return constant_expr(constant.map(semantic_types::CheckedConstant::Known));
+                return crate::constant_expr(constant.map(semantic_types::CheckedConstant::Known));
             }
             Some(thir::Symbol::Function(_)) => {
                 self.checker.not_supported(span, "functions as values");
@@ -45,23 +45,5 @@ impl builder::ThirBuilder<'_, '_> {
         self.checker
             .error(diagnostics::INVALID_OPERATION, message, span);
         thir::Expr::INVALID
-    }
-}
-
-/// The value of a constant as an expression: each copy's, when only its
-/// type is known.
-fn constant_expr(constant: Option<semantic_types::CheckedConstant>) -> thir::Expr {
-    match constant {
-        Some(semantic_types::CheckedConstant::Known(semantic_types::Constant { ty, value })) => {
-            thir::Expr {
-                ty,
-                kind: thir::ExprKind::Constant(value),
-            }
-        }
-        Some(semantic_types::CheckedConstant::PerCopy(ty)) => thir::Expr {
-            ty,
-            kind: thir::ExprKind::Undecided,
-        },
-        None => thir::Expr::INVALID,
     }
 }

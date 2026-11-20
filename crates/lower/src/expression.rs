@@ -250,7 +250,7 @@ impl Lowering<'_> {
         // copied, and a `&mut []` stays usable.
         let place = self.place_of(value)?;
         if !self.types[value_type].is_slice_shaped() {
-            let semantic_types::Type::Array { length, .. } = self.types[value_type] else {
+            let semantic_types::Type::Array { length, .. } = &self.types[value_type] else {
                 unreachable!("`.len` is the length of an array, slice or `&str`")
             };
             // A register, not a constant: the checker took this length as
@@ -260,7 +260,7 @@ impl Lowering<'_> {
             self.store(
                 self.usize,
                 slot.clone(),
-                mir::Operand::integer(self.usize, length),
+                mir::Operand::integer(self.usize, length.laid_out_length()),
                 span,
             );
             return Some(Value::Register(self.load(self.usize, slot, span)));
@@ -361,16 +361,17 @@ impl Lowering<'_> {
             unreachable!("the caller found an index")
         };
         let viewed = self.types.real(self.thir.exprs[array].ty);
-        let (element, checked, count) = match self.types[viewed] {
+        let (element, checked, count) = match &self.types[viewed] {
             semantic_types::Type::Array {
                 element, length, ..
             } if let Some(at) = self.known_position(index) => {
                 let at = mir::Operand::integer(self.usize, at);
-                (element, at, Some(length))
+                (*element, at, Some(length.laid_out_length()))
             }
             semantic_types::Type::Array {
                 element, length, ..
             } => {
+                let (element, length) = (*element, length.laid_out_length());
                 let value = self.lower_expr(index)?.register();
                 let message = messages::array_index_message(length);
                 let index_type = self.types.real(self.thir.exprs[index].ty);
@@ -384,7 +385,7 @@ impl Lowering<'_> {
                 );
                 (element, checked, Some(length))
             }
-            semantic_types::Type::Slice { element, .. } => {
+            &semantic_types::Type::Slice { element, .. } => {
                 let value = self.lower_expr(index)?.register();
                 // The slice's words are the place before its elements' step.
                 let slice = mir::Place {
@@ -1029,16 +1030,18 @@ impl Lowering<'_> {
         match (&self.types[borrowed_type], &self.types[ty]) {
             // A slice of an array's elements, or a slice's elements lent again.
             (_, semantic_types::Type::Slice { .. }) => {
-                let (elements, size, length) =
-                    if let semantic_types::Type::Array { length, .. } = self.types[borrowed_type] {
-                        let (size, _) = layout::layout(self.types, borrowed_type, self.target);
-                        let length = mir::Operand::integer(self.usize, length);
-                        (place, Some(size), length)
-                    } else {
-                        let length = self.second_word(place.clone());
-                        let length = self.load(self.usize, length, span);
-                        (place.then(mir::Step::Through), None, length)
-                    };
+                let (elements, size, length) = if let semantic_types::Type::Array {
+                    length, ..
+                } = &self.types[borrowed_type]
+                {
+                    let (size, _) = layout::layout(self.types, borrowed_type, self.target);
+                    let length = mir::Operand::integer(self.usize, length.laid_out_length());
+                    (place, Some(size), length)
+                } else {
+                    let length = self.second_word(place.clone());
+                    let length = self.load(self.usize, length, span);
+                    (place.then(mir::Step::Through), None, length)
+                };
                 let address = self.borrow(elements, size, mutable, &mir::SLICE_WORDS, span);
                 self.slice_words(address, length, to, span);
             }

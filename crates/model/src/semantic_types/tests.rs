@@ -101,7 +101,7 @@ fn conversions() {
         mutable: false,
         target: TypeId::I64,
     });
-    let array = types.array(TypeId::I32, 3);
+    let array = types.array(TypeId::I32, types.array_length(3));
     let to_array = types.intern(Type::Reference {
         mutable: false,
         target: array,
@@ -236,7 +236,7 @@ fn conversions_of_open_types() {
     });
     let reference =
         |types: &mut Types, mutable, target| types.intern(Type::Reference { mutable, target });
-    let pair = types.array(parameter, 2);
+    let pair = types.array(parameter, types.array_length(2));
     let to_pair = reference(&mut types, false, pair);
     let mutable_parameter = reference(&mut types, true, parameter);
     let shared_parameter = reference(&mut types, false, parameter);
@@ -249,7 +249,7 @@ fn conversions_of_open_types() {
     };
     let parameters = view(&mut types, parameter);
     let numbers = view(&mut types, TypeId::I32);
-    let triple = types.array(TypeId::I32, 3);
+    let triple = types.array(TypeId::I32, types.array_length(3));
     let to_triple = reference(&mut types, false, triple);
     // For every copy.
     assert_eq!(
@@ -277,7 +277,7 @@ fn conversions_of_open_types() {
         types.conversion(raw_parameter, raw_i32),
         Conversion::Undecided
     );
-    let bools = types.array(TypeId::BOOL, 2);
+    let bools = types.array(TypeId::BOOL, types.array_length(2));
     assert!(types.could_be_same(pair, bools));
     // In none: an array is never a `bool`, and lengths do not change.
     assert_eq!(types.conversion(pair, TypeId::BOOL), Conversion::Never);
@@ -521,13 +521,18 @@ fn equal_types_have_equal_ids() {
 #[test]
 fn arrays_in_arrays_keep_their_base_and_count() {
     let mut types = Types::new(64);
-    let row = types.array(TypeId::I32, 3);
-    let grid = types.array(row, 2);
+    let row = types.array(TypeId::I32, types.array_length(3));
+    let grid = types.array(row, types.array_length(2));
     let Type::Array { internals, .. } = types[grid] else {
         panic!("an array");
     };
-    assert_eq!((internals.base, internals.count), (TypeId::I32, 6));
-    assert_eq!(types.array_lengths(grid).collect::<Vec<_>>(), [2, 3]);
+    assert_eq!((internals.base, internals.count), (TypeId::I32, Some(6)));
+    assert_eq!(
+        (types.array_lengths(grid))
+            .map(CheckedConstant::known_length)
+            .collect::<Vec<_>>(),
+        [Some(2), Some(3)]
+    );
     assert_eq!(types.array_lengths(TypeId::I32).count(), 0);
     let row_alias = types.intern(Type::Alias {
         definition: DefId {
@@ -536,20 +541,31 @@ fn arrays_in_arrays_keep_their_base_and_count() {
         },
         real: row,
     });
-    let through_alias = types.array(row_alias, 2);
+    let through_alias = types.array(row_alias, types.array_length(2));
     let Type::Array { internals, .. } = types[through_alias] else {
         panic!("an array");
     };
-    assert_eq!((internals.base, internals.count), (TypeId::I32, 6));
+    assert_eq!((internals.base, internals.count), (TypeId::I32, Some(6)));
     let count_of = |types: &Types, ty| match types[ty] {
         Type::Array { internals, .. } => internals.count,
         _ => panic!("an array"),
     };
-    let huge = types.array(TypeId::I32, u64::MAX);
-    let past = types.array(huge, 2);
-    assert_eq!(count_of(&types, past), u64::MAX);
-    let empty = types.array(past, 0);
-    assert_eq!(count_of(&types, empty), 0);
+    let huge = types.array(TypeId::I32, types.array_length(u64::MAX));
+    let past = types.array(huge, types.array_length(2));
+    assert_eq!(count_of(&types, past), Some(u64::MAX));
+    let empty = types.array(past, types.array_length(0));
+    assert_eq!(count_of(&types, empty), Some(0));
+    let open = types.array(TypeId::I32, CheckedConstant::PerCopy(types.usize));
+    let rows = types.array(open, types.array_length(2));
+    assert_eq!(count_of(&types, rows), None);
+    assert!(types.is_open(rows));
+    // A length each copy gives is the same hole as a `const` argument's:
+    // some copy gives any length, never another element.
+    let three = types.array(TypeId::I32, types.array_length(3));
+    let bools = types.array(TypeId::BOOL, types.array_length(3));
+    assert!(types.could_be_same(open, three));
+    assert!(!types.could_be_same(open, bools));
+    assert_eq!(types.text(open, |_| ""), "[_]i32");
 }
 
 /// An array holds one set of loan holders per element, however deep, and a
@@ -580,27 +596,27 @@ fn arrays_hold_each_elements_holders() {
             mutable_holder: false,
         },
     });
-    let refs = types.array(shared, 3);
+    let refs = types.array(shared, types.array_length(3));
     assert_eq!(
         (types.holders_in(refs), types.holds_loans(refs)),
         (3, Some(false))
     );
-    let row = types.array(mutable, 3);
-    let grid = types.array(row, 2);
+    let row = types.array(mutable, types.array_length(3));
+    let grid = types.array(row, types.array_length(2));
     assert_eq!(
         (types.holders_in(grid), types.holds_loans(grid)),
         (6, Some(true))
     );
-    let pairs = types.array(pair, 2);
+    let pairs = types.array(pair, types.array_length(2));
     assert_eq!(
         (types.holders_in(pairs), types.holds_loans(pairs)),
         (4, Some(false))
     );
-    let numbers = types.array(TypeId::I32, 3);
+    let numbers = types.array(TypeId::I32, types.array_length(3));
     assert_eq!(
         (types.holders_in(numbers), types.holds_loans(numbers)),
         (0, None)
     );
-    let huge = types.array(refs, u64::MAX);
+    let huge = types.array(refs, types.array_length(u64::MAX));
     assert_eq!(types.holders_in(huge), usize::MAX);
 }

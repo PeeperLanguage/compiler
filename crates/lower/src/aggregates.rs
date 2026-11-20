@@ -81,11 +81,11 @@ impl Lowering<'_> {
     ) -> Option<()> {
         let semantic_types::Type::Array {
             element, length, ..
-        } = self.types[ty]
+        } = &self.types[ty]
         else {
             unreachable!("an array literal makes an array")
         };
-        let element = self.types.real(element);
+        let (element, length) = (self.types.real(*element), length.laid_out_length());
         let (size, _) = layout::layout(self.types, element, self.target);
         let parts: Vec<Id<thir::Expr>> = self.thir.children.lists.items(parts).collect();
         // Each part's value, and how many elements it gives: a number when
@@ -113,9 +113,9 @@ impl Lowering<'_> {
                     Part::Value(self.settled(value, part_type, called_later, span))
                 }
             };
-            let count = match self.types[part_type] {
+            let count = match &self.types[part_type] {
                 _ if !spread => Ok(1),
-                semantic_types::Type::Array { length, .. } => Ok(length),
+                semantic_types::Type::Array { length, .. } => Ok(length.laid_out_length()),
                 _ => match self.part_count(&value, part_type, wide, span) {
                     mir::Operand::Constant { bits, .. } => Ok(bits[0]),
                     counted => {
@@ -761,12 +761,15 @@ impl Lowering<'_> {
         };
         let mut place = self.place_of(array)?;
         let viewed = self.types.real(self.thir.exprs[array].ty);
-        let (element, length) = match self.types[viewed] {
+        let (element, length) = match &self.types[viewed] {
             semantic_types::Type::Array {
                 element, length, ..
-            } => (element, expression::Length::Known(length)),
+            } => (
+                *element,
+                expression::Length::Known(length.laid_out_length()),
+            ),
             // Its elements are behind its first word.
-            semantic_types::Type::Slice { element, .. } => {
+            &semantic_types::Type::Slice { element, .. } => {
                 let length = self.second_word(place.clone());
                 let read = self.load(self.usize, length, span);
                 place = place.then(mir::Step::Through);

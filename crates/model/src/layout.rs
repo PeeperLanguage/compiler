@@ -59,7 +59,7 @@ pub fn layout(types: &Types, ty: TypeId, target: &Machine) -> (u64, u64) {
         }
         Type::Array { internals, .. } => {
             let (size, align) = layout(types, internals.base, target);
-            (size.saturating_mul(internals.count), align)
+            (size.saturating_mul(internals.laid_out_count()), align)
         }
         Type::Invalid
         | Type::Void

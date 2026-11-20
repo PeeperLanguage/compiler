@@ -296,7 +296,12 @@ impl Checker<'_> {
     /// `[length]element`, written at `span` (`element_type`), holding at
     /// most `MOST_HOLDERS` references and slices and fitting the target;
     /// an open one's copies are checked for both.
-    pub(crate) fn array_type(&mut self, element: TypeId, length: u64, span: Span) -> TypeId {
+    pub(crate) fn array_type(
+        &mut self,
+        element: TypeId,
+        length: CheckedConstant,
+        span: Span,
+    ) -> TypeId {
         let Some(element) = self.element_type(element) else {
             return TypeId::INVALID;
         };

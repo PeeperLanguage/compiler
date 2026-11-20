@@ -64,8 +64,18 @@ pub struct StructInternals {
 pub struct ArrayInternals {
     /// What the arrays in arrays end in, never an array.
     pub base: TypeId,
-    /// How many of `base` there are in all.
-    pub count: u64,
+    /// How many of `base` there are in all; none when a length is each
+    /// copy's (`CheckedConstant::PerCopy`).
+    count: Option<u64>,
+}
+
+impl ArrayInternals {
+    /// How many of `base` there are in all, in a type that is laid out.
+    pub fn laid_out_count(self) -> u64 {
+        // An open type is never laid out: no copy is made from it.
+        self.count
+            .expect("only a type whose lengths are all known is laid out")
+    }
 }
 
 /// A float type: IEEE 754 single or double precision.
@@ -153,7 +163,8 @@ pub enum Type {
     /// another.
     Array {
         element: TypeId,
-        length: u64,
+        /// A `usize` constant.
+        length: CheckedConstant,
         internals: ArrayInternals,
     },
     /// `range[element]`: the integers from a start toward an end, a step
@@ -270,14 +281,15 @@ impl Type {
         }
     }
 
-    /// The element type of an array or a slice, with an array's length; a
-    /// slice's is known only when the program runs.
+    /// The element type of an array or a slice, with its length when known
+    /// now: a slice's is known only when the program runs, and an array's
+    /// may be each copy's.
     pub fn elements(&self) -> Option<(TypeId, Option<u64>)> {
-        match *self {
+        match self {
             Type::Array {
                 element, length, ..
-            } => Some((element, Some(length))),
-            Type::Slice { element, .. } => Some((element, None)),
+            } => Some((*element, length.known_length())),
+            Type::Slice { element, .. } => Some((*element, None)),
             _ => None,
         }
     }
@@ -443,12 +455,19 @@ impl Types {
     ) -> String {
         match argument {
             ConstArgument::Type(ty) => self.text(*ty, name_of),
-            ConstArgument::Value(CheckedConstant::Known(Constant { ty, value })) => {
-                value_text(value, &self[*ty]).to_string()
-            }
-            // As `[_]` is written: each copy gives it.
-            ConstArgument::Value(CheckedConstant::PerCopy(_)) => "_".to_string(),
+            ConstArgument::Value(value) => self.value_text(value).to_string(),
         }
+    }
+
+    /// `value` as Peeper text: `_` when each copy gives it, as `[_]` is
+    /// written.
+    fn value_text<'v>(&'v self, value: &'v CheckedConstant) -> impl Display + 'v {
+        fmt::from_fn(move |out| match value {
+            CheckedConstant::Known(Constant { ty, value }) => {
+                write!(out, "{}", value_text(value, &self[*ty]))
+            }
+            CheckedConstant::PerCopy(_) => out.write_str("_"),
+        })
     }
 
     /// The parameters a reference returned by a function of type `signature`
@@ -531,7 +550,7 @@ impl Types {
     pub fn holders_in(&self, id: TypeId) -> usize {
         match &self[id] {
             Type::Struct { internals, .. } => internals.holders,
-            Type::Array { internals, .. } => usize::try_from(internals.count)
+            Type::Array { internals, .. } => usize::try_from(internals.laid_out_count())
                 .unwrap_or(usize::MAX)
                 .saturating_mul(self.holders_in(internals.base)),
             Type::Interface { .. } => 1,
@@ -617,10 +636,17 @@ impl Types {
     pub fn arguments_open(&self, arguments: ConstArguments) -> bool {
         (self.arguments(arguments).iter()).any(|argument| match argument {
             ConstArgument::Type(part) => self.is_open(*part),
-            ConstArgument::Value(CheckedConstant::Known(constant)) => self.is_open(constant.ty),
-            // No copy holds a value it does not know.
-            ConstArgument::Value(CheckedConstant::PerCopy(_)) => true,
+            ConstArgument::Value(value) => self.value_open(value),
         })
+    }
+
+    /// Whether `value` is open: each copy gives it, as no copy holds a
+    /// value it does not know, or its type is open.
+    fn value_open(&self, value: &CheckedConstant) -> bool {
+        match value {
+            CheckedConstant::Known(constant) => self.is_open(constant.ty),
+            CheckedConstant::PerCopy(_) => true,
+        }
     }
 
     /// `ty` with each type parameter of `definition` (`Type::Parameter`)
@@ -814,9 +840,9 @@ impl Types {
             return false;
         }
         let (a, b) = (&self[a], &self[b]);
-        // All but the parts, and their count, must be the same; a kind left
-        // out here is compared by its parts alone, which can only miss an
-        // error a copy then reports, never make one up.
+        // All but the parts and values, and their count, must be the same; a
+        // kind left out here is compared by its parts and values alone, which
+        // can only miss an error a copy then reports, never make one up.
         let same_rest = Self::same_kind(a, b)
             && match (a, b) {
                 (
@@ -825,7 +851,6 @@ impl Types {
                         variadic: given, ..
                     },
                 ) => variadic == given,
-                (Type::Array { length, .. }, Type::Array { length: given, .. }) => length == given,
                 (
                     Type::Reference { mutable, .. }
                     | Type::Slice { mutable, .. }
@@ -834,49 +859,26 @@ impl Types {
                     | Type::Slice { mutable: given, .. }
                     | Type::InterfaceReference { mutable: given, .. },
                 ) => mutable == given,
-                (
-                    Type::Named { arguments, .. } | Type::Struct { arguments, .. },
-                    Type::Named {
-                        arguments: given, ..
-                    }
-                    | Type::Struct {
-                        arguments: given, ..
-                    },
-                ) => (self
-                    .arguments(*arguments)
-                    .iter()
-                    .zip(self.arguments(*given)))
-                .all(|pair| match pair {
-                    (ConstArgument::Type(_), ConstArgument::Type(_)) => true, // a part
-                    // One parameter's: of one type, so some copy gives it.
-                    (
-                        ConstArgument::Value(CheckedConstant::PerCopy(_)),
-                        ConstArgument::Value(_),
-                    )
-                    | (
-                        ConstArgument::Value(_),
-                        ConstArgument::Value(CheckedConstant::PerCopy(_)),
-                    ) => true,
-                    (a, b) => a == b,
-                }),
                 _ => true,
             };
+        // A value each copy gives is of one type, so some copy gives the other.
+        let values_could_be_same = (self.values(a).zip(self.values(b))).all(|pair| match pair {
+            (CheckedConstant::PerCopy(_), _) | (_, CheckedConstant::PerCopy(_)) => true,
+            (a, b) => a == b,
+        });
         same_rest
+            && values_could_be_same
             && self.parts(a).count() == self.parts(b).count()
             && (self.parts(a).zip(self.parts(b)))
                 .all(|(a, b)| source::grow_stack(|| self.could_be_same(a, b)))
     }
 
     /// Whether the type `ty`, about to be added, is open: it is a type
-    /// parameter or undecided, or a part of it is open.
+    /// parameter or undecided, or a part or value of it is open.
     fn holds_open(&self, ty: &Type) -> bool {
-        match ty {
-            Type::Parameter { .. } | Type::Undecided => true,
-            Type::Named { arguments, .. } | Type::Struct { arguments, .. } => {
-                self.arguments_open(*arguments)
-            }
-            _ => self.parts(ty).any(|part| self.is_open(part)),
-        }
+        matches!(ty, Type::Parameter { .. } | Type::Undecided)
+            || self.parts(ty).any(|part| self.is_open(part))
+            || self.values(ty).any(|value| self.value_open(value))
     }
 
     /// Whether `a` and `b` are of one kind, so their parts (`parts`) pair up
@@ -939,6 +941,25 @@ impl Types {
         first.into_iter().chain(rest.iter().copied()).chain(types)
     }
 
+    /// The values the type `ty` is made of, in order: an array's length, a
+    /// struct's `const` arguments. Each is the same kind of hole wherever it
+    /// stands (`CheckedConstant::PerCopy`), so what is open and what could
+    /// be the same reads them alike for every kind.
+    fn values<'a>(&'a self, ty: &'a Type) -> impl Iterator<Item = &'a CheckedConstant> + 'a {
+        let (length, arguments): (Option<&CheckedConstant>, &[ConstArgument]) = match ty {
+            Type::Array { length, .. } => (Some(length), &[]),
+            Type::Named { arguments, .. } | Type::Struct { arguments, .. } => {
+                (None, self.arguments(*arguments))
+            }
+            _ => (None, &[]),
+        };
+        let values = arguments.iter().filter_map(|argument| match argument {
+            ConstArgument::Type(_) => None,
+            ConstArgument::Value(value) => Some(value),
+        });
+        length.into_iter().chain(values)
+    }
+
     /// The type `id` stands for: itself, or the type an alias names.
     pub fn real(&self, id: TypeId) -> TypeId {
         match self.types[id.0 as usize].ty {
@@ -996,12 +1017,8 @@ impl Types {
                 for argument in given {
                     match argument {
                         ConstArgument::Type(ty) => self.hash(*ty, hasher, declaration),
-                        ConstArgument::Value(CheckedConstant::Known(constant)) => {
-                            self.hash(constant.ty, hasher, declaration);
-                            constant.value.hash(hasher);
-                        }
-                        ConstArgument::Value(CheckedConstant::PerCopy(ty)) => {
-                            self.hash(*ty, hasher, declaration);
+                        ConstArgument::Value(value) => {
+                            self.hash_value(value, hasher, declaration);
                         }
                     }
                 }
@@ -1016,7 +1033,7 @@ impl Types {
                 // the type after it.
                 self.array_lengths(id).count().hash(hasher);
                 for length in self.array_lengths(id) {
-                    length.hash(hasher);
+                    self.hash_value(length, hasher, declaration);
                 }
                 self.hash(internals.base, hasher, declaration);
             }
@@ -1047,6 +1064,23 @@ impl Types {
             | Type::CString
             | Type::Str => {}
             Type::Alias { .. } => unreachable!("indexing looks through aliases"),
+        }
+    }
+
+    /// Feeds `value`, a value a type holds (`values`), to `hasher`, as
+    /// `hash` feeds a type.
+    fn hash_value<H: Hasher>(
+        &self,
+        value: &CheckedConstant,
+        hasher: &mut H,
+        declaration: impl Fn(DefId, &mut H) + Copy,
+    ) {
+        match value {
+            CheckedConstant::Known(constant) => {
+                self.hash(constant.ty, hasher, declaration);
+                constant.value.hash(hasher);
+            }
+            CheckedConstant::PerCopy(ty) => self.hash(*ty, hasher, declaration),
         }
     }
 
@@ -1142,7 +1176,7 @@ impl Types {
             Type::Undecided => out.push_str("{undecided}"),
             Type::Array { internals, .. } => {
                 for length in self.array_lengths(id) {
-                    _ = write!(out, "[{length}]");
+                    _ = write!(out, "[{}]", self.value_text(length));
                 }
                 self.write_real_text(out, internals.base, name_of);
             }

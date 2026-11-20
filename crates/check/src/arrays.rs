@@ -11,7 +11,6 @@ use crate::Checker;
 use crate::builder;
 use arena::Id;
 use arena::List;
-use bigint::Limbs;
 use diagnostics::suggest::nearest_name;
 use model::constant::Value;
 use model::semantic_types;
@@ -38,7 +37,8 @@ pub(crate) fn resolve_array_type(
         return semantic_types::TypeId::INVALID;
     }
     let element = checker.resolve_value_type(element);
-    checker.array_type(element, value[0], span)
+    let length = checker.types.array_length(value[0]);
+    checker.array_type(element, length, span)
 }
 
 /// `[N]T{ entries }`, written at `span`, or `[_]T{ entries }`, whose
@@ -69,11 +69,11 @@ pub(crate) fn check_array_literal(
                 ty if ty == semantic_types::TypeId::INVALID => {
                     (semantic_types::TypeId::INVALID, None, span)
                 }
-                ty => match builder.checker.types[ty] {
-                    semantic_types::Type::Array {
-                        element, length, ..
-                    } => (element, Some((ty, length)), span),
-                    _ => unreachable!("an array literal's written type is an array type"),
+                ty => match builder.checker.types[ty].elements() {
+                    Some((element, Some(length))) => (element, Some((ty, length)), span),
+                    _ => unreachable!(
+                        "an array literal's written type is an array type with its length written"
+                    ),
                 },
             }
         }
@@ -114,7 +114,6 @@ pub(crate) fn check_length(
             .report_unknown(diagnostics::UNKNOWN_FIELD, field.span, message, meant);
         return thir::Expr::INVALID;
     }
-    let usize = builder.checker.types.usize;
     // An array's length is folded only where computing the array runs
     // nothing: a variable or constant, its fields and dereferences, and
     // elements at constant indexes, which are checked here. A call, a
@@ -135,23 +134,19 @@ pub(crate) fn check_length(
             _ => break false,
         }
     };
-    // A slice's or a `&str`'s length is known only when the program runs:
-    // read from the value, so through the reference to it, as an array's
-    // that must still be computed.
-    let length = builder.checker.types[viewed]
-        .elements()
-        .and_then(|(_, length)| length);
-    let Some(length) = length.filter(|_| runs_nothing) else {
-        let value = builder.through_pointer(value, builder.body.exprs.span(value));
-        return thir::Expr {
-            ty: usize,
-            kind: thir::ExprKind::Length(value),
-        };
-    };
-    let length = Limbs::new(builder.checker.target.pointer_bits, &[length]);
+    // An array's length is its type's constant, each copy's when only its
+    // type is known; a slice's or a `&str`'s is known only when the program
+    // runs: read from the value, so through the reference to it, as an
+    // array's that must still be computed.
+    if runs_nothing
+        && let semantic_types::Type::Array { length, .. } = &builder.checker.types[viewed]
+    {
+        return crate::constant_expr(Some(length.clone()));
+    }
+    let value = builder.through_pointer(value, builder.body.exprs.span(value));
     thir::Expr {
-        ty: usize,
-        kind: thir::ExprKind::Constant(Value::Integer(length)),
+        ty: builder.checker.types.usize,
+        kind: thir::ExprKind::Length(value),
     }
 }
 

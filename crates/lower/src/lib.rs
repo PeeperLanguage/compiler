@@ -592,7 +592,7 @@ impl Lowering<'_> {
             semantic_types::Type::Array { internals, .. } => {
                 let base = self.types.real(internals.base);
                 let (size, _) = layout::layout(self.types, base, self.target);
-                for index in 0..internals.count {
+                for index in 0..internals.laid_out_count() {
                     self.add_holders(base, at + index * size, holders);
                 }
             }
@@ -732,7 +732,9 @@ impl Lowering<'_> {
                 // Its base is no array: a pointer, slice or struct in it
                 // counts the depth.
                 let element = self.debug_type(internals.base, depth);
-                let lengths = self.types.array_lengths(ty).collect();
+                let lengths = (self.types.array_lengths(ty))
+                    .map(semantic_types::CheckedConstant::laid_out_length)
+                    .collect();
                 let (size, _) = layout::layout(self.types, ty, self.target);
                 mir::DebugType::Array {
                     element,

@@ -7,6 +7,7 @@ use arena::Id;
 use diagnostics::Diagnostic;
 use diagnostics::fix::Fix;
 use model::constant::Value;
+use model::semantic_types::CheckedConstant;
 use model::semantic_types::Conversion;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
@@ -35,6 +36,14 @@ pub(crate) struct EntryCount {
 }
 
 impl EntryCount {
+    /// As many values as each copy finds.
+    fn per_copy() -> EntryCount {
+        EntryCount {
+            per_copy: true,
+            ..EntryCount::known(0)
+        }
+    }
+
     /// `known` values, all counted now.
     fn known(known: u64) -> EntryCount {
         EntryCount {
@@ -292,7 +301,7 @@ impl ThirBuilder<'_, '_> {
     /// entries give `count` values; `None` after reporting that they do not
     /// fit it (`arrays::check_array_literal`). `[_]` cannot count a spread
     /// counted when the program runs, and one each copy counts makes its
-    /// length, so its type, each copy's (`TypeId::UNDECIDED`).
+    /// length each copy's (`CheckedConstant::PerCopy`).
     pub(crate) fn array_literal_type(
         &mut self,
         written: Span,
@@ -313,7 +322,10 @@ impl ThirBuilder<'_, '_> {
                     .error(diagnostics::TYPE_MISMATCH, message, spread);
                 None
             }
-            (None, None) if per_copy => Some(TypeId::UNDECIDED),
+            (None, None) if per_copy => {
+                let length = CheckedConstant::PerCopy(self.checker.types.usize);
+                Some(self.checker.array_type(element, length, written))
+            }
             (None, None) => {
                 if !self
                     .checker
@@ -321,7 +333,8 @@ impl ThirBuilder<'_, '_> {
                 {
                     return None;
                 }
-                Some(self.checker.array_type(element, known as u64, written))
+                let length = self.checker.types.array_length(known as u64);
+                Some(self.checker.array_type(element, length, written))
             }
             (Some((ty, length)), later) => {
                 let length = u128::from(length);
@@ -375,12 +388,10 @@ impl ThirBuilder<'_, '_> {
         };
         match types[ty] {
             Type::Invalid => return None,
-            Type::Array {
-                element: from,
-                length,
-                ..
-            } if gives(from) => {
-                return Some((spread, EntryCount::known(length)));
+            Type::Array { element: from, .. } if gives(from) => {
+                let length = types[ty].elements().and_then(|(_, length)| length);
+                let count = length.map_or(EntryCount::per_copy(), EntryCount::known);
+                return Some((spread, count));
             }
             Type::Slice {
                 mutable,
@@ -420,11 +431,7 @@ impl ThirBuilder<'_, '_> {
             }
             Type::Range { element: from, .. } if gives(from) => {}
             _ if types[ty].is_decided_per_copy() => {
-                let count = EntryCount {
-                    per_copy: true,
-                    ..EntryCount::known(0)
-                };
-                return Some((spread, count));
+                return Some((spread, EntryCount::per_copy()));
             }
             _ => {
                 let (expected, found) = self.checker.type_texts(element, ty);
