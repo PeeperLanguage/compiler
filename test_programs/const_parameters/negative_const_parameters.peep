@@ -14,7 +14,8 @@ fn Nested(kinds: &[2]type) { //~ error[P0011]: `type` is the type of a `const` p
 }
 fn Changed(const mut n: i32) {} //~ error[P0005]: a `const` parameter is one value known when compiling, so it takes no `mut` or `...`
 fn Many(const n: ...i32) {} //~ error[P0005]: a `const` parameter is one value known when compiling, so it takes no `mut` or `...`
-fn Typed(const T: type, const value: T) {} //~ error[T0043]: `const` values whose type names a type parameter are not supported yet
+// A call gives a value's type the parameters before it.
+fn Typed(const value: T, const T: type) {} //~ error[P0005]: a `const` value's type names only the type parameters before it
 
 struct Point { x: i32 }
 fn Scaled(const factor: i64, x: i64) -> i64 { return x * factor; }
@@ -57,7 +58,7 @@ fn main() {
     let f = Size; //~ error[T0043]: functions as values are not supported yet
     let b = Box.{ x = 1 };
     let n: &Named = &b; //~ error[T0001]: `Box` does not implement `Named`: its `Name` takes a `const` parameter, so it is not one function an interface reference can call
-    println(Double(i32, 2), Double(bool, true)); //~ label: in `Double<bool>`, the copy made for this call
+    println(Double(i32, 2), Double(bool, true)); //~ label: in `Double<bool>`, the copy made here
     println(Value(i32));
     let x: i64 = 3; //~ label: `x` gets its value only when the program runs
     println(Scaled(x, 1)); //~ error[T0004]: the value of a constant must be known at compile time

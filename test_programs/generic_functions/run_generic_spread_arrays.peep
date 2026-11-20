@@ -1,0 +1,55 @@
+//@ run
+
+// `[_]i32{1, x...}` where `x` is of a type parameter: how many values the
+// spread gives, each copy finds, so the array's length is each copy's
+// (`[_]i32`). Its elements are `i32` in every copy, so what does not depend
+// on the length is checked once, in the function's own check.
+
+fn Count<U>(value: U) -> usize {
+    return 1;
+}
+
+fn Spread<T>(x: T) -> usize {
+    let a = [_]i32{1, x...};
+    // Each copy folds its own length.
+    const LENGTH: usize = a.len;
+    // Its elements are `i32`, whatever the length.
+    let first: i32 = a[0];
+    // Spread again, held in arrays, lent as a slice.
+    let again = [_]i32{a..., 9};
+    let grid = [2][3]i32{a, a};
+    let view: &[]i32 = &a;
+    let mut total = 0;
+    for value in a {
+        total = total + value;
+    }
+    println(LENGTH);
+    println(again.len);
+    println(grid[1][2]);
+    println(view.len);
+    println(total);
+    return Count(a) + first as usize;
+}
+
+fn References<T>(rest: T, y: &i32) -> i32 {
+    let all = [_]&i32{y, rest...};
+    let mut sum = 0;
+    for each in all {
+        sum = sum + each.*;
+    }
+    return sum;
+}
+
+// A written length the spread fills exactly, in the copy whose array fits.
+fn Exactly<T>(x: T) -> i32 {
+    let three = [3]i32{ 1, x... };
+    return three[2];
+}
+
+fn main() {
+    println(Spread([2]i32{2, 3}));
+    let four = 4;
+    let five = 5;
+    println(References([2]&i32{&four, &five}, &four));
+    println(Exactly([2]i32{ 2, 3 }));
+}

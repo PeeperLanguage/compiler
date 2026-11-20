@@ -21,8 +21,8 @@ use lsp_types::Url;
 use serde_json::json;
 use source::SourceFile;
 use source::Span;
-use syntax::operators::BinaryOp;
-use syntax::operators::UnaryOp;
+use tree::operators::BinaryOp;
+use tree::operators::UnaryOp;
 
 use crate::DEBOUNCE;
 use crate::OpenFile;
@@ -888,6 +888,8 @@ where
     let copied: Item = value;
     return copied;
 }
+fn Above<T>(const n: T) -> bool { return n > 0; }
+fn Calls() -> bool { return Above(5); }
 ";
     let main = "import \"app:utils\";
 fn main() {
@@ -956,7 +958,7 @@ fn main() {
         // Its variables: one of a type every copy has, at a use.
         assert_eq!(hover(&server, utils, "kept", 1), shown("kept: i32", 5));
         // No call copies `Unused`. What it calls is found, a call that
-        // would make a copy too; a `T` it is given is no one type.
+        // would make a copy too; a value of its `T` is of the type `T`.
         assert_eq!(hover(&server, utils, "Small", 2), small);
         assert_eq!(
             hover(&server, utils, "Pick", 1),
@@ -969,8 +971,17 @@ fn main() {
         assert_eq!(
             hover(&server, utils, "Pick", 2),
             shown(
-                "fn Pick(const N: usize = 0, value: i32) -> i32\n\n// from\nfn Pick(const N: usize, value: i32) -> i32 { /* ... */ }",
+                "fn Pick(const N: u64 = 0, value: i32) -> i32\n\n// from\nfn Pick(const N: usize, value: i32) -> i32 { /* ... */ }",
                 4
+            )
+        );
+        // A value's type is the one the copy gives: `usize` is a `u64`
+        // here, and the `T` of `Above` an `i32`.
+        assert_eq!(
+            hover(&server, utils, "Above", 1),
+            shown(
+                "fn Above(const n: i32 = 5) -> bool\n\n// from\nfn Above<T>(const n: T) -> bool { /* ... */ }",
+                24
             )
         );
         assert_eq!(
@@ -988,8 +999,8 @@ fn main() {
                 12
             )
         );
-        assert_eq!(hover(&server, utils, "given", 1), shown("given", 8));
-        assert_eq!(hover(&server, utils, "held", 0), shown("mut held", 9));
+        assert_eq!(hover(&server, utils, "given", 1), shown("given: T", 8));
+        assert_eq!(hover(&server, utils, "held", 0), shown("mut held: T", 9));
         // A type parameter shows where it is declared; only a copy knows its type.
         let item = shown("Item: type", 16);
         assert_eq!(hover(&server, utils, "Item", 3), item); // after `where`
@@ -1014,7 +1025,7 @@ fn main() {
         let declarations = facts
             .iter()
             .filter(|fact| matches!(fact.kind, CachedKind::Declaration { .. }));
-        assert_eq!(declarations.count(), 9); // `Caller` calls two, `Fits` asks two
+        assert_eq!(declarations.count(), 10); // `Caller` calls two, `Fits` asks two, `Calls` one
     }
     // What a body with no type for its `T` reports is not shown.
     assert_eq!(server.checked[&folder].results.diagnostics().count(), 0);
@@ -1198,5 +1209,83 @@ fn answers_only_from_the_current_text() {
         hover(&server, &second),
         serde_json::Value::Null,
         "not loaded"
+    );
+}
+
+/// Each test program is checked as an editor opens it, file by file, with
+/// no panic: only the editor's compile records facts, so nothing else
+/// checks what it does with them.
+#[test]
+fn checks_every_test_program() {
+    let projects = std::env::temp_dir().join(format!("peeper-lsp-programs-{}", std::process::id()));
+    let libraries = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../_builtin_library");
+    let (connection, _client) = Connection::memory();
+    let mut panicked = Vec::new();
+    for program in test_programs::all() {
+        let folder = projects.join(&program.name);
+        program.write_project(&folder);
+        let check = || {
+            let mut server = Server::new(&connection, &libraries, true);
+            for (file, text) in &program.sources {
+                let uri = Url::from_file_path(folder.join("src").join(file)).unwrap();
+                let document =
+                    json!({ "uri": uri, "languageId": "peeper", "version": 1, "text": text });
+                let open = Notification::new(
+                    "textDocument/didOpen".to_string(),
+                    json!({ "textDocument": document }),
+                );
+                server.apply_notification(open).unwrap();
+                server.check_pending().unwrap();
+            }
+        };
+        if std::panic::catch_unwind(std::panic::AssertUnwindSafe(check)).is_err() {
+            panicked.push(program.name);
+        }
+    }
+    _ = std::fs::remove_dir_all(&projects);
+    assert!(
+        panicked.is_empty(),
+        "the editor's check panicked on {panicked:?}"
+    );
+}
+
+/// A name after `where` is a local of its own function, though another
+/// function's body asks for its signature first.
+#[test]
+fn names_after_where_are_of_their_own_function() {
+    let folder = std::env::temp_dir().join(format!("peeper-lsp-where-{}", std::process::id()));
+    _ = std::fs::remove_dir_all(&folder);
+    std::fs::create_dir_all(&folder).unwrap();
+    let file = folder.join("main.peep");
+    std::fs::write(&file, "fn main() {}\n").unwrap();
+    let uri = Url::from_file_path(&file).unwrap();
+    let (connection, _client) = Connection::memory();
+    let mut server = Server::new(&connection, Path::new("no-libraries"), true);
+    let text = "fn Positive(const N: i32) -> bool { return N > 0; }
+fn main() {
+    const Ratio = 1.5;
+    let total = Pick(3, 4);
+}
+fn Pick(const N: i32, value: i32) -> i32
+where
+    N: Positive
+{
+    return N + value;
+}
+";
+    let document = json!({ "uri": uri, "languageId": "peeper", "version": 1, "text": text });
+    let open = Notification::new(
+        "textDocument/didOpen".to_string(),
+        json!({ "textDocument": document }),
+    );
+    server.apply_notification(open).unwrap();
+    server.check_pending().unwrap();
+    let params = place(&uri, text, "N: Positive", 0);
+    let request = Request::new(RequestId::from(1), "textDocument/hover".to_string(), params);
+    let Response { result, error, .. } = server.answer_request(request);
+    assert!(error.is_none(), "{error:?}");
+    assert_eq!(
+        result.unwrap()["contents"]["value"],
+        "```peeper\nconst N: i32\n```\n\n---\n\n*in* `main` *· line 6*\n"
     );
 }

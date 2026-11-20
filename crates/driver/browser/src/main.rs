@@ -8,7 +8,6 @@
 //! overflow wasm's stack on very deep code, so a page runs a new instance for each
 //! check, and one crash loses nothing.
 
-use features::Peeper;
 use std::collections::HashMap;
 use std::io::Read;
 use std::path::Path;
@@ -87,17 +86,14 @@ fn project_of(files: &HashMap<String, String>) -> Result<project::Project, Strin
 
 /// The program of `project`, whose files are `files` and the bundled
 /// libraries'.
-fn load(
-    project: &project::Project,
-    files: HashMap<String, String>,
-) -> model::program::Program<Peeper> {
+fn load(project: &project::Project, files: HashMap<String, String>) -> model::program::Program {
     let page_files = files
         .into_iter()
         .map(|(name, text)| (PathBuf::from(name), text));
     let library_files = (LIBRARY_FILES.iter())
         .map(|&(path, text)| (Path::new(LIBRARY_ROOT).join(path), text.to_string()));
     let open_files: HashMap<PathBuf, String> = page_files.chain(library_files).collect();
-    project::load::<Peeper>(project, &open_files)
+    project::load(project, &open_files)
 }
 
 /// The diagnostics of the program `files` make up, as `peeper check` finds
@@ -155,7 +151,7 @@ fn run(files: HashMap<String, String>) -> Value {
 
 /// Every diagnostic of `program` and `results`, the loader's first.
 fn all_diagnostics<'a>(
-    program: &'a model::program::Program<Peeper>,
+    program: &'a model::program::Program,
     results: &'a compile::Results,
 ) -> impl Iterator<Item = &'a Diagnostic> {
     program.diagnostics.iter().chain(results.diagnostics())
@@ -165,10 +161,7 @@ fn all_diagnostics<'a>(
 /// `message`, its primary `place` (null when it has none) and the `related`
 /// places; a place has its `file`, its `start` and `end`, and its own
 /// `message`.
-fn diagnostics_json(
-    program: &model::program::Program<Peeper>,
-    results: &compile::Results,
-) -> Value {
+fn diagnostics_json(program: &model::program::Program, results: &compile::Results) -> Value {
     let place = |label: &Label| {
         json!({
             "file": label.file.path,

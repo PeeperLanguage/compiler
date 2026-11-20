@@ -1,0 +1,45 @@
+//@ run
+
+// Any type a module declares can have functions, an interface too: one
+// called through a reference to the interface runs once for every type
+// that implements it, and reaches the type's methods through the table.
+
+iface Shape {
+    fn Area(&self) -> i32,
+}
+
+struct Square {
+    side: i32,
+}
+
+fn Square::Area(&self) -> i32 {
+    return self.side * self.side;
+}
+
+struct Rectangle {
+    width: i32,
+    height: i32,
+}
+
+fn Rectangle::Area(&self) -> i32 {
+    return self.width * self.height;
+}
+
+fn Shape::Twice(&self) -> i32 {
+    return self.Area() * 2;
+}
+
+// One that takes no `self` is called by its path.
+fn Shape::Unit() -> i32 {
+    return 1;
+}
+
+fn main() {
+    let square: Square = .{ side = 3 };
+    let rectangle: Rectangle = .{ width = 2, height = 5 };
+    let first: &Shape = &square;
+    let second: &Shape = &rectangle;
+    println(first.Twice(), second.Twice(), Shape::Unit());
+    let owned: Shape = square;
+    println(owned.Twice());
+}

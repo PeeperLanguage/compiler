@@ -1,7 +1,6 @@
 //! Answering the editor's requests: hover, go to definition and code
 //! actions.
 
-use features::Peeper;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -17,10 +16,9 @@ use lsp_types::CodeActionParams;
 use lsp_types::Location;
 use lsp_types::TextDocumentPositionParams;
 use lsp_types::Url;
-use model::semantic_types::builtin_doc;
 use source::SourceFile;
 use source::Span;
-use syntax::ast;
+use tree::ast;
 
 use crate::checked::CachedFact;
 use crate::checked::CachedKind;
@@ -34,6 +32,7 @@ use crate::hover::hover_text;
 use crate::hover::markdown_hover;
 use crate::server::Server;
 use crate::server::file_path;
+use model::semantic_types;
 impl Server<'_> {
     /// Answers go to definition with where the name at the given place is
     /// declared, and hover with what it is, or what the keyword there does;
@@ -66,7 +65,7 @@ impl Server<'_> {
                     return None; // declared nowhere
                 }
                 let written = module.ast.file.slice(name.span);
-                let doc = builtin_doc(written, host().pointer_bits)?;
+                let doc = semantic_types::builtin::builtin_doc(written, host().pointer_bits)?;
                 return markdown_hover(doc_hover(written, &doc));
             }
             let (file, declared, hover) = declaration_of(checked, module, name)?;
@@ -143,7 +142,7 @@ impl Server<'_> {
     pub(crate) fn modules_of<'a>(
         &'a self,
         file: &Path,
-    ) -> impl Iterator<Item = (&'a Checked, &'a model::program::Module<Peeper>)> {
+    ) -> impl Iterator<Item = (&'a Checked, &'a model::program::Module)> {
         let open = self.open_files.get(file);
         let mut programs: Vec<(&PathBuf, &Checked)> = self.checked.iter().collect();
         programs.sort_unstable_by_key(|&(entry, _)| entry);
@@ -163,7 +162,7 @@ impl Server<'_> {
     pub(crate) fn name_at(
         &self,
         place: &TextDocumentPositionParams,
-    ) -> Option<(&Checked, &model::program::Module<Peeper>, CachedFact)> {
+    ) -> Option<(&Checked, &model::program::Module, CachedFact)> {
         let file = file_path(&place.text_document.uri)?;
         let holds: [fn(Span, u32) -> bool; 2] = [
             |span, offset| span.start <= offset && offset < span.end,
@@ -252,7 +251,7 @@ impl Server<'_> {
 /// and what hover shows for it. A built-in name has no declaration.
 fn declaration_of<'a>(
     checked: &'a Checked,
-    module: &'a model::program::Module<Peeper>,
+    module: &'a model::program::Module,
     fact: CachedFact,
 ) -> Option<(&'a Arc<SourceFile>, Span, String)> {
     let CachedFact { span, kind } = fact;

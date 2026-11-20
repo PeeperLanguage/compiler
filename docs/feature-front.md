@@ -1,11 +1,18 @@
 # Design page: a front split by feature
 
-Since 2026-11-13 the features are files of one crate, not a crate each:
-`crates/features/src/lib.rs` is the list (`Peeper`, `FeatureExpr`,
-`FeatureType`, `FeatureStmt`), and `crates/features/src/<feature>.rs` holds a feature's
-nodes, parse rows and checking, written for `Peeper`. Where this page says
-"the top crate", "`driver/compile/src/language.rs`" or "a feature crate",
-read that; the phases are generic over `L` as described.
+> Replaced on 2026-11-18 by docs/compiler-layout.md: the `features` crate
+> is gone, its files are concept files of `parser` and `semantic`. Kept as
+> the record of how the front got here.
+
+Since 2026-11-13 the features are files of one crate, not a crate each,
+and since 2026-11-18 the phases are not generic over `L`
+(docs/structure-mapping.md, step 7): the tree lists every feature's node
+(`ast::FeatureExpr`, `FeatureType`, `FeatureStmt`), `crates/features/src/<feature>.rs`
+holds a feature's parse rows and checking, and `crates/features/src/lib.rs`
+names every feature once, in the parse rules (`RULES`) and the checker's
+hooks (`CHECK_HOOKS`). Where this page says "the top crate",
+"`driver/compile/src/language.rs`", "a feature crate", `L`, `Language`,
+`Grammar` or `Checked`, read that.
 
 Status: **draft for review, 2026-11-13.** Step 17 of
 `middle-cleanup.localplan.md`. No code is written for steps 18-20 until this
@@ -83,7 +90,7 @@ with a node of that kind edits them:
 | `parser::dump::expr` | `ast::Expr` | 29 |
 | `model::thir::write_expr`, `any_part` | `thir::ExprKind` | 20 each |
 | `lower::expression::lower_expr` | `thir::ExprKind` | 20 |
-| `check::declaration::resolve_type`, `names_type_parameter` | `ast::Type` | 17 each |
+| `check::declaration::resolve_type` | `ast::Type` | 17 |
 | `check::statement::check_statement`, `parser::dump::stmt` | `ast::Stmt` | 14 each |
 | `model::thir::write_statement`, `lower::statement::lower_statement` | statements | 11 each |
 | `lower::expression::lower_into` | `thir::ExprKind` | 8 |
@@ -119,7 +126,7 @@ largest):
 | Its elements and their count | `elements`, `count_spread`, `lower_array_literal`, `part_count`, `lower_slice`, `lower_index`, `check_for_array`, `help_spread`, `check_variadic`, `check_field` (`.len`) |
 | What it views and how | `pointee`, `borrows`, `is_slice_shaped`, `reborrow`, `place_root`, `check_slice`, `lower_borrow` |
 | Its members and functions | `check_call`, `method`, `implementation`, `check_type_declaration` |
-| Its written form | `resolve_type`, `names_type_parameter`, `resolve_signature_type`, `reference_type`, `method_type` |
+| Its written form | `resolve_type`, `resolve_signature_type`, `reference_type`, `method_type` |
 
 **An operation across two features:** `Types::conversion` (9 features), and
 `check_binary`'s raw pointer `+` with an integer. Section 4 splits each.
@@ -443,7 +450,7 @@ read the front's types. They move before any feature moves (step 18a):
 
 The core of `model` those crates read (`mir`, `machine`, `constant::Value`
 and the ids in `lib.rs`) reached the checker's types too, so three more
-moved: `ConstArguments` (the id in `FunctionCopy`) to `lib.rs`, the widest
+moved: `ConstArguments` (the id in `DeclarationCopy`) to `lib.rs`, the widest
 integer to `machine::MAX_INTEGER_BITS`, and `Constant` and `value_text`,
 which read a `Type`, to `semantic_types`.
 
@@ -462,13 +469,20 @@ crate (step 19): with none, it cannot fail.
 ```text
 crates/
   base/       arena, bigint, diagnostics, literal, source, runtime_abi
-  core/       syntax: the tree and the `Language` trait
-  frontend/   token, lexer, parser (the engine and its rule table), project
-  middle/     check, lower, flow, eval, and model (THIR, MIR, layout, machine)
+  kernel/
+    syntax/   token, lexer, tree (the `syntax` crate: the tree, every
+              feature's node too), parser (the engine and its rule table)
+    semantic  the `check` crate
+    model     THIR, MIR, layout, machine
+    lower, flow, eval
   features/   one crate: `src/lib.rs` lists the features, one file each
   backend/    llvm
-  driver/     compile, peeper, lsp, browser, test_programs
+  driver/     compile, peeper, lsp, browser, test_programs, project
 ```
+
+Until 2026-11-18 the kernel crates were `core/` (syntax), `frontend/`
+(token, lexer, parser, project) and `middle/` (check, lower, flow, eval,
+model); docs/structure-mapping.md has the move.
 
 One crate per feature lets Cargo refuse a dependency between features for
 free; one file per feature in a single crate needs a grep check instead.
@@ -478,12 +492,13 @@ build and link, and the grep check ("feature boundary" in
 `scripts/check.sh`) keeps a feature file from naming another.
 
 This also answers plan item 10: the syntax tree leaves `model`; its core
-part goes to `core/syntax`, each feature's nodes to the feature.
+part goes to the `syntax` crate (`kernel/syntax/tree`), each feature's
+nodes to the feature.
 
 A consequence for tests: a crate's own tests cannot use a crate that
 depends on it, so the core's tests cannot write a feature's syntax. Each
-core crate (`parser`, `check`) tests in a language of its own with no
-feature (`Bare`). A feature's file tests its syntax and checking in
+core crate (`parser`, `check`) tests with the core's rules alone
+(`Rules::core()`). A feature's file tests its syntax and checking in
 `Peeper`, naming no other feature (`src/<feature>/tests.rs`). A core test that needs a feature only to
 reach core behaviour (an `extern` function taking a struct, a type's
 functions) moves unchanged to the top crate's tests

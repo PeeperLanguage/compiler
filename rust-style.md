@@ -83,7 +83,7 @@ match these rules, so `cargo clippy -- -D warnings` holds them.
 
 - **Declare a table once and generate the rest.** When an enum, its texts,
   constants and lookup lists must agree, write one `macro_rules!` table with
-  one row per item (`tokens!`, `fixed_types!`, `operators!`). Two hand lists
+  one row per item (`tokens!`, `builtin_types!`, `operators!`). Two hand lists
   drift apart; one row cannot be half added.
 - **A fact's doc sits on its row.** What a token, a built-in type or an
   operator does is a `///` comment on its row of the table, gathered into a
@@ -103,7 +103,7 @@ match these rules, so `cargo clippy -- -D warnings` holds them.
 ## Where code goes
 
 - **Data lives in `model`; logic lives in the crate that builds it.** Name a
-  data module by its path: `use syntax::ast;`, then `ast::Expr`.
+  data module by its path: `use tree::ast;`, then `ast::Expr`.
 - **`main` only wires the parts together.** Parsing arguments, compiling and
   reporting each live in their own module.
 - **A struct lists what it is made of first.** Storage reached only through

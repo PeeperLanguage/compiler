@@ -1,10 +1,19 @@
 // Each copy of `Grow` makes two copies for new types: without a limit,
-// twice as many at each depth, so the first copy too deep stops them all.
+// twice as many at each depth, so the first copy too deep stops every copy
+// grown from the same first one.
 fn Grow(const T: type) {
     Grow(*T); //~ error[T0013]: `Grow` makes a new copy of itself inside each copy, without end: copies nest 64 deep here
     Grow([1]T);
 }
 
+// Copies grown from other first ones are still checked, before and after.
+fn Wrong<T>(value: T) {
+    let flag: bool = value; //~ error[T0001]: mismatched types: expected `bool`, found `i32`
+    //~ error[T0001]: mismatched types: expected `bool`, found `f64`
+}
+
 fn main() {
+    Wrong(1);
     Grow(i32);
+    Wrong(2.5);
 }

@@ -1,0 +1,28 @@
+[package]
+name = "check"
+description = "Semantic analysis: names, types and constants of a program, into THIR"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+publish.workspace = true
+
+[dependencies]
+source.workspace = true
+diagnostics.workspace = true
+arena.workspace = true
+model.workspace = true
+tree.workspace = true
+eval.workspace = true
+lower.workspace = true
+flow.workspace = true
+bigint.workspace = true
+literal.workspace = true
+rustc-hash.workspace = true
+
+[dev-dependencies]
+llvm.workspace = true
+parser.workspace = true
+runtime_abi.workspace = true
+
+[lints]
+workspace = true

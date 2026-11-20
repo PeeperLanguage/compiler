@@ -1,9 +1,9 @@
 # Plan
 
-`main` is at `2c498440` (2026-11-06): text views (`&str`, `&cstr`) and
-slices (`&[]T`) merged. Open branch: `feature/size-of`, holding the
-interface, allocator and type parameter work below, in PR #182. Order of work
-(owner, 2026-11-06, `allocator.localplan.md` ORDER OF WORK):
+`main` is at `35ebc893` (2026-11-17): generic functions and `where`
+(PR #191) and the LSP facts fix merged. Open branch: `feature/generic-types`
+(item 8). Items 1-7 below are from the order of work of 2026-11-06
+(`allocator.localplan.md` ORDER OF WORK) and were not rechecked since:
 
 1. [x] Borrowed interfaces: `&Shape`, `&mut Shape`, method tables
    (60a3dbed, then b435b7ff for the `ref` style).
@@ -70,12 +70,28 @@ interface, allocator and type parameter work below, in PR #182. Order of work
      (worklog, "References in arrays and slices").
    - [ ] The Website, once the feature is complete.
 
+8. [~] Generics (owner, 2026-11-17: "start the missing generics work").
+   - [x] Generic functions, `where` constraints, `::<T>` at a call
+     (PR #191, merged 91982660), with two review fixes: a literal after a
+     found type is checked as the copy's (48290c82), and a cycle through a
+     copy's own signature is reported (085a94fe).
+   - [x] LSP crash from PR #191: facts are handed on with the function
+     they were found in (4a133f60, merged 35ebc893); a new LSP test opens
+     every test program (worklog, "Facts go with their own function").
+   - [~] Generic structs, `struct Box<T>`, on `feature/generic-types`
+     (plan: `~/.claude/plans/snazzy-swimming-taco.md`). Rework agreed in
+     principle (owner, 2026-11-17): generics are one shared part used by
+     functions and types; structs and pointers keep only their own logic.
+   - [ ] Functions of generic structs, finding `T` from a struct literal,
+     generic aliases, `where` on a struct.
+   - [ ] The Website and editor grammars, once the feature is complete.
+
 Later improvement (owner, 2026-11-08): diagnostics as one struct per kind
 of error, which owns its words and spans, as rustc's `#[derive(Diagnostic)]`
 does; today each is built in place with `Diagnostic::new(code, message)`.
 
 Later: lifetimes of references held in structs; enums and `match` with
-`?T` (put off by the owner 2026-10-30); generics.
+`?T` (put off by the owner 2026-10-30).
 
 Left for later from methods (`methods.localplan.md`): `Self` written as a
 type, functions of types other than structs.

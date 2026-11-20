@@ -1,0 +1,54 @@
+//@ run
+
+// A `const` value whose type names a type parameter: `const n: T`. A call
+// finds `T` from it as from any argument, or from the arguments before it,
+// and checks the value as one of that type; each copy is given the value.
+
+fn Positive<T>(const n: T) -> bool {
+    return n > 0;
+}
+
+fn Fill<T>(const value: T) -> [3]T {
+    return [3]T{value, value, value};
+}
+
+// The type is a `const` parameter before the value.
+fn Scale(const T: type, const factor: T, x: T) -> T {
+    return factor * x;
+}
+
+// `T` is found from `x` first, so the `3` is a `u8`.
+fn Twice<T>(x: T, const k: T) -> T {
+    return x * k;
+}
+
+// A value each copy gives passed on: the inner call's copy is made in each.
+fn Inner<T>(const n: T) -> bool {
+    return Positive(n);
+}
+
+// The value given for the outer `U`: each copy converts the `3`.
+fn Outer<U>(x: U) -> bool {
+    return Positive::<U>(3);
+}
+
+// A `const` of a type each copy gives, in a generic body.
+fn Three<U>(x: U) -> U {
+    const THREE: U = 3;
+    return THREE * x;
+}
+
+fn main() {
+    println(Positive(5));
+    println(Positive(-2));
+    println(Positive(2.5));
+    println(Positive::<u8>(7));
+    let filled = Fill(4);
+    println(filled[2]);
+    println(Scale(i64, 10, 4));
+    let small: u8 = 6;
+    println(Twice(small, 3));
+    println(Inner(-1));
+    println(Outer(1.5));
+    println(Three(7));
+}

@@ -165,7 +165,7 @@ this rule (#165 came from breaking it).
 | `source` | source files and byte spans; line and column on demand | rewritten (old one tracked line and column per character and allocated every location) |
 | `token`, `lexer` | tokens, lexing | old frontend, reviewed |
 | `literal` | rules of literal text shared by the phases: values of string, character and byte literals, and number literals (base, digits, suffix) in `literal::numeric` | string rules split out of the lexer; number rules rewritten, old ones were regex based |
-| `parser` (tree in `syntax::ast`) | syntax tree, parsing | old frontend, reviewed (parser only parses) |
+| `parser` (tree in `tree::ast`) | syntax tree, parsing | old frontend, reviewed (parser only parses) |
 | `diagnostics` | one diagnostic value and how it is printed | rewritten small; the old Go emitter and `suggest.go` reviewed |
 | `project` | import resolution from a package map, workers, graph, cycles; `project::manifest` reads `peeper.toml` in one folder (the project name), and `project_in` makes the project from it for the command line and the browser alike | new; ideas from old loader/resolver |
 | `peeper` | the command line: `check`, `fix`, `build`, `run`, `init`, `lsp` | new |
@@ -179,23 +179,24 @@ needed now, is it the simplest form, does something else already do it.
 The parser uses two methods, each in its own files, so every file stays small
 and has one job:
 
-- **Pratt parsing for expressions** (`expr.rs`), driven by one table indexed
-  by token kind, as in the Go parser: `rules.prefix(kind, rule)` and
+- **Pratt parsing for expressions** (`expression.rs`), driven by one table
+  indexed by token kind, as in the Go parser: `rules.prefix(kind, rule)` and
   `rules.infix(kind, precedence, rule)` register each token's rule in one line.
   Whether a token starts an expression is read from the table, never kept in
   a second list.
-  Literal rules live in `literals.rs`, the operators and the table in
-  `expr.rs`.
-- **Recursive descent for everything else**: statements (`stmt.rs`), types
-  (`types.rs`), declarations (`decl.rs`), patterns. The keyword that begins
-  a statement or declaration picks its rule from a table too, the same way,
+  Literal rules live in `expression/literals.rs`, the operators and the
+  table in `expression.rs`.
+- **Recursive descent for everything else**: statements (`statement.rs`), types
+  (`types.rs`), declarations (`declaration.rs`), patterns. The keyword that
+  begins a statement or declaration picks its rule from a table too, the same way,
   and so does a keyword that begins a type (`struct { ... }`).
-- The tables are one `Rules` value per language, built by `const` code:
-  `Rules::core()` adds the core's rows, and the `features` crate's list
-  (`crates/features/src/lib.rs`) adds each feature's (`structs::rows`,
-  `interfaces::rows`, `raw_pointers::rows`). A feature's rule lives in its
-  file (`crates/features/src/structs.rs`), and calls the parser's public
-  reading methods.
+- The tables are one `static RULES`, built by `const` code in `lib.rs`
+  from an empty table: `expression.rs`, `statement.rs` and
+  `declaration.rs` add their rows, then each concept file adds its own
+  (`structs::rows`, `interfaces::rows`, ...). Two rules for one token
+  fail the build. A concept's rules live in
+  its file (`structs.rs`), named as the checker's file that checks it
+  (docs/compiler-layout.md).
 - Rules in a table are plain functions taking `p: &mut Parser`; shared helpers
   stay methods.
 - `lib.rs` holds only what all rules share: the token cursor, errors and

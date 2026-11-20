@@ -1,0 +1,21 @@
+[package]
+name = "project"
+description = "Reads a program's source files in parallel and orders its modules"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+publish.workspace = true
+
+[dependencies]
+source.workspace = true
+diagnostics.workspace = true
+literal.workspace = true
+model.workspace = true
+tree.workspace = true
+parser.workspace = true
+toml_edit.workspace = true
+
+[dev-dependencies]
+
+[lints]
+workspace = true

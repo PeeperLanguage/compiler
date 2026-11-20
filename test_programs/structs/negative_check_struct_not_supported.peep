@@ -1,14 +1,10 @@
 // C functions do not take or give structs until the C ABI's struct rules are
-// written; generic structs and enums come later.
+// written; enums come later.
 struct Point {
     x: i32,
 }
 
 type Place = Point;
-
-struct Pair<T> { //~ error[T0043]: generic types are not supported yet
-    first: T,
-}
 
 enum Shape { //~ error[T0043]: enum declarations are not supported yet
     Circle,

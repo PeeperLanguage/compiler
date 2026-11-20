@@ -1,0 +1,26 @@
+// A `const` value whose type names a type parameter: the value is checked
+// as one of the type the call gives it, and must be known when compiling.
+
+fn Positive<T>(const n: T) -> bool {
+    return n > 0;
+}
+
+fn Same<T>(const a: T, const b: T) -> T {
+    return a;
+}
+
+// Each value's type is read with what the call gives the places before
+// it, even after one of them has an error.
+fn Two(const T: type, const a: T, const U: type, const b: U) -> i32 {
+    return 1;
+}
+
+fn main() {
+    let runtime = 3;
+    Positive::<u8>(300); //~ error[L0003]: literal `300` does not fit `u8`
+    Positive::<bool>(1); //~ error[T0001]: mismatched types: expected `bool`, found `i32`
+    Positive(runtime); //~ error[T0004]: the value of a constant must be known at compile time
+    Same(1, true); //~ error[T0001]: mismatched types: expected `i32`, found `bool`
+    Two(i32, true, u8, 300); //~ error[T0001]: mismatched types: expected `i32`, found `bool`
+    //~ error[L0003]: literal `300` does not fit `u8`
+}

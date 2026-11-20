@@ -1,6 +1,5 @@
 //! Hover text: what a name declares, and the docs of a keyword or built-in.
 
-use features::Peeper;
 use std::fmt::Write;
 
 use arena::Id;
@@ -10,8 +9,7 @@ use lsp_types::MarkupContent;
 use lsp_types::MarkupKind;
 use source::SourceFile;
 use source::Span;
-use syntax::ast;
-use syntax::ast::Language;
+use tree::ast;
 
 use crate::checked::ConstantText;
 
@@ -26,8 +24,8 @@ const HIDDEN: &str = "/* ... */";
 /// the exported ones when hovered `from_elsewhere`, another module; another
 /// declaration, or a constant with an error, whole.
 pub(crate) fn declaration_hover(
-    tree: &ast::Tree<Peeper>,
-    declaration: Id<ast::Decl<Peeper>>,
+    tree: &ast::Tree,
+    declaration: Id<ast::Decl>,
     module: &str,
     constant: Option<&ConstantText>,
     copy: Option<&str>,
@@ -72,7 +70,8 @@ pub(crate) fn declaration_hover(
             let signature = written(tree.blocks.span(*body).start);
             (format!("{signature} {{ {HIDDEN} }}"), None)
         }
-        (ast::Decl::Type(declared), _) if matches!(tree.types[declared.ty], ast::Type::Feature(ty) if Peeper::fields(&ty).is_some()) =>
+        (ast::Decl::Type(declared), _)
+            if matches!(tree.types[declared.ty], ast::Type::Struct { .. }) =>
         {
             let mut facts = written(span.end).to_string();
             write_functions(tree, declared.name, from_elsewhere, &mut facts);
@@ -99,12 +98,7 @@ pub(crate) fn declaration_hover(
 /// its body as `HIDDEN`, after a blank line; only the exported ones when
 /// `exported_only`. A type's functions are declared in the type's module,
 /// where its name names one declaration, so the written name finds them.
-fn write_functions(
-    tree: &ast::Tree<Peeper>,
-    owner: ast::Ident,
-    exported_only: bool,
-    facts: &mut String,
-) {
+fn write_functions(tree: &ast::Tree, owner: ast::Ident, exported_only: bool, facts: &mut String) {
     let owner = owner.text(&tree.file);
     let mut separator = "\n\n";
     for declaration in tree.decls.ids() {

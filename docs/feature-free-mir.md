@@ -1,5 +1,9 @@
 # Design page: a MIR of core concepts only
 
+> The crates have moved since this was written: the phases are now
+> `crates/syntax/*` (the tree crate is `tree`), `crates/check`,
+> `crates/model`, `crates/lower`, `crates/flow` and `crates/eval`.
+
 Status: **done 2026-11-11.** Agreed 2026-11-10 (section 9) and built in
 order B; the old MIR, its lowering and `flow::cleanup` are deleted, and the
 MIR of core concepts is `model::mir`.
@@ -23,7 +27,7 @@ removing a feature touches the parser, check and lower, and no other crate.
 ## 2. What today's MIR carries, and who pays for it
 
 Today every instruction carries a language type (`Instruction::ty`,
-`crates/middle/model/src/mir.rs:71`), every variable does
+`crates/model/src/mir.rs:71`), every variable does
 (`Variable::ty`, `:46`), and eight of the twenty instruction kinds are
 language features: `Length`, `Borrow` of a slice, `ToInterface`,
 `Aggregate`, `ArrayParts`, `Print`, `Field`, the typed `Binary` and

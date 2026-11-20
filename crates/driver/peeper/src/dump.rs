@@ -2,13 +2,12 @@
 //! text, one file per module and kind, for reading what the compiler made of
 //! a program.
 
-use features::Peeper;
 use std::io::Write;
 use std::path::Path;
 
-use model::DefId;
-use model::FunctionCopy;
+use model::DeclarationCopy;
 use model::mir;
+use model::semantic_types::Naming;
 use model::semantic_types::Types;
 use model::thir;
 
@@ -37,14 +36,14 @@ impl Dump {
 /// written once it has no errors. The LLVM text comes from the program's
 /// `llvm::Module`s, which the driver builds once for dumps and linking.
 pub struct Dumps<'p> {
-    program: &'p model::program::Program<Peeper>,
+    program: &'p model::program::Program,
     kinds: &'p [Dump],
     texts: Vec<Vec<String>>, // by module, then by kind; empty for `Ll`
 }
 
 impl<'p> Dumps<'p> {
     /// No text yet for any of the `kinds` of `program`'s modules.
-    pub fn new(program: &'p model::program::Program<Peeper>, kinds: &'p [Dump]) -> Dumps<'p> {
+    pub fn new(program: &'p model::program::Program, kinds: &'p [Dump]) -> Dumps<'p> {
         Dumps {
             program,
             kinds,
@@ -60,13 +59,16 @@ impl<'p> Dumps<'p> {
     /// the dumps of the module that declares it.
     pub fn add(
         &mut self,
-        function: FunctionCopy,
+        function: DeclarationCopy,
         thir: &thir::Body,
         mir: &mir::Body,
         types: &Types,
     ) {
         let modules = &self.program.modules;
-        let name = |definition: DefId| model::program::declared_path(modules, definition);
+        let name = |naming| match naming {
+            Naming::Declaration(definition) => model::program::declared_path(modules, definition),
+            Naming::Parameter { .. } => model::program::named_text(modules, naming).to_owned(),
+        };
         let copy_name = |copy| model::program::copy_name(modules, types, copy);
         let module = function.definition.module.index();
         let file = &modules[module].ast.file;

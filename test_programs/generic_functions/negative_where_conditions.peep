@@ -154,21 +154,21 @@ where
 }
 
 fn main() {
-    Loop(1); //~ label: in `Loop<i32>`, the copy made for this call
+    Loop(1);
     Max(true, false); //~ error[T0004]: `T: Number` is false for `Max<bool>`
     Whole(Point.{ x = 1 }); //~ error[T0004]: `T: is_int` is false for `Whole<Point>`
     Eight(1); //~ error[T0004]: `T: Sized(8)` is false for `Eight<i32>`
     Times(0, 5); //~ error[T0004]: `N: Positive` is false for `Times<i32, 0>`
     Area(&5); //~ error[T0004]: `T: Shape` is false for `Area<i32>`
-    Area(&Circle.{ radius = 1 }); //~ label: in `Area<Circle>`, the copy made for this call
+    Area(&Circle.{ radius = 1 }); //~ label: in `Area<Circle>`, the copy made here
     println(Max(1, 2), Eight(2.5), Times(2, 5));
     // The same types again are refused again.
     Max(false, true); //~ error[T0004]: `T: Number` is false for `Max<bool>`
     // Types written at the call are asked about too.
     Max::<bool>(true, false); //~ error[T0004]: `T: Number` is false for `Max<bool>`
-    NotBool(1); //~ label: in `NotBool<i32>`, the copy made for this call
-    Twice(true); //~ label: in `Twice<bool>`, the copy made for this call
-    Negate(2.5); //~ label: in `Negate<f64>`, the copy made for this call
+    NotBool(1);
+    Twice(true); //~ label: in `Twice<bool>`, the copy made here
+    Negate(2.5); //~ label: in `Negate<f64>`, the copy made here
 }
 
 // A call in a copy is refused too, with the call the copy was made for.

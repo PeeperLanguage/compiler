@@ -230,14 +230,6 @@ pub trait Node: Sized {
 /// field of the container, or of a field of it (`children.field_values`).
 #[macro_export]
 macro_rules! nodes {
-    (<$generic:ident: $bound:path> $container:ty; $($node:ty => $($arena:ident).+),* $(,)?) => {
-        $(impl<$generic: $bound> $crate::Node for $node {
-            type Container = $container;
-            fn arena(container: &mut $container) -> &mut $crate::Arena<$node> {
-                &mut container.$($arena).+
-            }
-        })*
-    };
     ($container:ty; $($node:ty => $($arena:ident).+),* $(,)?) => {
         $(impl $crate::Node for $node {
             type Container = $container;

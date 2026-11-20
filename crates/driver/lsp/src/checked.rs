@@ -1,15 +1,15 @@
 //! What the last check found, kept for the next one and for requests: the
 //! compile results, and each module's facts by name.
 
-use features::Peeper;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::path::Path;
 use std::path::PathBuf;
 
 use lsp_types::CodeAction;
-use model::FunctionCopy;
+use model::DeclarationCopy;
 use model::ModuleId;
+use model::semantic_types::CheckedConstant;
 use model::semantic_types::ConstArgument;
 use model::semantic_types::Constant;
 use model::semantic_types::Type;
@@ -22,7 +22,7 @@ use model::thir::Local;
 use model::thir::Symbol;
 use source::Span;
 use std::fmt::Write;
-use syntax::ast;
+use tree::ast;
 
 use crate::host;
 
@@ -34,7 +34,7 @@ pub(crate) struct Checked {
     /// The program as last compiled, and the facts of each of its modules'
     /// text and the names of its constants, by file: what definition and
     /// hover read.
-    pub(crate) program: Option<model::program::Program<Peeper>>,
+    pub(crate) program: Option<model::program::Program>,
     pub(crate) facts: HashMap<PathBuf, Vec<CachedFact>>,
     pub(crate) fix_all: HashMap<PathBuf, CodeAction>, // each file's sure fixes, as of the last check
 }
@@ -43,7 +43,7 @@ impl Checked {
     /// keeps the facts of each module's text and the names of its
     /// constants: a module the compile reused gave no facts, and the facts
     /// found before still fit it; a module checked again gets its new facts.
-    pub(crate) fn recompile(&mut self, program: &model::program::Program<Peeper>) {
+    pub(crate) fn recompile(&mut self, program: &model::program::Program) {
         let mut found: HashMap<ModuleId, Vec<CachedFact>> = HashMap::new();
         let previous = std::mem::take(&mut self.results);
         let mut cache_facts = |output: compile::Output| match output {
@@ -124,8 +124,7 @@ pub(crate) struct CachedFact {
 pub(crate) enum CachedKind {
     /// A variable of a body, this name being its declaration: whether it is
     /// `mut`, and its type's text; `None` for a type the check did not
-    /// find, as after an error, or in a function's own body for a type of
-    /// its `const T: type`, which only a copy knows.
+    /// find, as after an error.
     Variable { mutable: bool, ty: Option<String> },
     /// A `const` of a body or of the module, this name being its
     /// declaration, with its checked type and value; `None` when it had an
@@ -159,7 +158,7 @@ impl CachedFact {
     /// `fact`, about the text of a module of `program`, whose types are of
     /// `types`; a local's name comes with the `body` it belongs to.
     pub(crate) fn new(
-        program: &model::program::Program<Peeper>,
+        program: &model::program::Program,
         fact: &thir::Fact,
         body: Option<&thir::Body>,
         types: &Types,
@@ -185,8 +184,13 @@ impl CachedFact {
                         }
                     }
                     Local::Constant(constant) => CachedKind::Constant {
-                        text: (body.constants[constant].as_ref())
-                            .map(|constant| ConstantText::new(program, constant, types)),
+                        text: match &body.constants[constant] {
+                            Some(CheckedConstant::Known(constant)) => {
+                                Some(ConstantText::new(program, constant, types))
+                            }
+                            // Each copy gives the value.
+                            Some(CheckedConstant::PerCopy(_)) | None => None,
+                        },
                     },
                 }
             }
@@ -221,8 +225,8 @@ impl CachedFact {
 /// the type the copy takes, a `const` one with what it is given, and no
 /// type parameters.
 fn copy_signature(
-    program: &model::program::Program<Peeper>,
-    copy: FunctionCopy,
+    program: &model::program::Program,
+    copy: DeclarationCopy,
     ty: TypeId,
     types: &Types,
 ) -> String {
@@ -269,11 +273,14 @@ fn copy_signature(
                 ConstArgument::Type(ty) => {
                     _ = write!(signature, "const {name}: type = {}", text(*ty));
                 }
-                ConstArgument::Value(constant) => {
-                    // Its type as written: `usize`, not the integer it is here.
-                    let ty = tree.file.slice(tree.types.span(parameter.ty));
+                // Of the type this copy gives it: `i32`, not the `T` written.
+                ConstArgument::Value(CheckedConstant::Known(constant)) => {
                     let value = value_text(&constant.value, &types[constant.ty]);
-                    _ = write!(signature, "const {name}: {ty} = {value}");
+                    _ = write!(signature, "const {name}: {} = {value}", text(constant.ty));
+                }
+                // As `Types::argument_text` writes it: each copy gives it.
+                ConstArgument::Value(CheckedConstant::PerCopy(ty)) => {
+                    _ = write!(signature, "const {name}: {} = _", text(*ty));
                 }
             }
             continue;
@@ -313,7 +320,7 @@ pub(crate) struct ConstantText {
 impl ConstantText {
     /// `constant`, of `program`, whose type is in `types`.
     pub(crate) fn new(
-        program: &model::program::Program<Peeper>,
+        program: &model::program::Program,
         constant: &Constant,
         types: &Types,
     ) -> ConstantText {

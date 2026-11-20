@@ -22,8 +22,8 @@ use eval::interpreter::Failure;
 use eval::interpreter::program::Stream;
 use eval::interpreter::program::Written;
 use model::ConstArguments;
+use model::DeclarationCopy;
 use model::DefId;
-use model::FunctionCopy;
 use model::ModuleId;
 use model::machine::Machine;
 use model::mir;
@@ -37,9 +37,7 @@ use runtime_abi::abi::PANIC_EXIT_CODE;
 use runtime_abi::messages::panic_text;
 use source::SourceFile;
 use source::Span;
-use syntax::ast;
-
-use features::Peeper;
+use tree::ast;
 
 /// What a compile found, kept for the next compile of the same program.
 #[derive(Default)]
@@ -116,9 +114,8 @@ pub enum Output<'c> {
         constant: Option<&'c Constant>,
         types: &'c Types, // the program's types so far, which `constant` names
     },
-    /// The facts of `module` found after its last function was handed on;
-    /// none unless the compile records facts (`ModuleChecks::facts`), and
-    /// no name among them stands for a local.
+    /// The facts of `module` no function was handed on with
+    /// (`Checker::other_facts`); none unless the compile records facts.
     Facts {
         module: ModuleId,
         facts: &'c [thir::Fact],
@@ -130,15 +127,13 @@ pub enum Output<'c> {
 /// parameters, as a compile hands it on: built, used once, and dropped
 /// after.
 pub struct CheckedFunction<'c> {
-    pub function: FunctionCopy,
+    pub function: DeclarationCopy,
     /// The module whose compile built it: its own, or, for a copy, the one
     /// that first called it.
     pub module: ModuleId,
     pub thir: &'c thir::Body,
-    /// The facts of its module found since the last function was handed on:
-    /// those of its text, and of the declarations checked meanwhile, when
-    /// the compile records facts (as for an editor); otherwise none. Only
-    /// this function's locals are among their names, explained by `thir`.
+    /// Its facts (`Checker::function_facts`), whose locals `thir` declares,
+    /// when the compile records facts (as for an editor); otherwise none.
     pub facts: &'c [thir::Fact],
     /// Its path-checked MIR, `None` when checking it found an error, and
     /// for the own body of a function with `const` parameters, which an
@@ -160,7 +155,7 @@ pub struct Interpreted {
 /// it did. A program that cannot be checked has only loading's errors, and
 /// does not start.
 pub fn interpret(
-    program: &model::program::Program<Peeper>,
+    program: &model::program::Program,
     target: &'static Machine,
 ) -> (Results, Option<Interpreted>) {
     let modules = program.modules.as_slice();
@@ -184,7 +179,7 @@ pub fn interpret(
     let Some((main, _)) = results.entry_point() else {
         return (results, None);
     };
-    let main_function = FunctionCopy {
+    let main_function = DeclarationCopy {
         definition: main,
         arguments: ConstArguments::NONE,
     };
@@ -232,7 +227,7 @@ pub struct Options {
 /// whose imports' interfaces are unchanged keeps its diagnostics, and its
 /// bodies are not checked again. What it checks goes to `use_output` in
 /// declaration order, module by module: each function with a body as soon as
-/// it is built, with the facts found so far when `options.record_facts`, then
+/// it is built, with its own facts when `options.record_facts`, then
 /// dropped except its MIR, which is `use_output`'s: nothing here holds every
 /// function's bodies at once. Each module constant goes once checked, with
 /// its type and value, and last the module's remaining facts, none unless
@@ -243,7 +238,7 @@ pub struct Options {
 /// the checking and lowering it runs are built once, here, not again in each
 /// crate that calls it with a closure of its own.
 pub fn run(
-    program: &model::program::Program<Peeper>,
+    program: &model::program::Program,
     target: &'static Machine,
     previous: Results,
     options: Options,
@@ -369,10 +364,7 @@ pub fn run(
 
 /// The `main` of the module `entry` and whether it returns the exit code, or
 /// the error that it has none a program can start at.
-fn find_entry_point(
-    checker: &mut Checker<Peeper>,
-    entry: ModuleId,
-) -> Result<(DefId, bool), Diagnostic> {
+fn find_entry_point(checker: &mut Checker, entry: ModuleId) -> Result<(DefId, bool), Diagnostic> {
     let module = &checker.modules[entry.index()];
     let tree = &module.ast;
     let main = tree
@@ -422,10 +414,10 @@ fn find_entry_point(
 }
 
 /// Checks each function and constant of `module` where it is declared, used
-/// or not, and gives each, with its MIR and the facts found so far for a
+/// or not, and gives each, with its MIR and its own facts for a
 /// function, then the module's remaining facts, to `use_output`.
 fn compile_module(
-    checker: &mut Checker<Peeper>,
+    checker: &mut Checker,
     module: ModuleId,
     thir: &mut thir::Body,
     record_facts: bool,
@@ -439,21 +431,21 @@ fn compile_module(
         };
         match tree.decls[declaration] {
             // A call makes a copy, built below. Its own body is checked with
-            // no type for a type parameter, where what is of such a type is
-            // unknown and reports nothing: what the body has wrong whatever
-            // its types are is reported here, once, though no call copies
-            // it, and an editor asks about its text.
+            // each type parameter standing for itself (`Type::Parameter`),
+            // where what each copy decides reports nothing: what the body has
+            // wrong whatever its types are is reported here, once, though no
+            // call copies it, and an editor asks about its text.
             ast::Decl::Function(function)
-                if check::declaration::first_copy_parameter(tree, function.signature).is_some() =>
+                if check::generics::first_copy_parameter(tree, function.signature).is_some() =>
             {
                 let name = function.name.span;
                 checker.function_type(definition, name);
-                let function = FunctionCopy {
+                let function = DeclarationCopy {
                     definition,
                     arguments: ConstArguments::NONE,
                 };
                 if checker.check_body(function, name, thir, true) && record_facts {
-                    let facts = std::mem::take(&mut checker.module_checks[module.index()].facts);
+                    let facts = checker.function_facts(function);
                     use_output(Output::Function(CheckedFunction {
                         function,
                         module,
@@ -466,7 +458,7 @@ fn compile_module(
                 }
             }
             ast::Decl::Function(_) => {
-                let function = FunctionCopy {
+                let function = DeclarationCopy {
                     definition,
                     arguments: ConstArguments::NONE,
                 };
@@ -487,7 +479,7 @@ fn compile_module(
     while let Some(copy) = checker.next_copy() {
         build_function(checker, module, copy, thir, use_output);
     }
-    let facts = std::mem::take(&mut checker.module_checks[module.index()].facts);
+    let facts = checker.other_facts(module);
     use_output(Output::Facts {
         module,
         facts: &facts,
@@ -496,12 +488,12 @@ fn compile_module(
 }
 
 /// Builds `function`, in the compile of `module`, and gives it with its MIR
-/// and the facts found so far to `use_output`; nothing when it has no body
+/// and its facts to `use_output`; nothing when it has no body
 /// or its signature has an error.
 fn build_function(
-    checker: &mut Checker<Peeper>,
+    checker: &mut Checker,
     module: ModuleId,
-    function: FunctionCopy,
+    function: DeclarationCopy,
     thir: &mut thir::Body,
     use_output: &mut dyn FnMut(Output),
 ) {
@@ -511,7 +503,7 @@ fn build_function(
     let Some(mir) = checker.build_function(function, span, thir, true) else {
         return;
     };
-    let facts = std::mem::take(&mut checker.module_checks[module.index()].facts);
+    let facts = checker.function_facts(function);
     use_output(Output::Function(CheckedFunction {
         function,
         module,
@@ -523,68 +515,16 @@ fn build_function(
     }));
 }
 
-/// Feeds `ty` to `hasher` by what it is, not by its id, which differs between
-/// compiles: a named type by its module's path and its name. What it holds
-/// is in the interface of the module declaring it (`interface`).
-fn hash_type(checker: &Checker<Peeper>, id: TypeId, hasher: &mut DefaultHasher) {
-    let ty = &checker.types[id];
-    std::mem::discriminant(ty).hash(hasher);
-    match ty {
-        Type::Integer(integer) => integer.hash(hasher),
-        Type::Float(float) => float.hash(hasher),
-        Type::Function {
-            parameters,
-            result,
-            origins,
-            variadic,
-        } => {
-            parameters.len().hash(hasher);
-            for &parameter in parameters {
-                hash_type(checker, parameter, hasher);
-            }
-            hash_type(checker, *result, hasher);
-            origins.hash(hasher);
-            variadic.hash(hasher);
-        }
-        Type::Named(definition)
-        | Type::Struct { definition, .. }
-        | Type::Interface { definition, .. } => {
-            checker.modules[definition.module.index()].path.hash(hasher);
-            let (name, file) = model::program::declared_name(checker.modules, *definition);
-            name.text(file).hash(hasher);
-        }
-        Type::Array { internals, .. } => {
-            // Lengths are any number: the count keeps one from reading as
-            // the type after it.
-            checker.types.array_lengths(id).count().hash(hasher);
-            for length in checker.types.array_lengths(id) {
-                length.hash(hasher);
-            }
-            hash_type(checker, internals.base, hasher);
-        }
-        Type::Range { element, .. } => hash_type(checker, *element, hasher), // `step` follows
-        Type::Reference { mutable, target }
-        | Type::Slice {
-            mutable,
-            element: target,
-        }
-        | Type::InterfaceReference {
-            mutable,
-            interface: target,
-        } => {
-            mutable.hash(hasher);
-            // References and pointers nest as deep as the source does.
-            source::grow_stack(|| hash_type(checker, *target, hasher));
-        }
-        Type::RawPointer { target } => {
-            target.is_some().hash(hasher);
-            if let Some(target) = target {
-                source::grow_stack(|| hash_type(checker, *target, hasher));
-            }
-        }
-        Type::Invalid | Type::Void | Type::Bool | Type::CString | Type::Str => {}
-        Type::Alias { .. } => unreachable!("indexing looks through aliases"),
-    }
+/// Feeds `ty` to `hasher` by what it is (`Types::hash`): a declared type
+/// by its module's path and its name. What it holds is in the interface of
+/// the module declaring it (`interface`).
+fn hash_type(checker: &Checker, ty: TypeId, hasher: &mut DefaultHasher) {
+    let modules = checker.modules;
+    checker.types.hash(ty, hasher, |definition, hasher| {
+        modules[definition.module.index()].path.hash(hasher);
+        let (name, file) = model::program::declared_name(modules, definition);
+        name.text(file).hash(hasher);
+    });
 }
 
 /// A hash of what other modules see of `module`, once its declarations are
@@ -592,7 +532,7 @@ fn hash_type(checker: &Checker<Peeper>, id: TypeId, hasher: &mut DefaultHasher) 
 /// change reaches every module that can see it through a type, and each
 /// declaration's kind, name, and type, value or struct fields. Its bodies are
 /// not part of it.
-fn interface(checker: &Checker<Peeper>, module: ModuleId, done: &[ModuleResults]) -> u64 {
+fn interface(checker: &Checker, module: ModuleId, done: &[ModuleResults]) -> u64 {
     let modules = checker.modules;
     let checked = &checker.module_checks[module.index()];
     let (declared_types, constants) = (&checked.declared_types, &checked.constants);
@@ -618,7 +558,7 @@ fn interface(checker: &Checker<Peeper>, module: ModuleId, done: &[ModuleResults]
                 .hash(&mut hasher);
             // Another module's call builds a copy of its body, so the body
             // is what that module sees.
-            if check::declaration::first_copy_parameter(tree, function.signature).is_some() {
+            if check::generics::first_copy_parameter(tree, function.signature).is_some() {
                 tree.file
                     .slice(tree.decls.span(declaration))
                     .hash(&mut hasher);

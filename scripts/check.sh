@@ -28,31 +28,39 @@ check "clippy" cargo clippy --workspace --all-targets -- -D warnings
 check "runtime format" rustfmt --edition 2024 --check runtime/peeper_rt.rs
 check "runtime clippy" clippy-driver --edition=2024 -Cpanic=abort --crate-type=staticlib \
     --emit=metadata --out-dir target/runtime-clippy -D warnings runtime/peeper_rt.rs
-# The phases after lowering read only the MIR of core concepts
-# (docs/feature-front.md section 8): `model`'s core files name no front
-# module, and eval, flow and llvm name only those. llvm's tests load and
-# compile a whole program, so they may.
-# shortcut: this is a grep; replace it with the crate split of section 9,
-# which Cargo checks.
-front='semantic_types|thir|program|layout'
-check "middle boundary" bash -c "
-    ! grep -rnE 'crate::($front)' crates/middle/model/src/{mir,machine,constant}.rs &&
-    ! grep -nE '^use crate::' crates/middle/model/src/lib.rs &&
-    ! grep -rnE 'model::($front)' crates/middle/eval crates/middle/flow &&
-    ! grep -rnE --exclude=tests.rs 'model::($front)' crates/backend/llvm &&
-    ! grep -rnE '\bsyntax::' crates/middle/model/src/{mir,machine,constant,lib}.rs \
-        crates/middle/{eval,flow} crates/backend/llvm"
-# A phase names no feature: only its tests may use the `features` crate
-# (docs/feature-front.md section 7); Cargo refuses the cycle for the crates
-# `features` depends on, this the others. And a feature's file names no
-# other feature: of its own crate, only the list's `Peeper` and enums, so
-# no module's path (`crate::bools`).
-check "feature boundary" bash -c "
-    for manifest in crates/{base,core,frontend,middle,backend}/*/Cargo.toml; do
-        sed '/^\[dev-dependencies\]/,\$d' \$manifest | grep -H --label=\$manifest '^features\b' && exit 1
+# The phases after lowering read only MIR (docs/compiler-layout.md, rule
+# 6): `model`'s MIR files name none of the modules before MIR, and eval,
+# flow and llvm name only the MIR files. llvm's tests load and compile a
+# whole program, so they may.
+# shortcut: this is a grep; a crate of its own for MIR would let Cargo
+# check it.
+before_mir='semantic_types|thir|program|layout'
+check "MIR readers read only MIR" bash -c "
+    ! grep -rnE 'crate::($before_mir)' crates/model/src/{mir,machine,constant}.rs &&
+    ! grep -nE '^use crate::' crates/model/src/lib.rs &&
+    ! grep -rnE 'model::($before_mir)' crates/eval crates/flow &&
+    ! grep -rnE --exclude=tests.rs 'model::($before_mir)' crates/backend/llvm &&
+    ! grep -rnE '\btree::' crates/model/src/{mir,machine,constant,lib}.rs \
+        crates/{eval,flow} crates/backend/llvm"
+# Rust skips a source file no `mod` line names, so a concept file left out
+# of its crate's list builds clean and does nothing.
+unlisted_files() {
+    local file dir stem parent found=0
+    for file in $(find crates -path '*/src/*' -name '*.rs' ! -path '*/src/bin/*' \
+        ! -name lib.rs ! -name main.rs); do
+        dir=${file%/*} stem=${file##*/} stem=${stem%.rs}
+        if [ "$stem" = mod ]; then stem=${dir##*/} dir=${dir%/*}; fi
+        if [ "${dir##*/}" = src ]; then parent="$dir/lib.rs $dir/main.rs"
+        else parent="$dir.rs $dir/mod.rs"; fi
+        # shellcheck disable=SC2086
+        parent=$(ls $parent 2>/dev/null)
+        # A `mod` line, not one in a comment: `// mod x;` names nothing.
+        [ -n "$parent" ] && grep -qE "^\s*(pub(\([a-z ]+\))? )?mod $stem;" $parent ||
+            { echo "$file: no \`mod $stem;\` names it"; found=1; }
     done
-    ! grep -nE '\bcrate::[a-z_]' crates/features/src/*.rs crates/features/src/*/tests.rs |
-        grep -vE '^crates/features/src/(lib|testing)\.rs:|crate::testing\b'"
+    return $found
+}
+check "every source file in a module" unlisted_files
 check "tests" cargo test --workspace --no-fail-fast
 check "bundle" bash scripts/build.sh
 check "test programs on the bundle" env PEEPER="$PWD/build/bin/peeper" \

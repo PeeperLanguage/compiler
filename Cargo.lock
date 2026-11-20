@@ -50,7 +50,6 @@ dependencies = [
  "compile",
  "diagnostics",
  "eval",
- "features",
  "lexer",
  "model",
  "project",
@@ -91,7 +90,7 @@ dependencies = [
  "runtime_abi",
  "rustc-hash",
  "source",
- "syntax",
+ "tree",
 ]
 
 [[package]]
@@ -102,14 +101,13 @@ dependencies = [
  "check",
  "diagnostics",
  "eval",
- "features",
  "lower",
  "model",
  "parser",
  "project",
  "runtime_abi",
  "source",
- "syntax",
+ "tree",
 ]
 
 [[package]]
@@ -206,22 +204,6 @@ dependencies = [
  "runtime_abi",
  "rustc-hash",
  "source",
-]
-
-[[package]]
-name = "features"
-version = "0.3.1"
-dependencies = [
- "arena",
- "bigint",
- "check",
- "diagnostics",
- "literal",
- "model",
- "parser",
- "source",
- "syntax",
- "token",
 ]
 
 [[package]]
@@ -438,7 +420,6 @@ version = "0.3.1"
 dependencies = [
  "arena",
  "compile",
- "features",
  "model",
  "project",
  "runtime_abi",
@@ -460,14 +441,13 @@ dependencies = [
  "arena",
  "bigint",
  "check",
- "features",
  "model",
  "parser",
  "project",
  "runtime_abi",
  "rustc-hash",
  "source",
- "syntax",
+ "tree",
 ]
 
 [[package]]
@@ -477,7 +457,6 @@ dependencies = [
  "arena",
  "compile",
  "diagnostics",
- "features",
  "lexer",
  "lsp-server",
  "lsp-types",
@@ -485,7 +464,8 @@ dependencies = [
  "project",
  "serde_json",
  "source",
- "syntax",
+ "test_programs",
+ "tree",
 ]
 
 [[package]]
@@ -541,7 +521,7 @@ dependencies = [
  "runtime_abi",
  "rustc-hash",
  "source",
- "syntax",
+ "tree",
 ]
 
 [[package]]
@@ -562,8 +542,8 @@ dependencies = [
  "lexer",
  "literal",
  "source",
- "syntax",
  "token",
+ "tree",
 ]
 
 [[package]]
@@ -573,7 +553,6 @@ dependencies = [
  "compile",
  "diagnostics",
  "eval",
- "features",
  "lexer",
  "llvm",
  "lsp",
@@ -611,13 +590,12 @@ name = "project"
 version = "0.3.1"
 dependencies = [
  "diagnostics",
- "features",
  "literal",
  "model",
  "parser",
  "source",
- "syntax",
  "toml_edit",
+ "tree",
 ]
 
 [[package]]
@@ -784,15 +762,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "syntax"
-version = "0.3.1"
-dependencies = [
- "arena",
- "literal",
- "source",
-]
-
-[[package]]
 name = "tar"
 version = "0.4.46"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -871,6 +840,15 @@ dependencies = [
  "serde_json",
  "sha2",
  "tar",
+]
+
+[[package]]
+name = "tree"
+version = "0.3.1"
+dependencies = [
+ "arena",
+ "literal",
+ "source",
 ]
 
 [[package]]

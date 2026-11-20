@@ -1,7 +1,11 @@
 # The `flow` crate
 
+> The crates have moved since this was written: the phases are now
+> `crates/syntax/*` (the tree crate is `tree`), `crates/check`,
+> `crates/model`, `crates/lower`, `crates/flow` and `crates/eval`.
+
 The path checks: errors that depend on which routes execution can take
-through one function. Source: `crates/middle/flow/src/`: `lib.rs` (the
+through one function. Source: `crates/flow/src/`: `lib.rs` (the
 shared engine), `missing_return.rs`, `unreachable.rs`, `variable_state.rs`,
 and `loans/` (`mod.rs`, `places.rs`, `holders.rs`, `two_phase.rs`,
 `passes.rs`, `errors.rs`). Each check only reads one function's
@@ -10,11 +14,11 @@ and `loans/` (`mod.rs`, `places.rs`, `holders.rs`, `two_phase.rs`,
 ## 1. Who calls it, what it gives
 
 The checker runs the four checks on each function's MIR
-(`crates/middle/check/src/function.rs:213-218`).
+(`crates/check/src/functions/bodies.rs:84-90`).
 
 ```mermaid
 flowchart LR
-    subgraph check["check crate: function.rs"]
+    subgraph check["check crate: functions/bodies.rs"]
         lower["lower::lower → mir::Body"]
     end
     lower --> VS["variable_state::report_variable_state_errors<br/>(body, file, diagnostics)<br/>T0039 T0034 T0035 T0007"]

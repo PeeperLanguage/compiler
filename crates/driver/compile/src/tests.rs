@@ -8,7 +8,6 @@ use super::Output;
 use super::Results;
 use super::run;
 use diagnostics::Diagnostic;
-use features::Peeper;
 use model::machine::Machine;
 
 /// The machine the tests check for, but where they test another.
@@ -19,7 +18,7 @@ fn x86_64() -> &'static Machine {
 /// The program of `modules`, each an import path and its text, loaded as
 /// `peeper check` loads it from `app:main`, with every file given as open
 /// editor text so nothing is read from disk. Loading must find no error.
-fn load(modules: &[(&str, &str)]) -> model::program::Program<Peeper> {
+fn load(modules: &[(&str, &str)]) -> model::program::Program {
     let folder = |package: &str| match package {
         "core" => PathBuf::from("/peeper-build-test/libs/core/src"),
         _ => PathBuf::from("/peeper-build-test/src"),
@@ -810,7 +809,7 @@ fn messages(results: &Results) -> Vec<String> {
 
 /// The messages of a first compile of `program` for the machine named
 /// `target`.
-fn messages_on(program: &model::program::Program<Peeper>, target: &str) -> Vec<String> {
+fn messages_on(program: &model::program::Program, target: &str) -> Vec<String> {
     let target = Machine::named(target).unwrap();
     let found = run(
         program,
@@ -1060,9 +1059,9 @@ fn a_reused_module_reports_its_errors_once() {
 }
 
 /// A function run at compile time and then compiled records its facts
-/// once, each with the function that explains its locals; a declaration
-/// first checked while such a function is built (`inner`'s signature)
-/// records its facts too.
+/// once, each with the declaration it is found in, so a function's locals
+/// go with its body; a declaration first checked while another is
+/// (`inner`'s signature, in `twice`'s body) keeps its own.
 #[test]
 fn a_function_run_at_compile_time_records_its_facts_once() {
     let program = load(&[(
@@ -1095,13 +1094,9 @@ fn a_function_run_at_compile_time_records_its_facts_once() {
             found.extend(facts.iter().map(|fact| (tree.file.slice(fact.span), owner)));
         },
     );
-    // `twice` gets the facts found until it is handed on: `BIG`'s value,
-    // both signatures, its body; `inner` its body.
+    // Each function gets its signature and body; `BIG`'s value, which no
+    // function is handed on with, comes last.
     let expected = [
-        ("twice", "twice"),
-        ("i32", "twice"),
-        ("i32", "twice"),
-        ("2", "twice"),
         ("i32", "twice"),
         ("i32", "twice"),
         ("n", "twice"),
@@ -1110,8 +1105,12 @@ fn a_function_run_at_compile_time_records_its_facts_once() {
         ("2", "twice"),
         ("doubled", "twice"),
         ("doubled", "twice"),
+        ("i32", "inner"),
+        ("i32", "inner"),
         ("n", "inner"),
         ("n", "inner"),
+        ("twice", "module"),
+        ("2", "module"),
     ];
     assert_eq!(found, expected);
 }
@@ -1260,7 +1259,7 @@ fn copies_report_once_to_the_calling_module() {
             "operator `+` cannot be applied to `bool`".to_string(),
             vec![
                 "x + x ".to_string(),
-                "add(T, x) in `add<bool>`, the copy made for this call".to_string(),
+                "add(T, x) in `add<bool>`, the copy made here".to_string(),
             ]
         ),]
     );
@@ -1374,10 +1373,10 @@ fn a_function_with_const_parameters_records_its_signature_once() {
             found.extend(facts.iter().map(|fact| tree.file.slice(fact.span)));
         },
     );
-    // Checked at the first call, before its arguments.
-    let expected = ["Pick", "i64", "T", "T", "i32", "2", "3", "x"];
-    assert_eq!(found[..expected.len()], expected);
-    assert_eq!(found.iter().filter(|&&text| text == "i64").count(), 1);
+    // Its signature, checked at the first call, goes with its own body.
+    let main = ["Pick", "i32", "2", "3", "x", "Pick", "i32", "4", "5", "y"];
+    let pick = ["i64", "T", "T", "n", "x", "x"];
+    assert_eq!(found, [&main[..], &pick[..]].concat());
 }
 
 /// The own body of a function with `const` parameters, which no call

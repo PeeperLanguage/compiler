@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::mpsc;
 
-use model::FunctionCopy;
+use model::DeclarationCopy;
 use model::ModuleId;
 use model::machine::Machine;
 use model::mir;
@@ -29,7 +29,7 @@ struct Batch {
     functions: Vec<Defined>,
     /// Made on the compile's thread, not by a worker: a copy's symbol names
     /// its `const` arguments, which only the program's types tell.
-    symbols: FxHashMap<FunctionCopy, String>,
+    symbols: FxHashMap<DeclarationCopy, String>,
     debug_types: DebugTypes,
 }
 
@@ -41,7 +41,7 @@ pub struct FunctionQueue {
     /// those so far, with the symbols they need (`Batch`).
     module: Option<ModuleId>,
     functions: Vec<Defined>,
-    symbols: FxHashMap<FunctionCopy, String>,
+    symbols: FxHashMap<DeclarationCopy, String>,
     sent: Vec<bool>, // by module: whether its functions went to a worker
     batches: mpsc::Sender<Batch>,
     /// In a debug build, a copy of the program's debug types so far, sent
@@ -61,9 +61,9 @@ impl FunctionQueue {
     pub fn add(
         &mut self,
         module: ModuleId,
-        copy: FunctionCopy,
+        copy: DeclarationCopy,
         body: mir::Body,
-        symbol_of: impl Fn(FunctionCopy) -> String,
+        symbol_of: impl Fn(DeclarationCopy) -> String,
         debug_name: impl FnOnce() -> (String, Span),
         debug_types: &DebugTypes,
     ) {
@@ -76,7 +76,7 @@ impl FunctionQueue {
             self.module = Some(module);
         }
         let symbols = &mut self.symbols;
-        let mut name = |copy: FunctionCopy| {
+        let mut name = |copy: DeclarationCopy| {
             symbols.entry(copy).or_insert_with(|| symbol_of(copy));
         };
         name(copy);
