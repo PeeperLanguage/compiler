@@ -85,6 +85,16 @@ fn Twice<T>(value: T) -> T {
 // A call on constants runs when compiling.
 const SEVEN: i32 = Id(7);
 
+// Each operator on `T`, for the copies whose types take it.
+fn Operators<T>(a: T, b: T) -> bool {
+    println(-a, a + b, a * b, a << 1);
+    return a < b;
+}
+
+fn Logic<T>(a: T, b: T) -> T {
+    return !a && b;
+}
+
 fn main() {
     println(Id(1), Id(2.5), Id(true), Id("text"));
     let big: i64 = 9;
@@ -112,4 +122,5 @@ fn main() {
     let narrow: u7 = 1;
     Kind(narrow);
     Kind(Point.{ x = 1 });
+    println(Operators(3, 4), Operators(-2i64, -5i64), Logic(false, true));
 }

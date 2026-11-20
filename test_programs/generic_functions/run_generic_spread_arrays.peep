@@ -40,9 +40,16 @@ fn References<T>(rest: T, y: &i32) -> i32 {
     return sum;
 }
 
+// A written length the spread fills exactly, in the copy whose array fits.
+fn Exactly<T>(x: T) -> i32 {
+    let three = [3]i32{ 1, x... };
+    return three[2];
+}
+
 fn main() {
     println(Spread([2]i32{2, 3}));
     let four = 4;
     let five = 5;
     println(References([2]&i32{&four, &five}, &four));
+    println(Exactly([2]i32{ 2, 3 }));
 }

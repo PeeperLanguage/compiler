@@ -12,3 +12,6 @@ other 1
 int 7 1
 other 4
 10 11
+-3 7 12 6
+2 -7 10 -4
+true false true
