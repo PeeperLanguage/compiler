@@ -112,7 +112,7 @@ impl Checker<'_> {
         // cycle, not one that only may.
         let (mut reached, mut pending) = (FxHashSet::default(), vec![function]);
         while let Some(next) = pending.pop() {
-            if self.internals.copies_too_deep {
+            if self.grew_too_deep(next) {
                 return None; // reported
             }
             if !reached.insert(next) {

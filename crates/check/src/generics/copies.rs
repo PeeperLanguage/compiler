@@ -71,13 +71,14 @@ impl Checker<'_> {
             .last()
             .expect("a use is being checked")
             .copy();
-        let (depth, reported_in) = match self.internals.copies.get(&made_inside) {
-            Some(inside) => (inside.depth + 1, inside.reported_in),
-            None => (1, self.current_module()),
+        let (depth, root, reported_in) = match self.internals.copies.get(&made_inside) {
+            Some(inside) => (inside.depth + 1, inside.root, inside.reported_in),
+            None => (1, copy, self.current_module()),
         };
         if depth > COPY_DEPTH_LIMIT {
-            // Reported once: the declaration that made the copy has the error.
-            if std::mem::replace(&mut self.internals.copies_too_deep, true) {
+            // Reported once for each root: the declaration that made the
+            // copy has the error.
+            if !self.internals.roots_too_deep.insert(root) {
                 return semantic_types::TypeId::INVALID;
             }
             let name = model::program::declared_path(self.modules, copy.definition);
@@ -92,6 +93,7 @@ impl Checker<'_> {
             Copied {
                 ty: None,
                 depth,
+                root,
                 reported_in,
                 used_in: self.current_module(),
                 used_at,
@@ -154,12 +156,21 @@ impl Checker<'_> {
 
     /// A copy of a function whose body the compile has not built
     /// (`build_function`), the newest first; building one may make more.
-    /// None once copies nested too deep.
+    /// One grown from a root whose copies nested too deep is skipped.
     pub fn next_copy(&mut self) -> Option<DeclarationCopy> {
-        self.internals
-            .copies_to_build
-            .pop()
-            .filter(|_| !self.internals.copies_too_deep)
+        while let Some(copy) = self.internals.copies_to_build.pop() {
+            if !self.grew_too_deep(copy) {
+                return Some(copy);
+            }
+        }
+        None
+    }
+
+    /// Whether `copy` grew from a root whose copies nested too deep
+    /// (`COPY_DEPTH_LIMIT`), reported: its body is not built.
+    pub(crate) fn grew_too_deep(&self, copy: DeclarationCopy) -> bool {
+        (self.internals.copies.get(&copy))
+            .is_some_and(|copied| self.internals.roots_too_deep.contains(&copied.root))
     }
 
     /// What the declaration `definition` is checked with outside any copy

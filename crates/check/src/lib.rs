@@ -88,6 +88,7 @@ use model::thir::Fact;
 use model::thir::FactKind;
 use model::thir::Symbol;
 use rustc_hash::FxHashMap;
+use rustc_hash::FxHashSet;
 use scope::Scope;
 use source::Span;
 use tree::ast;
@@ -135,10 +136,11 @@ struct CheckerInternals {
     /// The field types of each struct given an open type, which has no copy
     /// to hold them, read once (`field_types_given`).
     open_struct_fields: FxHashMap<DeclarationCopy, Box<[TypeId]>>,
-    /// Whether copies nested too deep (`COPY_DEPTH_LIMIT`): then no copy's
-    /// body is built any more, as a function that makes two copies inside
-    /// each would make twice as many at each depth.
-    copies_too_deep: bool,
+    /// The roots (`Copied::root`) whose copies nested too deep
+    /// (`COPY_DEPTH_LIMIT`): no copy grown from one is built any more, as a
+    /// function that makes two copies inside each would make twice as many
+    /// at each depth. Copies grown from other roots still are.
+    roots_too_deep: FxHashSet<DeclarationCopy>,
 }
 
 /// A copy of a declaration with type or `const` parameters
@@ -150,6 +152,9 @@ struct Copied {
     /// The copies it is made inside, each in the one before, counting
     /// itself: 1 for one a declaration given nothing makes.
     depth: u32,
+    /// The copy at depth 1 it grew from: itself, or the root of the one
+    /// it is made inside.
+    root: DeclarationCopy,
     /// The module whose check made it, or the copy it is made inside: what
     /// the check of a function copy's body finds is reported there. Its own
     /// check's errors go to the use's module, as the use's.
@@ -269,7 +274,7 @@ impl<'p> Checker<'p> {
                 copies: FxHashMap::default(),
                 copies_to_build: Vec::new(),
                 open_struct_fields: FxHashMap::default(),
-                copies_too_deep: false,
+                roots_too_deep: FxHashSet::default(),
             },
         }
     }
