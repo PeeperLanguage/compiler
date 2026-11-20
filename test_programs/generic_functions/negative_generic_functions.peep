@@ -127,6 +127,10 @@ fn Double(value: i32) -> i32 {
     return value * 2;
 }
 
+fn Same(const K: i32) -> i32 {
+    return K;
+}
+
 // Never called: a `const` parameter's value is each copy's, but its type is
 // known, so what is wrong for that type is reported.
 fn WrongForEveryCount(const N: i32) {
@@ -137,4 +141,8 @@ fn WrongForEveryCount(const N: i32) {
     let ran: bool = RUN; //~ error[T0001]: mismatched types: expected `bool`, found `i32`
     const ABOVE: bool = N > 2;
     let above: i32 = ABOVE; //~ error[T0001]: mismatched types: expected `i32`, found `bool`
+    // Given to another `const` parameter, it makes no copy of `Same`.
+    const PASSED: i32 = Same(N);
+    let passed: bool = PASSED; //~ error[T0001]: mismatched types: expected `bool`, found `i32`
+    let returned: bool = Same(N * 2); //~ error[T0001]: mismatched types: expected `bool`, found `i32`
 }

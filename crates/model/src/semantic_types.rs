@@ -6,6 +6,7 @@ use std::fmt::Display;
 use std::fmt::Write as _;
 use std::hash::Hash;
 use std::hash::Hasher;
+use std::mem;
 use std::ops::Index;
 
 use rustc_hash::FxHashMap;
@@ -20,11 +21,12 @@ use crate::mir;
 pub struct TypeId(u32);
 
 /// What one `const` parameter is given: a type for `const T: type`, else a
-/// value known when compiling.
+/// value known when compiling, or in a generic declaration's own check one
+/// each copy gives.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum ConstArgument {
     Type(TypeId),
-    Value(Constant),
+    Value(CheckedConstant),
 }
 
 /// A struct's functions that are an interface's methods, by its place in
@@ -441,9 +443,11 @@ impl Types {
     ) -> String {
         match argument {
             ConstArgument::Type(ty) => self.text(*ty, name_of),
-            ConstArgument::Value(Constant { ty, value }) => {
+            ConstArgument::Value(CheckedConstant::Known(Constant { ty, value })) => {
                 value_text(value, &self[*ty]).to_string()
             }
+            // As `[_]` is written: each copy gives it.
+            ConstArgument::Value(CheckedConstant::PerCopy(_)) => "_".to_string(),
         }
     }
 
@@ -613,7 +617,9 @@ impl Types {
     pub fn arguments_open(&self, arguments: ConstArguments) -> bool {
         (self.arguments(arguments).iter()).any(|argument| match argument {
             ConstArgument::Type(part) => self.is_open(*part),
-            ConstArgument::Value(constant) => self.is_open(constant.ty),
+            ConstArgument::Value(CheckedConstant::Known(constant)) => self.is_open(constant.ty),
+            // No copy holds a value it does not know.
+            ConstArgument::Value(CheckedConstant::PerCopy(_)) => true,
         })
     }
 
@@ -635,8 +641,18 @@ impl Types {
         if !self.is_open(ty) {
             return ty;
         }
-        let part = |types: &mut Types, part: TypeId| types.substitute(part, definition, arguments);
-        match self[ty].clone() {
+        let shape = self[ty].clone();
+        let mut parts: Vec<TypeId> = self.parts(&shape).collect();
+        for part in &mut parts {
+            *part = self.substitute(*part, definition, arguments);
+        }
+        let mut parts = parts.into_iter();
+        let mut next = || {
+            parts
+                .next()
+                .expect("a part for each of the shape's (`parts`)")
+        };
+        match shape {
             Type::Parameter {
                 definition: of,
                 place,
@@ -647,14 +663,12 @@ impl Types {
             Type::Parameter { .. } | Type::Undecided => ty,
             Type::Function {
                 parameters,
-                result,
                 origins,
                 variadic,
+                ..
             } => {
-                let parameters = (parameters.iter())
-                    .map(|&parameter| part(self, parameter))
-                    .collect();
-                let result = part(self, result);
+                let result = next();
+                let parameters = parameters.iter().map(|_| next()).collect();
                 self.intern(Type::Function {
                     parameters,
                     result,
@@ -666,10 +680,10 @@ impl Types {
                 definition: named,
                 arguments: given,
             } => {
-                let given: Vec<ConstArgument> = (self.arguments(given).to_vec().into_iter())
+                let given: Vec<ConstArgument> = (self.arguments(given).iter())
                     .map(|argument| match argument {
-                        ConstArgument::Type(given) => ConstArgument::Type(part(self, given)),
-                        value @ ConstArgument::Value(_) => value,
+                        ConstArgument::Type(_) => ConstArgument::Type(next()),
+                        value @ ConstArgument::Value(_) => value.clone(),
                     })
                     .collect();
                 let arguments = self.const_arguments(&given);
@@ -678,28 +692,24 @@ impl Types {
                     arguments,
                 })
             }
-            Type::Array {
-                element, length, ..
-            } => {
-                let element = part(self, element);
+            Type::Array { length, .. } => {
+                let element = next();
                 self.array(element, length)
             }
-            Type::Range { element } => {
-                let element = part(self, element);
+            Type::Range { .. } => {
+                let element = next();
                 self.range(element).unwrap_or(TypeId::UNDECIDED)
             }
-            Type::Reference { mutable, target } => {
-                let target = part(self, target);
+            Type::Reference { mutable, .. } => {
+                let target = next();
                 self.intern(Type::Reference { mutable, target })
             }
-            Type::Slice { mutable, element } => {
-                let element = part(self, element);
+            Type::Slice { mutable, .. } => {
+                let element = next();
                 self.intern(Type::Slice { mutable, element })
             }
-            Type::RawPointer {
-                target: Some(target),
-            } => {
-                let target = Some(part(self, target));
+            Type::RawPointer { target: Some(_) } => {
+                let target = Some(next());
                 self.intern(Type::RawPointer { target })
             }
             Type::Invalid
@@ -723,15 +733,13 @@ impl Types {
     /// parameter of `definition` there (`Type::Parameter`) where `pattern`,
     /// the type of a parameter of `definition`'s own check, names it: the
     /// part of `actual` in its place. A place already found keeps its type;
-    /// a part of another shape finds nothing, and the call reports the
-    /// mismatch. A reference to an array, `&[3]i32`, given for a slice,
-    /// `&[]T`, gives its element. An undecided part (`Type::Undecided`), as
-    /// `t[0]` of a `t: T` in a generic body, leaves each parameter its
-    /// pattern names undecided: each copy finds it.
-    #[deny(
-        clippy::wildcard_enum_match_arm,
-        clippy::match_wildcard_for_single_variants
-    )]
+    /// a part of another kind finds nothing, and the call reports the
+    /// mismatch; one only of another mutability or length still finds it,
+    /// so the call reports what is wrong with the type it found. A
+    /// reference to an array, `&[3]i32`, given for a slice, `&[]T`, gives
+    /// its element. An undecided part (`Type::Undecided`), as `t[0]` of a
+    /// `t: T` in a generic body, leaves each parameter its pattern names
+    /// undecided: each copy finds it.
     pub fn find_parameters(
         &self,
         pattern: TypeId,
@@ -769,90 +777,19 @@ impl Types {
                     }
                 }
             }
-            (
-                Type::Function {
-                    parameters, result, ..
-                },
-                Type::Function {
-                    parameters: given,
-                    result: given_result,
-                    ..
-                },
-            ) => {
-                for (&pattern, &actual) in parameters.iter().zip(given.iter()) {
+            (&Type::Slice { element, .. }, &Type::Reference { target, .. }) => {
+                if let Type::Array { element: given, .. } = self[target] {
+                    part(element, given);
+                }
+            }
+            (pattern, actual) if Self::same_kind(pattern, actual) => {
+                // A function's result comes first: parameters of another
+                // count still pair it with the result.
+                for (pattern, actual) in self.parts(pattern).zip(self.parts(actual)) {
                     part(pattern, actual);
                 }
-                part(*result, *given_result);
             }
-            (
-                &Type::Named {
-                    definition: named,
-                    arguments,
-                },
-                &(Type::Named {
-                    definition: given_definition,
-                    arguments: given,
-                }
-                | Type::Struct {
-                    definition: given_definition,
-                    arguments: given,
-                    ..
-                }),
-            ) if named == given_definition => {
-                let pairs = self.arguments(arguments).iter().zip(self.arguments(given));
-                for pair in pairs {
-                    if let (&ConstArgument::Type(pattern), &ConstArgument::Type(actual)) = pair {
-                        part(pattern, actual);
-                    }
-                }
-            }
-            (Type::Array { element, .. }, Type::Array { element: given, .. })
-            | (Type::Range { element }, Type::Range { element: given })
-            | (Type::Slice { element, .. }, Type::Slice { element: given, .. })
-            | (
-                Type::Reference {
-                    target: element, ..
-                },
-                Type::Reference { target: given, .. },
-            )
-            | (
-                Type::RawPointer {
-                    target: Some(element),
-                },
-                Type::RawPointer {
-                    target: Some(given),
-                },
-            ) => part(*element, *given),
-            (Type::Slice { element, .. }, &Type::Reference { target, .. }) => {
-                if let Type::Array { element: given, .. } = self[target] {
-                    part(*element, given);
-                }
-            }
-            (
-                Type::Function { .. }
-                | Type::Named { .. }
-                | Type::Array { .. }
-                | Type::Range { .. }
-                | Type::Slice { .. }
-                | Type::Reference { .. }
-                | Type::RawPointer { target: Some(_) },
-                _,
-            ) => {}
-            (
-                Type::Invalid
-                | Type::Void
-                | Type::Bool
-                | Type::Integer(_)
-                | Type::Float(_)
-                | Type::CString
-                | Type::Str
-                | Type::Alias { .. }
-                | Type::Struct { .. }
-                | Type::Interface { .. }
-                | Type::InterfaceReference { .. }
-                | Type::RawPointer { target: None },
-                _,
-            ) => unreachable!("an open type holds a type parameter: these do not, or are copies"),
+            _ => {}
         }
     }
 
@@ -868,11 +805,6 @@ impl Types {
     /// are, or they differ only where one has a type each copy decides
     /// (`is_decided_per_copy`). Each such part is matched alone, so `T`
     /// against `i32` in one place and `bool` in another still could.
-    #[deny(
-        clippy::wildcard_enum_match_arm,
-        clippy::match_wildcard_for_single_variants
-    )]
-    // TODO: simplify later
     pub fn could_be_same(&self, a: TypeId, b: TypeId) -> bool {
         let (a, b) = (self.real(a), self.real(b));
         if a == b || self[a].is_decided_per_copy() || self[b].is_decided_per_copy() {
@@ -881,151 +813,115 @@ impl Types {
         if !self.is_open(a) && !self.is_open(b) {
             return false;
         }
-        let part = |a: TypeId, b: TypeId| source::grow_stack(|| self.could_be_same(a, b));
-        match (&self[a], &self[b]) {
-            (
-                Type::Function {
-                    parameters,
-                    result,
-                    variadic,
-                    ..
-                },
-                Type::Function {
-                    parameters: given,
-                    result: given_result,
-                    variadic: given_variadic,
-                    ..
-                },
-            ) => {
-                variadic == given_variadic
-                    && parameters.len() == given.len()
-                    && (parameters.iter().zip(given.iter())).all(|(&a, &b)| part(a, b))
-                    && part(*result, *given_result)
-            }
-            (
-                &(Type::Named {
-                    definition,
-                    arguments,
-                }
-                | Type::Struct {
-                    definition,
-                    arguments,
-                    ..
+        let (a, b) = (&self[a], &self[b]);
+        // All but the parts, and their count, must be the same; a kind left
+        // out here is compared by its parts alone, which can only miss an
+        // error a copy then reports, never make one up.
+        let same_rest = Self::same_kind(a, b)
+            && match (a, b) {
+                (
+                    Type::Function { variadic, .. },
+                    Type::Function {
+                        variadic: given, ..
+                    },
+                ) => variadic == given,
+                (Type::Array { length, .. }, Type::Array { length: given, .. }) => length == given,
+                (
+                    Type::Reference { mutable, .. }
+                    | Type::Slice { mutable, .. }
+                    | Type::InterfaceReference { mutable, .. },
+                    Type::Reference { mutable: given, .. }
+                    | Type::Slice { mutable: given, .. }
+                    | Type::InterfaceReference { mutable: given, .. },
+                ) => mutable == given,
+                (
+                    Type::Named { arguments, .. } | Type::Struct { arguments, .. },
+                    Type::Named {
+                        arguments: given, ..
+                    }
+                    | Type::Struct {
+                        arguments: given, ..
+                    },
+                ) => (self
+                    .arguments(*arguments)
+                    .iter()
+                    .zip(self.arguments(*given)))
+                .all(|pair| match pair {
+                    (ConstArgument::Type(_), ConstArgument::Type(_)) => true, // a part
+                    // One parameter's: of one type, so some copy gives it.
+                    (
+                        ConstArgument::Value(CheckedConstant::PerCopy(_)),
+                        ConstArgument::Value(_),
+                    )
+                    | (
+                        ConstArgument::Value(_),
+                        ConstArgument::Value(CheckedConstant::PerCopy(_)),
+                    ) => true,
+                    (a, b) => a == b,
                 }),
-                &(Type::Named {
-                    definition: given_definition,
-                    arguments: given,
-                }
-                | Type::Struct {
-                    definition: given_definition,
-                    arguments: given,
-                    ..
-                }),
-            ) => {
-                definition == given_definition
-                    && (self.arguments(arguments).iter().zip(self.arguments(given))).all(|pair| {
-                        match pair {
-                            (&ConstArgument::Type(a), &ConstArgument::Type(b)) => part(a, b),
-                            (a, b) => a == b,
-                        }
-                    })
-            }
-            (
-                &Type::Array {
-                    element, length, ..
-                },
-                &Type::Array {
-                    element: given,
-                    length: given_length,
-                    ..
-                },
-            ) => length == given_length && part(element, given),
-            (&Type::Range { element }, &Type::Range { element: given })
-            | (
-                &Type::RawPointer {
-                    target: Some(element),
-                },
-                &Type::RawPointer {
-                    target: Some(given),
-                },
-            ) => part(element, given),
-            (
-                &Type::Slice { mutable, element },
-                &Type::Slice {
-                    mutable: given_mutable,
-                    element: given,
-                },
-            )
-            | (
-                &Type::Reference {
-                    mutable,
-                    target: element,
-                },
-                &Type::Reference {
-                    mutable: given_mutable,
-                    target: given,
-                },
-            )
-            | (
-                &Type::InterfaceReference {
-                    mutable,
-                    interface: element,
-                },
-                &Type::InterfaceReference {
-                    mutable: given_mutable,
-                    interface: given,
-                },
-            ) => mutable == given_mutable && part(element, given),
-            (
-                Type::Invalid
-                | Type::Parameter { .. }
-                | Type::Undecided
-                | Type::Void
-                | Type::Bool
-                | Type::Integer(_)
-                | Type::Float(_)
-                | Type::CString
-                | Type::Str
-                | Type::Function { .. }
-                | Type::Alias { .. }
-                | Type::Named { .. }
-                | Type::Struct { .. }
-                | Type::Array { .. }
-                | Type::Range { .. }
-                | Type::Reference { .. }
-                | Type::Slice { .. }
-                | Type::Interface { .. }
-                | Type::InterfaceReference { .. }
-                | Type::RawPointer { .. },
-                _,
-            ) => false,
-        }
+                _ => true,
+            };
+        same_rest
+            && self.parts(a).count() == self.parts(b).count()
+            && (self.parts(a).zip(self.parts(b)))
+                .all(|(a, b)| source::grow_stack(|| self.could_be_same(a, b)))
     }
 
     /// Whether the type `ty`, about to be added, is open: it is a type
     /// parameter or undecided, or a part of it is open.
+    fn holds_open(&self, ty: &Type) -> bool {
+        match ty {
+            Type::Parameter { .. } | Type::Undecided => true,
+            Type::Named { arguments, .. } | Type::Struct { arguments, .. } => {
+                self.arguments_open(*arguments)
+            }
+            _ => self.parts(ty).any(|part| self.is_open(part)),
+        }
+    }
+
+    /// Whether `a` and `b` are of one kind, so their parts (`parts`) pair up
+    /// in order: a struct and its name are one kind when of one declaration.
+    fn same_kind(a: &Type, b: &Type) -> bool {
+        match (a, b) {
+            (
+                Type::Named { definition, .. } | Type::Struct { definition, .. },
+                Type::Named {
+                    definition: given, ..
+                }
+                | Type::Struct {
+                    definition: given, ..
+                },
+            ) => definition == given,
+            _ => mem::discriminant(a) == mem::discriminant(b),
+        }
+    }
+
+    /// The types the type `ty` is made of, in order, a function's result
+    /// first: where a type parameter in it can stand. A struct's fields are
+    /// not among them: its type arguments decide them.
     #[deny(
         clippy::wildcard_enum_match_arm,
         clippy::match_wildcard_for_single_variants
     )]
-    fn holds_open(&self, ty: &Type) -> bool {
-        match ty {
-            Type::Parameter { .. } | Type::Undecided => true,
+    fn parts<'a>(&'a self, ty: &'a Type) -> impl Iterator<Item = TypeId> + 'a {
+        let (first, rest, arguments): (Option<TypeId>, &[TypeId], &[ConstArgument]) = match ty {
             Type::Invalid
+            | Type::Parameter { .. }
+            | Type::Undecided
             | Type::Void
             | Type::Bool
             | Type::Integer(_)
             | Type::Float(_)
             | Type::CString
             | Type::Str
-            | Type::RawPointer { target: None } => false,
+            | Type::RawPointer { target: None } => (None, &[], &[]),
             Type::Function {
                 parameters, result, ..
-            } => self.is_open(*result) || parameters.iter().any(|&part| self.is_open(part)),
+            } => (Some(*result), parameters, &[]),
             Type::Named { arguments, .. } | Type::Struct { arguments, .. } => {
-                self.arguments_open(*arguments)
+                (None, &[], self.arguments(*arguments))
             }
-            Type::Interface { methods, .. } => methods.iter().any(|&part| self.is_open(part)),
+            Type::Interface { methods, .. } => (None, methods, &[]),
             Type::Alias { real: part, .. }
             | Type::Array { element: part, .. }
             | Type::Range { element: part }
@@ -1034,8 +930,13 @@ impl Types {
             | Type::InterfaceReference {
                 interface: part, ..
             }
-            | Type::RawPointer { target: Some(part) } => self.is_open(*part),
-        }
+            | Type::RawPointer { target: Some(part) } => (Some(*part), &[], &[]),
+        };
+        let types = arguments.iter().filter_map(|argument| match argument {
+            ConstArgument::Type(part) => Some(*part),
+            ConstArgument::Value(_) => None,
+        });
+        first.into_iter().chain(rest.iter().copied()).chain(types)
     }
 
     /// The type `id` stands for: itself, or the type an alias names.
@@ -1054,6 +955,7 @@ impl Types {
         clippy::wildcard_enum_match_arm,
         clippy::match_wildcard_for_single_variants
     )]
+    // TODO: simplify later
     pub fn hash<H: Hasher>(
         &self,
         id: TypeId,
@@ -1094,9 +996,12 @@ impl Types {
                 for argument in given {
                     match argument {
                         ConstArgument::Type(ty) => self.hash(*ty, hasher, declaration),
-                        ConstArgument::Value(constant) => {
+                        ConstArgument::Value(CheckedConstant::Known(constant)) => {
                             self.hash(constant.ty, hasher, declaration);
                             constant.value.hash(hasher);
+                        }
+                        ConstArgument::Value(CheckedConstant::PerCopy(ty)) => {
+                            self.hash(*ty, hasher, declaration);
                         }
                     }
                 }
@@ -1172,6 +1077,7 @@ impl Types {
         clippy::wildcard_enum_match_arm,
         clippy::match_wildcard_for_single_variants
     )]
+    // TODO: simplify later
     fn write_real_text<N: fmt::Display>(
         &self,
         out: &mut String,
@@ -1295,6 +1201,19 @@ mod tests;
 pub struct Constant {
     pub ty: TypeId,
     pub value: Value,
+}
+
+/// A constant as a check knows it: a `const` of a body, a `const`
+/// parameter, or the value a `const` argument is given. Two `PerCopy` of
+/// one type are equal: no copy is made from one (`Types::arguments_open`).
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum CheckedConstant {
+    /// Its type and value.
+    Known(Constant),
+    /// Only its type, in a generic declaration's own check: each copy gives
+    /// the value, as it does a `const N: usize` parameter's, or `N * 2`.
+    /// Read, it is `ExprKind::Undecided` of that type.
+    PerCopy(TypeId),
 }
 
 /// `value`, of the type `ty`, as Peeper text: an integer in decimal, read

@@ -9,6 +9,7 @@ use std::path::PathBuf;
 use lsp_types::CodeAction;
 use model::DeclarationCopy;
 use model::ModuleId;
+use model::semantic_types::CheckedConstant;
 use model::semantic_types::ConstArgument;
 use model::semantic_types::Constant;
 use model::semantic_types::Type;
@@ -16,7 +17,6 @@ use model::semantic_types::TypeId;
 use model::semantic_types::Types;
 use model::semantic_types::value_text;
 use model::thir;
-use model::thir::CheckedConstant;
 use model::thir::FactKind;
 use model::thir::Local;
 use model::thir::Symbol;
@@ -273,11 +273,16 @@ fn copy_signature(
                 ConstArgument::Type(ty) => {
                     _ = write!(signature, "const {name}: type = {}", text(*ty));
                 }
-                ConstArgument::Value(constant) => {
+                ConstArgument::Value(CheckedConstant::Known(constant)) => {
                     // Its type as written: `usize`, not the integer it is here.
                     let ty = tree.file.slice(tree.types.span(parameter.ty));
                     let value = value_text(&constant.value, &types[constant.ty]);
                     _ = write!(signature, "const {name}: {ty} = {value}");
+                }
+                // As `Types::argument_text` writes it: each copy gives it.
+                ConstArgument::Value(CheckedConstant::PerCopy(_)) => {
+                    let ty = tree.file.slice(tree.types.span(parameter.ty));
+                    _ = write!(signature, "const {name}: {ty} = _");
                 }
             }
             continue;

@@ -166,7 +166,10 @@ impl Checker<'_> {
     /// (`declaration_copy_parameters`): each parameter that stands for a
     /// type, `<T>` or `const T: type`, is itself (`Type::Parameter`), so
     /// what depends on it each copy decides; a `const` value's place holds
-    /// no value (`declare_parameters`). Nothing when it has none.
+    /// no value: `declare_parameters` gives it its type (`const_value_type`).
+    /// Not the type here: this runs before the signature is checked, and only
+    /// that check (`signature_type`) may report the type; it is read again
+    /// only once that check passed, silently. Nothing when it has none.
     pub(crate) fn own_arguments(&mut self, definition: DefId) -> ConstArguments {
         let parameters: Vec<Option<Span>> =
             model::program::declaration_copy_parameters(self.modules, definition).collect();

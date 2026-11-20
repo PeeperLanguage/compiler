@@ -35,7 +35,7 @@ array or a struct, and what is wrong for it whatever `T` is, is reported:
 | `for` over a bare `T`, or a reference to one | the body is checked as a range's, its value undecided |
 | a `where` constraint on a bare `T`, a call run at compile time given an open type | not known (`None`) |
 | `x...` of a bare `T` in `[_]E{ ... }` or a `...` argument | the array literal is of `Type::Undecided`: its length is each copy's count; a `...` argument still lends it as the parameter's slice; `[N]E{ ... }` keeps its type, and more than `N` values counted now is reported |
-| a `const` parameter's value, or a `const` worked out from one (`N * 2`) | `thir::CheckedConstant::PerCopy`: its type is known; read, it is `ExprKind::Undecided` of that type |
+| a `const` parameter's value, or a `const` worked out from one (`N * 2`) | `semantic_types::CheckedConstant::PerCopy`: its type is known; read, it is `ExprKind::Undecided` of that type; given to a `const` parameter, `ConstArgument::Value` holds it, which makes the arguments open, so no copy is made |
 | a field of `Box<T>` | the written field type, re-read with `T` bound (`field_types_given`) |
 
 An open struct, such as `Box<T>` inside a generic body, stays

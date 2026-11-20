@@ -251,15 +251,10 @@ impl builder::ThirBuilder<'_, '_> {
             let ty = self
                 .checker
                 .const_value_type(definition, parameter.ty, span);
+            // One each copy gives makes the arguments open: no copy is made.
             match self.check_constant_value(argument, Some(ty)) {
-                Some(thir::CheckedConstant::Known(constant)) => {
-                    given.push(semantic_types::ConstArgument::Value(constant));
-                }
-                // Reported, or each copy gives it. shortcut: given a value
-                // each copy gives, no copy is made and the call stays
-                // silent; give it its type once `ConstArguments` can hold a
-                // per-copy value.
-                Some(thir::CheckedConstant::PerCopy(_)) | None => failed = true,
+                Some(constant) => given.push(semantic_types::ConstArgument::Value(constant)),
+                None => failed = true, // reported
             }
         }
         if failed {

@@ -15,6 +15,7 @@ use crate::DeclarationCopy;
 use crate::DefId;
 use crate::ModuleId;
 use crate::constant::Value;
+use crate::semantic_types::CheckedConstant;
 use crate::semantic_types::ConstArgument;
 use crate::semantic_types::Constant;
 use crate::semantic_types::Naming;
@@ -238,10 +239,10 @@ pub fn copy_symbol(modules: &[Module], types: &Types, copy: DeclarationCopy) -> 
         return name;
     }
     let text = |argument: &ConstArgument| match argument {
-        ConstArgument::Value(Constant {
+        ConstArgument::Value(CheckedConstant::Known(Constant {
             value: Value::Float(bits),
             ..
-        }) => format!("{bits:#x}"),
+        })) => format!("{bits:#x}"),
         _ => types.argument_text(argument, qualified),
     };
     let texts: Vec<String> = given.iter().map(text).collect();

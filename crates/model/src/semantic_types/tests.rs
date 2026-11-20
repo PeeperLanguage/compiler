@@ -1,4 +1,6 @@
+use super::CheckedConstant;
 use super::ConstArgument;
+use super::Constant;
 use super::Conversion;
 use super::Float;
 use super::Integer;
@@ -12,6 +14,7 @@ use super::integers;
 use crate::ConstArguments;
 use crate::DefId;
 use crate::ModuleId;
+use crate::constant::Value;
 use crate::layout::layout;
 use crate::machine::Machine;
 use crate::mir;
@@ -280,6 +283,26 @@ fn conversions_of_open_types() {
     assert_eq!(types.conversion(pair, TypeId::BOOL), Conversion::Never);
     assert_eq!(types.conversion(to_pair, to_triple), Conversion::Never);
     assert!(!types.could_be_same(pair, triple));
+    // Nor is a pointer to a type one to no type known (`*opaque`).
+    let opaque = types.intern(Type::RawPointer { target: None });
+    assert!(!types.could_be_same(raw_parameter, opaque));
+}
+
+/// A `const` argument each copy gives makes the arguments open, so no
+/// copy, which would hold a value it does not know, is made from them; a
+/// known one does not.
+#[test]
+fn per_copy_const_arguments_are_open() {
+    let mut types = Types::new(64);
+    let per_copy = ConstArgument::Value(CheckedConstant::PerCopy(TypeId::I32));
+    let per_copy = types.const_arguments(&[per_copy]);
+    assert!(types.arguments_open(per_copy));
+    let one = Constant {
+        ty: TypeId::I32,
+        value: Value::Integer(bigint::Limbs::new(32, &[1])),
+    };
+    let known = types.const_arguments(&[ConstArgument::Value(CheckedConstant::Known(one))]);
+    assert!(!types.arguments_open(known));
 }
 
 /// An interface keeps the id it was named by, so a `&Shape` written before

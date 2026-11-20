@@ -123,15 +123,15 @@ impl builder::ThirBuilder<'_, '_> {
                     return None;
                 }
                 match self.known_constant(checked, span)? {
-                    thir::CheckedConstant::Known(semantic_types::Constant {
+                    semantic_types::CheckedConstant::Known(semantic_types::Constant {
                         value: constant::Value::Bool(holds),
                         ..
                     }) => Some(holds),
-                    thir::CheckedConstant::Known(_) => {
+                    semantic_types::CheckedConstant::Known(_) => {
                         unreachable!("a `bool` constant is a `Value::Bool`")
                     }
                     // Each copy works it out.
-                    thir::CheckedConstant::PerCopy(_) => None,
+                    semantic_types::CheckedConstant::PerCopy(_) => None,
                 }
             }
             thir::Symbol::Type(definition) => {

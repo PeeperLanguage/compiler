@@ -12,12 +12,12 @@ use diagnostics::Diagnostic;
 use model::ConstArguments;
 use model::DeclarationCopy;
 use model::constant::Value;
+use model::semantic_types::CheckedConstant;
 use model::semantic_types::ConstArgument;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
 use model::thir::Block;
 use model::thir::Body;
-use model::thir::CheckedConstant;
 use model::thir::ExprKind;
 use model::thir::FactKind;
 use model::thir::Local;
@@ -151,9 +151,9 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
             let given = given.next();
             if !matches!(tree.types[parameter.ty], ast::Type::Type) {
                 // A copy is given the value; the own check knows only its
-                // type, which the signature already resolved, with its facts.
+                // type, which the signature already read, with its facts.
                 let constant = if let Some(ConstArgument::Value(constant)) = given {
-                    CheckedConstant::Known(constant)
+                    constant
                 } else {
                     let checking = (self.checker.internals.declarations_being_checked.last())
                         .expect("a declaration is being checked");

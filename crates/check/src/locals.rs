@@ -97,7 +97,7 @@ impl builder::ThirBuilder<'_, '_> {
     pub(crate) fn check_const_statement(
         &mut self,
         declaration: Id<ast::Decl>,
-    ) -> Option<thir::CheckedConstant> {
+    ) -> Option<semantic_types::CheckedConstant> {
         let ast::Decl::Const {
             name, ty, value, ..
         } = self.checker.module().ast.decls[declaration]
@@ -123,7 +123,7 @@ impl builder::ThirBuilder<'_, '_> {
         &mut self,
         value: Id<ast::Expr>,
         declared: Option<semantic_types::TypeId>,
-    ) -> Option<thir::CheckedConstant> {
+    ) -> Option<semantic_types::CheckedConstant> {
         let span = self.checker.module().ast.exprs.span(value);
         let outer = std::mem::replace(&mut self.in_constant, true);
         let checked = match declared {
@@ -141,14 +141,13 @@ impl builder::ThirBuilder<'_, '_> {
         &mut self,
         checked: thir::Expr,
         span: Span,
-    ) -> Option<thir::CheckedConstant> {
+    ) -> Option<semantic_types::CheckedConstant> {
         match checked.kind {
             thir::ExprKind::Constant(value) => {
                 let ty = checked.ty;
-                Some(thir::CheckedConstant::Known(semantic_types::Constant {
-                    ty,
-                    value,
-                }))
+                Some(semantic_types::CheckedConstant::Known(
+                    semantic_types::Constant { ty, value },
+                ))
             }
             thir::ExprKind::Invalid => None, // reported
             _ => {
@@ -156,7 +155,7 @@ impl builder::ThirBuilder<'_, '_> {
                 let unknown = self.body.first_named_variable(&checked.kind);
                 // Each copy knows it, unless it reads what only a run knows.
                 if unknown.is_none() && self.body.holds_undecided(&checked.kind) {
-                    return Some(thir::CheckedConstant::PerCopy(checked.ty));
+                    return Some(semantic_types::CheckedConstant::PerCopy(checked.ty));
                 }
                 let types = &self.checker.types;
                 let message = if unknown.is_some() {

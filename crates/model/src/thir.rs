@@ -11,7 +11,7 @@ use crate::DeclarationCopy;
 use crate::DefId;
 use crate::ModuleId;
 use crate::constant::Value;
-use crate::semantic_types::Constant;
+use crate::semantic_types::CheckedConstant;
 use crate::semantic_types::ImplementationId;
 use crate::semantic_types::Naming;
 use crate::semantic_types::Type;
@@ -93,18 +93,6 @@ pub enum Symbol {
 
 /// A name declared in a body, by its kind: checked in place with the
 /// body, never asked for on its own.
-/// A constant as a check knows it: a `const` of a body, a `const`
-/// parameter, or the value a `const` argument is given.
-#[derive(Clone, Debug)]
-pub enum CheckedConstant {
-    /// Its type and value.
-    Known(Constant),
-    /// Only its type, in a generic declaration's own check: each copy gives
-    /// the value, as it does a `const N: usize` parameter's, or `N * 2`.
-    /// Read, it is `ExprKind::Undecided` of that type.
-    PerCopy(TypeId),
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Local {
     /// A parameter or `let`: it holds a value at run time.
